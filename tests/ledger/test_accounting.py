@@ -408,3 +408,33 @@ def test_rebuild_after_manual_corruption(session: Session) -> None:
     session.commit()
     assert accounting.positions(session, "paper") == {"BTC": Decimal("2")}
     assert accounting.cash(session, "paper") == Decimal("800")
+
+
+def test_rebuild_replays_deposits_in_time_order(session: Session) -> None:
+    """A deposit dated after a fill cannot fund that fill on rebuild."""
+    later = T0 + timedelta(days=1)
+    accounting.deposit(session, "paper", Decimal("1000"), FrozenClock(later))
+    accounting.apply_fill(
+        session, _fill(session, "buy", Decimal("100"), Decimal("2"), Decimal("0"), T0)
+    )
+    session.commit()
+    with pytest.raises(ValueError):
+        accounting.rebuild(session, "paper")
+
+
+def test_rebuild_deposit_between_fills(session: Session) -> None:
+    accounting.deposit(session, "paper", Decimal("200"), FrozenClock(T0))
+    t1 = T0 + timedelta(hours=1)
+    t2 = T0 + timedelta(hours=2)
+    accounting.apply_fill(
+        session, _fill(session, "buy", Decimal("100"), Decimal("2"), Decimal("0"), t1)
+    )
+    accounting.deposit(session, "paper", Decimal("300"), FrozenClock(t2))
+    accounting.apply_fill(
+        session, _fill(session, "buy", Decimal("150"), Decimal("2"), Decimal("0"), t2)
+    )
+    session.commit()
+    accounting.rebuild(session, "paper")
+    session.commit()
+    assert accounting.positions(session, "paper") == {"BTC": Decimal("4")}
+    assert accounting.cash(session, "paper") == Decimal("0")

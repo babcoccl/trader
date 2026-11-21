@@ -1,6 +1,8 @@
 """Ledger and accounting (spec 2.3).
 
-Positions, cash, equity and the high-water mark are derived from fills only.
+Positions, cash and equity are derived from fills only. The high-water mark
+is computed from this equity by ``risk.engine.update_equity`` (spec 2.1),
+which owns ``equity_snapshots``.
 The ``balances`` table is a derived store: ``apply_fill`` appends a snapshot
 row for every asset a fill touches, ``rebuild`` replays every fill and
 deposit and rewrites the mode's rows, so the two paths always agree.
@@ -226,8 +228,6 @@ def rebuild(session: Session, mode: str) -> None:
     quantities. Positions and cash afterwards equal what the same fills
     applied one by one produced.
     """
-    deposits = Decimal(0)
-    last_time: datetime | None = None
     events = (
         session.execute(
             select(Event).where(Event.kind == "deposit").order_by(Event.time, Event.id)
@@ -235,21 +235,27 @@ def rebuild(session: Session, mode: str) -> None:
         .scalars()
         .all()
     )
-    for event in events:
-        if event.details.get("mode") == mode:
-            deposits = _q(deposits + Decimal(event.details["amount"]))
-            last_time = event.time
-
     rows = session.execute(
         select(Fill, Order)
         .join(Order, Fill.order_id == Order.id)
         .where(Order.mode == mode, Order.shadow.is_(False))
         .order_by(Fill.time, Fill.id)
     ).all()
-    state: dict[str, Decimal] = {CASH: deposits}
-    for fill, order in rows:
-        _apply(state, order, fill)
-        last_time = max(last_time, fill.time) if last_time else fill.time
+    # Replay deposits and fills in time order; a deposit sorts before a fill
+    # at the same instant.
+    steps: list[tuple[datetime, int, Event | None, tuple[Fill, Order] | None]] = [
+        (e.time, 0, e, None) for e in events if e.details.get("mode") == mode
+    ]
+    steps += [(f.time, 1, None, (f, o)) for f, o in rows]
+    steps.sort(key=lambda step: (step[0], step[1]))
+    state: dict[str, Decimal] = {CASH: Decimal(0)}
+    last_time: datetime | None = None
+    for time, _, event, pair in steps:
+        if event is not None:
+            state[CASH] = _q(state[CASH] + Decimal(event.details["amount"]))
+        elif pair is not None:
+            _apply(state, pair[1], pair[0])
+        last_time = time
 
     session.execute(delete(Balance).where(Balance.mode == mode))
     if last_time is None:

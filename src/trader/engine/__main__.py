@@ -12,22 +12,41 @@ import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import UTC
+from decimal import Decimal
 
 from apscheduler.schedulers.blocking import (  # type: ignore[import-untyped]
     BlockingScheduler,
 )
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from trader.core.clock import Clock, SystemClock
 from trader.core.config import get_settings
 from trader.core.db import session_scope
 from trader.core.logging import setup as setup_logging
+from trader.data.sources.base import SYMBOLS
 from trader.engine import daily_cycle, intraday_cycle
-from trader.ledger.models import Decision, Heartbeat
+from trader.ledger import accounting
+from trader.ledger.models import Candle, Decision, Heartbeat
 
 log = logging.getLogger(__name__)
 
 SERVICE = "engine"
+
+
+def _latest_prices(session: Session) -> dict[str, Decimal]:
+    """Most recent stored close per symbol, for marking positions."""
+    prices: dict[str, Decimal] = {}
+    for symbol in SYMBOLS:
+        close = session.scalar(
+            select(Candle.close)
+            .where(Candle.symbol == symbol)
+            .order_by(Candle.open_time.desc())
+            .limit(1)
+        )
+        if close is not None:
+            prices[symbol] = close
+    return prices
 
 
 class Engine:
@@ -53,7 +72,9 @@ class Engine:
     def run_daily(self) -> None:
         with self._session() as session:
             try:
-                portfolio = daily_cycle.CashOnlyPortfolio()
+                portfolio = accounting.portfolio_view(
+                    session, get_settings().mode, _latest_prices(session)
+                )
                 rows = daily_cycle.run(session, self._clock, portfolio)
                 summary = "; ".join(r.reason for r in rows)
                 session.add(

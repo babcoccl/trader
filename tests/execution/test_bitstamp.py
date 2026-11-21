@@ -497,23 +497,23 @@ def test_poll_fills_partial(db) -> None:
     assert order.status == "partially_filled"
 
 
-def test_cancel_collects_pending_fills(db) -> None:
+def test_cancel_settles_with_fills_on_next_poll(db) -> None:
     order = _db_order(db)
+    canceled = dict(_fixture("order_status_partial.json"), status="Canceled")
     t = FakeTransport(
         posts={
             "/api/v2/cancel_order/": {"id": "1458532827766784"},
-            "/api/v2/order_status/": _fixture("order_status_partial.json"),
+            "/api/v2/order_status/": canceled,
         }
     )
     adapter = _adapter(t, session=db)
     assert adapter.cancel("1458532827766784") is True
-    assert order.status == "cancelled"
-    # The cancelled order left the open set; its fill comes out of the
-    # next poll_fills exactly once.
+    # Still open locally until the poll records its fills with the status.
+    assert order.status == "open"
     (fill,) = adapter.poll_fills(NOW)
     assert fill.order_id == order.id
     assert fill.quantity == Decimal("0.001")
-    assert adapter.poll_fills(NOW) == []
+    assert order.status == "cancelled"
 
 
 # -- executor wiring (live mode) -------------------------------------------

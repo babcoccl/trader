@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ApiError, api } from "./api/client";
 import { StatusStrip } from "./components/StatusStrip";
 import { Activity } from "./pages/Activity";
+import { Approvals } from "./pages/Approvals";
 import { Overview } from "./pages/Overview";
 import { Positions } from "./pages/Positions";
 
@@ -89,6 +90,8 @@ export function App() {
       <main>
         {tab === "Overview" ? (
           <Overview />
+        ) : tab === "Approvals" ? (
+          <Approvals />
         ) : tab === "Positions" ? (
           <Positions />
         ) : tab === "Activity" ? (

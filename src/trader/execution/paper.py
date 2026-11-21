@@ -47,6 +47,14 @@ RULES = SymbolRules(
 _OPEN_STATUSES = ("new", "open", "partially_filled")
 
 
+def _fill_rank(order: Order) -> int:
+    """Within a candle: market sells fill at the open (0), market buys next
+    (1); limit and stop fills happen at an unknown intra-candle time (2)."""
+    if order.type == "market":
+        return 0 if order.side == "sell" else 1
+    return 2
+
+
 class PaperAdapter:
     """Simulated venue driven by stored candles and the ``orders`` table."""
 
@@ -92,13 +100,14 @@ class PaperAdapter:
     def poll_fills(self, since: datetime) -> list[Fill]:
         """Simulate every open order against candles opened after ``since``.
 
-        Returns the new ``Fill`` objects, not yet added to the session, in
-        candle-time order — sells before buys within one candle, since sells
-        free the cash and cut the exposure — so the caller applies sells
-        before the buys they fund. Idempotent: an order that fills leaves
-        the open set, so a replayed ``since`` window never fills it twice.
-        A limit earns nothing on candles that opened past its plan's
-        deadline; the executor converts it to market instead.
+        Returns the new ``Fill`` objects, not yet added to the session.
+        Order within a candle: market sells first (they provably fill at
+        the open and free the cash), then market buys, then limit/stop
+        fills in order-id order — a limit sell cannot fund a same-candle
+        buy because its trade-through could print after the open. A limit
+        earns nothing on candles that opened past its plan's deadline.
+        Idempotent: an order that fills leaves the open set, so a
+        replayed ``since`` window never fills it twice.
         """
         assume_taker = self._assume_taker()
         symbols = {o.symbol for o in self.open_orders()}
@@ -118,7 +127,7 @@ class PaperAdapter:
                         (candle.open_time, order.id, order, price, liquidity)
                     )
                     break  # full fill only; order is done
-        candidates.sort(key=lambda c: (c[0], c[2].side != "sell", c[1]))
+        candidates.sort(key=lambda c: (c[0], _fill_rank(c[2]), c[1]))
         new_fills: list[Fill] = []
         for time, _, order, price, liquidity in candidates:
             new_fills.append(self._make_fill(order, time, price, liquidity))

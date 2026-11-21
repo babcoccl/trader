@@ -783,6 +783,36 @@ def test_pre_deadline_candle_earns_maker_fill_after_restart(
     assert fill.price == Decimal("60000") and fill.liquidity == "maker"
 
 
+def test_limit_sell_does_not_fund_same_candle_buy(session: Session) -> None:
+    """A limit sell fills at an unknown intra-candle time, so it cannot
+    fund a same-candle buy: the buy settles first and is rejected when
+    cash is short."""
+    _balances(session, USD="1000", ETH="0.5")
+    buy_plan = _plan(session, entry_orders=[{"type": "market", "quantity": "0.04"}])
+    sell_plan = _plan(
+        session,
+        symbol="ETH-USD",
+        side="sell",
+        entry_orders=[{"type": "limit", "price": "3000", "quantity": "0.5"}],
+    )
+    _executor(session).tick()
+    buy = _orders(session, buy_plan)[0]
+    sell = _orders(session, sell_plan)[0]
+    at = max(buy.created_at, sell.created_at)
+    t = _next_candle(at)
+    _candle(session, "ETH-USD", t, "2990", "3100", "2990", "3050")
+    _candle(session, "BTC-USD", t, "60000", "60000", "60000", "60000")
+
+    _executor(session).tick()
+
+    session.refresh(buy)
+    session.refresh(sell)
+    assert buy.status == "rejected"
+    assert sell.status == "filled"
+    (fill,) = _fills(session)
+    assert fill.order_id == sell.id
+
+
 # --- worst-case taker setting -------------------------------------------------
 
 

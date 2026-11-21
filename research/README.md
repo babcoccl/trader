@@ -22,7 +22,7 @@ python check_spec.py
 
 ## Rebuilding the full study from public data
 
-These steps were run once, incrementally, while the studies were made. They have not been re-run from a clean checkout; spec 0.2 does that. About 200 MB of downloads into `research/data/` (git-ignored).
+These steps were run once, incrementally, while the studies were made. They were re-run end to end from a clean checkout on 2026-11-21 (spec 0.2): every step worked as written, `make_fixtures.py` regenerated `fixtures/` with no diff, and `check_spec.py` matched. About 200 MB of downloads into `research/data/` (git-ignored).
 
 Linux / macOS:
 

@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC
 from typing import Any
 
 from trader.core.clock import Clock, SystemClock
@@ -17,7 +17,7 @@ class _JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         entry: dict[str, Any] = {
-            "ts": datetime.isoformat(self._clock.now()),
+            "ts": self._clock.now().astimezone(UTC).isoformat(),
             "level": record.levelname,
             "service": getattr(record, "service", "trader"),
             "msg": record.getMessage(),

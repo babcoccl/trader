@@ -1,9 +1,9 @@
 """GET /api/decisions: the decision log (spec 3.1)."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -32,7 +32,7 @@ def _out(d: Decision) -> DecisionOut:
 @router.get("/api/decisions", response_model=list[DecisionOut])
 def decisions(
     cycle: Literal["daily", "intraday"] | None = None,
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
     before: datetime | None = None,
     before_id: int | None = None,
     session: Session = SessionDep,

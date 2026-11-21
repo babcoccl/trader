@@ -2,10 +2,12 @@
 heartbeats (spec 3.1). One feed for the dashboard's log view."""
 
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter
-from sqlalchemy import select
+from fastapi import APIRouter, Query
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from trader.api.auth import AuthRequired
 from trader.api.routes import SessionDep
@@ -14,7 +16,8 @@ from trader.ledger.models import Decision, Event, Fill, Heartbeat, Order
 
 router = APIRouter(dependencies=[AuthRequired])
 
-# Item kinds that come from each table; every other kind is an events.kind.
+# Item kind each dedicated source carries; every other kind is an
+# events.kind, and the executor also writes its own "fill" events.
 SOURCE_KINDS = ("decision", "fill", "heartbeat")
 
 
@@ -32,41 +35,66 @@ def _fetch(
     limit: int,
     before: tuple[datetime, str, int] | None,
 ) -> list[ActivityItem]:
-    """Merge the four sources newest-first, applying the filters before
-    the final limit so a filter can't hide matching older rows."""
+    """Merge the four sources newest-first. ``kind`` and ``q`` are pushed
+    into SQL and the (time, kind, ref_id) cursor is applied per source
+    before its limit, so a filtered page can't hide matching older rows."""
     items: list[ActivityItem] = []
-    t = before[0] if before is not None else None
 
-    # Each source's own kind labels; a ``kind`` filter skips a source
-    # entirely when it cannot produce that kind.
-    want_events = kind is None or kind not in SOURCE_KINDS
-    want_decisions = kind in (None, "decision")
-    want_fills = kind in (None, "fill")
-    want_heartbeats = kind in (None, "heartbeat")
-
-    if want_events:
-        estmt = select(Event).order_by(Event.time.desc(), Event.id.desc())
-        if t is not None:
-            estmt = estmt.where(Event.time <= t)
-        if kind is not None:
-            estmt = estmt.where(Event.kind == kind)
-        if q is not None:
-            estmt = estmt.where(Event.message.ilike(f"%{q}%"))
-        for e in session.scalars(estmt.limit(limit)).all():
-            items.append(
-                ActivityItem(
-                    time=e.time,
-                    kind=e.kind,
-                    ref_id=e.id,
-                    text=e.message,
-                    details={"severity": e.severity, **e.details},
-                )
+    def cutoff(
+        time_col: ColumnElement[datetime],
+        id_col: ColumnElement[int] | None = None,
+        source_kind: str | None = None,
+    ) -> ColumnElement[bool] | None:
+        """Rows strictly older than the cursor under the (time, kind,
+        ref_id) sort order. ``source_kind`` is the constant item kind of
+        the source; None means each row's own kind (events)."""
+        if before is None:
+            return None
+        t, bkind, bid = before
+        older = time_col < t
+        if source_kind is None:
+            return or_(
+                older,
+                and_(
+                    time_col == t,
+                    or_(
+                        Event.kind < bkind,
+                        and_(Event.kind == bkind, Event.id < bid),
+                    ),
+                ),
             )
+        if source_kind < bkind:
+            return time_col <= t
+        if source_kind == bkind:
+            return or_(older, and_(time_col == t, id_col < bid))
+        return older
 
-    if want_decisions:
+    # Events are always queried: their kind column is the item kind, so a
+    # ``kind`` filter (e.g. "fill") must still see matching event rows.
+    estmt = select(Event).order_by(Event.time.desc(), Event.id.desc())
+    c = cutoff(Event.time)
+    if c is not None:
+        estmt = estmt.where(c)
+    if kind is not None:
+        estmt = estmt.where(Event.kind == kind)
+    if q is not None:
+        estmt = estmt.where(Event.message.ilike(f"%{q}%"))
+    for e in session.scalars(estmt.limit(limit)).all():
+        items.append(
+            ActivityItem(
+                time=e.time,
+                kind=e.kind,
+                ref_id=e.id,
+                text=e.message,
+                details={"severity": e.severity, **e.details},
+            )
+        )
+
+    if kind in (None, "decision"):
         dstmt = select(Decision).order_by(Decision.ran_at.desc(), Decision.id.desc())
-        if t is not None:
-            dstmt = dstmt.where(Decision.ran_at <= t)
+        c = cutoff(Decision.ran_at, Decision.id, "decision")
+        if c is not None:
+            dstmt = dstmt.where(c)
         if q is not None:
             dstmt = dstmt.where(Decision.reason.ilike(f"%{q}%"))
         for d in session.scalars(dstmt.limit(limit)).all():
@@ -84,19 +112,35 @@ def _fetch(
                 )
             )
 
-    if want_fills:
+    if kind in (None, "fill"):
         fstmt = (
             select(Fill, Order)
             .join(Order, Fill.order_id == Order.id)
             .order_by(Fill.time.desc(), Fill.id.desc())
         )
-        if t is not None:
-            fstmt = fstmt.where(Fill.time <= t)
+        c = cutoff(Fill.time, Fill.id, "fill")
+        if c is not None:
+            fstmt = fstmt.where(c)
         if q is not None:
-            # The synthesized text mentions symbol and side; match both in
-            # SQL so a text search does not drop older matching fills.
+            # Match against the same text _fill_text renders so SQL rows
+            # and the displayed text cannot disagree.
             fstmt = fstmt.where(
-                Order.symbol.ilike(f"%{q}%") | Order.side.ilike(f"%{q}%")
+                func.concat(
+                    Order.side,
+                    " fill: ",
+                    cast(Fill.quantity, String),
+                    " ",
+                    Order.symbol,
+                    " at ",
+                    cast(Fill.price, String),
+                    " (fee ",
+                    cast(Fill.fee, String),
+                    " ",
+                    Fill.fee_currency,
+                    ", ",
+                    Fill.liquidity,
+                    ")",
+                ).ilike(f"%{q}%")
             )
         for fill, order in session.execute(fstmt.limit(limit)).all():
             items.append(
@@ -120,15 +164,21 @@ def _fetch(
                 )
             )
 
-    if want_heartbeats:
+    if kind in (None, "heartbeat"):
         hstmt = select(Heartbeat).order_by(Heartbeat.time.desc(), Heartbeat.id.desc())
-        if t is not None:
-            hstmt = hstmt.where(Heartbeat.time <= t)
+        c = cutoff(Heartbeat.time, Heartbeat.id, "heartbeat")
+        if c is not None:
+            hstmt = hstmt.where(c)
         if q is not None:
+            # One concat so searches spanning fields ("executor: ok") work.
             hstmt = hstmt.where(
-                Heartbeat.service.ilike(f"%{q}%")
-                | Heartbeat.status.ilike(f"%{q}%")
-                | Heartbeat.detail.ilike(f"%{q}%")
+                func.concat(
+                    Heartbeat.service,
+                    ": ",
+                    Heartbeat.status,
+                    " ",
+                    Heartbeat.detail,
+                ).ilike(f"%{q}%")
             )
         for h in session.scalars(hstmt.limit(limit)).all():
             items.append(
@@ -150,9 +200,6 @@ def _fetch(
         items = [i for i in items if needle in i.text.lower()]
 
     items.sort(key=lambda i: (i.time, i.kind, i.ref_id), reverse=True)
-    if before is not None:
-        cutoff = (before[0], before[1], before[2])
-        items = [i for i in items if (i.time, i.kind, i.ref_id) < cutoff]
     return items[:limit]
 
 
@@ -160,7 +207,7 @@ def _fetch(
 def activity(
     kind: str | None = None,
     q: str | None = None,
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
     before: datetime | None = None,
     before_kind: str | None = None,
     before_id: int | None = None,

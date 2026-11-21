@@ -712,6 +712,39 @@ def test_same_candle_sell_funds_buy(session: Session) -> None:
     assert fills[1].liquidity == "maker"
 
 
+def test_expired_limit_fills_as_market_not_maker(session: Session) -> None:
+    """A limit past its deadline converts to market before fills are
+    collected: a post-deadline candle that trades through it earns a taker
+    fill on the market order, not a maker fill on the limit."""
+    _balances(session, USD="10000")
+    plan = _plan(
+        session,
+        entry_orders=[{"type": "limit", "price": "60000", "quantity": "0.1"}],
+        decided_at=_now() - timedelta(hours=2),
+    )
+    # A candle that trades through the limit price must not fill it: the
+    # expired limit converts to market before fills are collected.
+    _candle(
+        session,
+        "BTC-USD",
+        _next_candle(_now()),
+        "60000",
+        "60000",
+        "59800",
+        "59900",
+    )
+
+    _executor(session).tick()
+
+    limit_order, market = _orders(session, plan)
+    assert limit_order.status == "cancelled" and market.type == "market"
+    # The only fill is the market order's taker fill at the candle open;
+    # the expired limit never earns the maker fill at 60000.
+    (fill,) = _fills(session)
+    assert fill.order_id == market.id and fill.liquidity == "taker"
+    assert fill.price == Decimal("60000") * (1 + Decimal(str(BITSTAMP.slippage)))
+
+
 # --- worst-case taker setting -------------------------------------------------
 
 

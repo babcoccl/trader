@@ -45,7 +45,6 @@ from trader.execution.base import LIMIT_TTL
 from trader.execution.paper import PRIMARY_SOURCE, PaperAdapter
 from trader.ledger import accounting
 from trader.ledger.models import (
-    AuditLog,
     Candle,
     Decision,
     Event,
@@ -283,17 +282,7 @@ class Executor:
             fill = adapter.fill_now(order, adapter.market_sell_price(price), now)
             session.add(fill)
             accounting.apply_fill(session, fill)
-        row.value = False
-        row.updated_at = now
-        session.add(
-            AuditLog(
-                time=now,
-                actor="executor",
-                action="set risk.flatten_requested",
-                before={"risk.flatten_requested": True},
-                after={"risk.flatten_requested": False},
-            )
-        )
+        risk.flatten_done(session, actor="executor")
         session.add(
             Event(
                 time=now,

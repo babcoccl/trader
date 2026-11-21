@@ -31,6 +31,7 @@ from trader.ledger.models import (
     Plan,
     Setting,
 )
+from trader.risk import engine as risk
 
 TEST_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -982,3 +983,29 @@ def test_assume_taker_never_fills_limit(session: Session) -> None:
     _executor(session).tick()
 
     assert _fills(session) == []
+
+
+def test_flatten_sells_everything_and_lowers_flag_via_risk(session: Session) -> None:
+    _balances(session, BTC="0.1", USD="0")
+    _candle(
+        session,
+        "BTC-USD",
+        _next_candle(_now()),
+        "60000",
+        "60000",
+        "60000",
+        "60000",
+    )
+    risk.flatten_requested(session, actor="owner")
+
+    _executor(session).tick()
+
+    (fill,) = _fills(session)
+    assert fill.quantity == Decimal("0.1")
+    assert not accounting.positions(session, "paper")
+    assert session.get(Setting, "risk.flatten_requested").value is False
+    assert session.scalars(
+        select(AuditLog.actor)
+        .where(AuditLog.action == "set risk.flatten_requested")
+        .order_by(AuditLog.id)
+    ).all() == ["owner", "executor"]

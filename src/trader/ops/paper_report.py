@@ -202,8 +202,11 @@ def tracking_gap(
                 end=(end - timedelta(seconds=1)).date().isoformat(),
             )
             equity = result.equity.dropna()
-            if len(equity) >= 2 and equity.iloc[0] != 0:
-                out["backtest_return"] = float(equity.iloc[-1] / equity.iloc[0] - 1)
+            if len(equity) >= 1:
+                # `run` starts with cash 1.0 at the first open, so
+                # equity itself is the cumulative return; measuring
+                # from equity[0] would drop opening-day performance.
+                out["backtest_return"] = float(equity.iloc[-1] - 1)
         except (KeyError, ValueError, ZeroDivisionError):
             pass
     if out["paper_return"] is not None and out["backtest_return"] is not None:

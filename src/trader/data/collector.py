@@ -145,11 +145,9 @@ class Collector:
                     session, symbol, "1d", today - timedelta(days=1), today
                 )
         status = "error" if self._outage else "ok"
-        detail = (
-            "all sources failed; no candles stored"
-            if self._outage
-            else f"stored {written} candles"
-        )
+        detail = f"stored {written} candles"
+        if self._outage:
+            detail += "; all sources failed for some requests"
         self._heartbeat(session, status, detail)
         return written
 

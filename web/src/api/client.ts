@@ -110,10 +110,10 @@ export interface EquityPoint {
 }
 
 export interface SummaryOut {
-  from_at: string;
-  to_at: string;
+  from_at: string | null;
+  to_at: string | null;
   return_pct: number | null;
-  worst_drop_pct: number;
+  worst_drop_pct: number | null;
   fees_usd: string;
   vetoes: { plans: number; shadow_fills: number; result_usd: string | null };
   paper_vs_backtest_gap_pp: number | null;
@@ -201,4 +201,21 @@ export const api = {
   digests: (limit?: number) =>
     request<DigestOut[]>(`/api/digests${limit ? `?limit=${limit}` : ""}`),
   settings: () => request<SettingOut[]>("/api/settings"),
+  putSetting: (key: string, value: unknown) =>
+    request<SettingOut>(`/api/settings/${key}`, {
+      method: "PUT",
+      body: JSON.stringify({ value }),
+    }),
+  halt: () =>
+    request<{ status: string }>("/api/controls/halt", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  resume: () =>
+    request<{ status: string }>("/api/controls/resume", { method: "POST" }),
+  flatten: (confirm: string) =>
+    request<{ status: string }>("/api/controls/flatten", {
+      method: "POST",
+      body: JSON.stringify({ confirm }),
+    }),
 };

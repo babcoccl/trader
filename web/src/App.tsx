@@ -3,7 +3,9 @@ import { useState } from "react";
 import { ApiError, api } from "./api/client";
 import { StatusStrip } from "./components/StatusStrip";
 import { Approvals } from "./pages/Approvals";
+import { Controls } from "./pages/Controls";
 import { Overview } from "./pages/Overview";
+import { Reports } from "./pages/Reports";
 
 const TABS = ["Overview", "Approvals", "Positions", "Activity", "Reports", "Controls"] as const;
 type Tab = (typeof TABS)[number];
@@ -90,6 +92,10 @@ export function App() {
           <Overview />
         ) : tab === "Approvals" ? (
           <Approvals />
+        ) : tab === "Reports" ? (
+          <Reports />
+        ) : tab === "Controls" ? (
+          <Controls />
         ) : (
           <ComingSoon name={tab} />
         )}

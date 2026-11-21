@@ -205,6 +205,119 @@ body {
   margin: 0;
 }
 
+button {
+  padding: 8px 12px;
+  border: 1px solid rgb(0 0 0 / 0.15);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.btn--warning {
+  background: #b45309;
+  border-color: #b45309;
+  color: #fff;
+}
+
+button.btn--danger {
+  background: #f53b3a;
+  border-color: #f53b3a;
+  color: #fff;
+}
+
+button.link {
+  border: none;
+  background: none;
+  padding: 0 0 0 8px;
+  color: #2563eb;
+}
+
+.controls-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.kv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.kv-table td {
+  padding: 8px 4px;
+  border-top: 1px solid rgb(0 0 0 / 0.06);
+  vertical-align: top;
+}
+
+.kv-table tr:first-child td {
+  border-top: none;
+}
+
+.kv-table td:first-child {
+  width: 32%;
+}
+
+.setting-edit {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.setting-edit input,
+.setting-edit select,
+.dialog input {
+  padding: 6px 8px;
+  border: 1px solid rgb(0 0 0 / 0.15);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.dialog {
+  background: #fff;
+  border-radius: 8px;
+  padding: 20px;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.digest-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.digest-body {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  margin: 6px 0;
+}
+
+
 .badge--amber {
   background: rgb(245 158 11 / 0.15);
   color: #b45309;

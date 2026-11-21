@@ -31,9 +31,9 @@ from sqlalchemy.orm import Session
 
 from trader.backtest.costs import CostModel
 from trader.core.clock import Clock, SystemClock
-from trader.execution.base import SymbolRules
+from trader.execution.base import LIMIT_TTL, SymbolRules
 from trader.ledger import accounting
-from trader.ledger.models import Candle, Fill, Order, Setting
+from trader.ledger.models import Candle, Fill, Order, Plan, Setting
 
 # Price must trade through the limit by this fraction to fill (spec 2.4).
 TRADE_THROUGH = Decimal("0.0001")
@@ -97,15 +97,20 @@ class PaperAdapter:
         free the cash and cut the exposure — so the caller applies sells
         before the buys they fund. Idempotent: an order that fills leaves
         the open set, so a replayed ``since`` window never fills it twice.
+        A limit earns nothing on candles that opened past its plan's
+        deadline; the executor converts it to market instead.
         """
         assume_taker = self._assume_taker()
         symbols = {o.symbol for o in self.open_orders()}
         candles = self._candles_after(symbols, since)
         candidates: list[tuple[datetime, int, Order, Decimal, str]] = []
         for order in self.open_orders():
+            deadline = self._limit_deadline(order)
             for candle in candles.get(order.symbol, []):
                 if candle.open_time < order.created_at:
                     continue  # order did not exist when this candle opened
+                if deadline is not None and candle.open_time > deadline:
+                    break  # expired: the executor converts it to market
                 result = self._fill_price(order, candle, assume_taker)
                 if result is not None:
                     price, liquidity = result
@@ -139,6 +144,18 @@ class PaperAdapter:
         fill = self._make_fill(order, time, price, "taker")
         order.status = "filled"
         return fill
+
+    def _limit_deadline(self, order: Order) -> datetime | None:
+        """The approval-time + ``LIMIT_TTL`` deadline for a limit order,
+        or None for other types. Candles that opened after it belong to
+        the market order the expired limit converts into."""
+        if order.type != "limit":
+            return None
+        plan = self._session.get(Plan, order.plan_id)
+        if plan is None:
+            return None
+        approved_at = plan.decided_at or plan.created_at
+        return approved_at + LIMIT_TTL
 
     def market_sell_price(self, price: Decimal) -> Decimal:
         """Market sell fill price: worse than the mark by the slippage."""

@@ -41,6 +41,7 @@ from trader.core.config import get_settings
 from trader.core.db import session_scope
 from trader.core.logging import setup as setup_logging
 from trader.data.sources.base import SYMBOLS
+from trader.execution.base import LIMIT_TTL
 from trader.execution.paper import PaperAdapter
 from trader.ledger import accounting
 from trader.ledger.models import (
@@ -59,7 +60,6 @@ log = logging.getLogger(__name__)
 
 SERVICE = "executor"
 LOOP_SECONDS = 30
-MARKET_AFTER = timedelta(hours=1)  # spec 2.2: unfilled limit goes to market
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -129,12 +129,11 @@ class Executor:
                     if order.side == "buy":
                         adapter.cancel(order.venue_order_id or "")
             self._place_approved(session, adapter, mode, halted)
-            # Conversions first: a limit past its deadline goes to market
-            # before fills are collected, so a post-deadline candle cannot
-            # earn it a late maker fill. Then fills before re-pricing: a
-            # candle that traded through a resting limit earns its maker
-            # fill before re-pricing can cancel the order.
-            self._convert_expired(session, adapter, now)
+            # Fills before time rules: a candle that traded through a
+            # resting limit earns its maker fill before re-pricing or the
+            # market conversion can cancel the order. Candles past a
+            # limit's deadline cannot fill it (adapter), so the order
+            # converts to market here instead.
             self._collect_fills(session, adapter, now)
             self._apply_time_rules(session, adapter, now)
             prices = _latest_prices(session)
@@ -347,25 +346,6 @@ class Executor:
             ).all()
         }
 
-    def _convert_expired(
-        self, session: Session, adapter: PaperAdapter, now: datetime
-    ) -> None:
-        """Cancel limits past their deadline and resend them as market
-        orders (spec 2.2). Runs before fills: a post-deadline candle must
-        not still earn the expired limit a maker fill."""
-        plans = self._approved_plans(session)
-        for order in adapter.open_orders():
-            if order.type != "limit" or order.plan_id not in plans:
-                continue
-            plan = plans[order.plan_id]
-            if now > _approved_at(plan) + MARKET_AFTER:
-                adapter.cancel(order.venue_order_id or "")
-                adapter.place(
-                    self._new_order(
-                        session, plan, type="market", quantity=order.quantity
-                    )
-                )
-
     def _apply_time_rules(
         self, session: Session, adapter: PaperAdapter, now: datetime
     ) -> None:
@@ -374,6 +354,14 @@ class Executor:
             if order.type != "limit" or order.plan_id not in plans:
                 continue
             plan = plans[order.plan_id]
+            if now > _approved_at(plan) + LIMIT_TTL:
+                adapter.cancel(order.venue_order_id or "")
+                adapter.place(
+                    self._new_order(
+                        session, plan, type="market", quantity=order.quantity
+                    )
+                )
+                continue
             if order.side == "buy":
                 candle = _newest_candle(session, order.symbol)
                 if (

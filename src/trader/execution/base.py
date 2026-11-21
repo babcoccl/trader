@@ -6,11 +6,14 @@ ORM rows from spec 0.3; adapters own their ``status`` transitions.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Protocol
 
 from trader.ledger.models import Fill, Order
+
+# spec 2.2: an unfilled limit converts to market this long after approval.
+LIMIT_TTL = timedelta(hours=1)
 
 
 @dataclass(frozen=True)

@@ -738,11 +738,49 @@ def test_expired_limit_fills_as_market_not_maker(session: Session) -> None:
 
     limit_order, market = _orders(session, plan)
     assert limit_order.status == "cancelled" and market.type == "market"
-    # The only fill is the market order's taker fill at the candle open;
-    # the expired limit never earns the maker fill at 60000.
+    assert _fills(session) == []
+    # The replacement market order fills at that candle's open, taker.
+    _executor(session).tick()
     (fill,) = _fills(session)
     assert fill.order_id == market.id and fill.liquidity == "taker"
     assert fill.price == Decimal("60000") * (1 + Decimal(str(BITSTAMP.slippage)))
+
+
+def test_pre_deadline_candle_earns_maker_fill_after_restart(
+    session: Session,
+) -> None:
+    """A candle that opened before the deadline and traded through the
+    limit still fills maker when the executor sees it late — only
+    post-deadline candles are off-limits to the limit order."""
+    _balances(session, USD="10000")
+    decided = _now() - timedelta(minutes=50)
+    plan = _plan(
+        session,
+        entry_orders=[{"type": "limit", "price": "60000", "quantity": "0.1"}],
+        decided_at=decided,
+    )
+    _executor(session).tick()
+    order = _orders(session, plan)[0]
+    # The order really rested during the downtime the candle covers.
+    order.created_at = decided + timedelta(minutes=5)
+    session.flush()
+    _candle(
+        session,
+        "BTC-USD",
+        decided + timedelta(minutes=10),
+        "60000",
+        "60000",
+        "59900",
+        "60000",
+    )
+
+    _executor(session).tick()
+
+    session.refresh(order)
+    assert order.status == "filled"
+    assert len(_orders(session, plan)) == 1
+    fill = _fills(session)[0]
+    assert fill.price == Decimal("60000") and fill.liquidity == "maker"
 
 
 # --- worst-case taker setting -------------------------------------------------

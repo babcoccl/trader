@@ -164,6 +164,8 @@ class BitstampAdapter:
         self._nonce_fn = nonce_fn
         self._markets: dict[str, dict[str, Any]] | None = None
         self._markets_at = 0.0
+        # Fills found while cancelling; handed out by the next poll_fills.
+        self._pending_fills: list[Fill] = []
 
     @classmethod
     def from_env(
@@ -283,12 +285,12 @@ class BitstampAdapter:
             )
         ).first()
         if order is not None and order.status in _OPEN_STATUSES:
-            # Collect fills the venue executed before the cancel; a
-            # cancelled order leaves poll_fills' open-order scan, so
-            # uncollected transactions would never reach the ledger.
+            # Fills the venue executed before the cancel: a cancelled order
+            # leaves poll_fills' open-order scan, so hand them to the next
+            # poll_fills instead of losing them.
             payload = self._order_status(order)
             if payload is not None:
-                self._session.add_all(self._fills_for(order, payload))
+                self._pending_fills.extend(self._fills_for(order, payload))
             order.status = "cancelled"
             self._session.flush()
         return True
@@ -312,7 +314,7 @@ class BitstampAdapter:
         never duplicate. Order status is refreshed on the same pass.
         """
         del since  # dedupe is by stored fill count, not a time window
-        new_fills: list[Fill] = []
+        new_fills, self._pending_fills = self._pending_fills, []
         for order in self.open_orders():
             payload = self._order_status(order)
             if payload is None:

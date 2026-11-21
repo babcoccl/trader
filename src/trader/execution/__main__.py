@@ -1,5 +1,7 @@
 """Executor service (spec 2.4): drives orders for approved plans through the
-paper adapter, simulating against real 5-minute candles.
+mode's adapter — the paper adapter (simulating against real 5-minute
+candles) in paper mode, ``BitstampAdapter`` in live mode (spec 5.2), whose
+``place`` still refuses unless ``TRADER_LIVE_ENABLED=true``.
 
 Every 30 seconds, and once immediately at start-up:
 
@@ -41,7 +43,8 @@ from trader.core.config import get_settings
 from trader.core.db import session_scope
 from trader.core.logging import setup as setup_logging
 from trader.data.sources.base import SYMBOLS
-from trader.execution.base import LIMIT_TTL
+from trader.execution.base import LIMIT_TTL, ExecutionAdapter
+from trader.execution.bitstamp import BitstampAdapter
 from trader.execution.paper import PRIMARY_SOURCE, PaperAdapter
 from trader.ledger import accounting
 from trader.ledger.models import (
@@ -105,10 +108,19 @@ class Executor:
         cost: CostModel = BITSTAMP,
         clock: Clock | None = None,
         session_factory: Callable[[], AbstractContextManager[Session]] = session_scope,
+        live_adapter: Callable[[Session, str], ExecutionAdapter] | None = None,
     ) -> None:
         self._cost = cost
         self._clock = clock or SystemClock()
         self._session = session_factory
+        self._live_adapter = live_adapter
+
+    def _adapter(self, session: Session, mode: str) -> ExecutionAdapter:
+        if mode != "live":
+            return PaperAdapter(session, self._cost, self._clock, mode)
+        if self._live_adapter is not None:
+            return self._live_adapter(session, mode)
+        return BitstampAdapter.from_env(session, self._clock, mode)
 
     # -- loop ---------------------------------------------------------------
 
@@ -116,7 +128,7 @@ class Executor:
         """One full executor pass; also the start-up emergency check."""
         with self._session() as session:
             mode = get_settings().mode
-            adapter = PaperAdapter(session, self._cost, self._clock, mode)
+            adapter = self._adapter(session, mode)
             now = self._clock.now()
             self._emergency_stop(session, adapter, mode, now)
             self._flatten(session, adapter, mode, now)
@@ -137,6 +149,8 @@ class Executor:
             # converts to market here instead.
             self._collect_fills(session, adapter, now)
             self._apply_time_rules(session, adapter, now)
+            # A venue cancel can surface fills executed just before it.
+            self._collect_fills(session, adapter, now)
             prices = _latest_prices(session)
             if prices:
                 risk.update_equity(
@@ -166,7 +180,7 @@ class Executor:
     # -- steps ----------------------------------------------------------------
 
     def _emergency_stop(
-        self, session: Session, adapter: PaperAdapter, mode: str, now: datetime
+        self, session: Session, adapter: ExecutionAdapter, mode: str, now: datetime
     ) -> None:
         prices = _latest_prices(session)
         for asset, qty in accounting.positions(session, mode).items():
@@ -197,10 +211,7 @@ class Executor:
             order = self._new_order(
                 session, plan, type="market", quantity=qty, side="sell"
             )
-            adapter.place(order)
-            fill = adapter.fill_now(order, adapter.market_sell_price(price), now)
-            session.add(fill)
-            accounting.apply_fill(session, fill)
+            self._sell_now(session, adapter, order, price, now)
             session.add(
                 Event(
                     time=now,
@@ -222,7 +233,7 @@ class Executor:
             )
 
     def _flatten(
-        self, session: Session, adapter: PaperAdapter, mode: str, now: datetime
+        self, session: Session, adapter: ExecutionAdapter, mode: str, now: datetime
     ) -> None:
         """``risk.flatten_requested`` sells every position at market, then
         clears the flag. The sell needs a plan for the orders FK, so a
@@ -267,10 +278,7 @@ class Executor:
             session.add(plan)
             session.flush()
             order = self._new_order(session, plan, type="market", quantity=qty)
-            adapter.place(order)
-            fill = adapter.fill_now(order, adapter.market_sell_price(price), now)
-            session.add(fill)
-            accounting.apply_fill(session, fill)
+            self._sell_now(session, adapter, order, price, now)
         risk.flatten_done(session, actor="executor")
         session.add(
             Event(
@@ -283,7 +291,7 @@ class Executor:
         )
 
     def _place_approved(
-        self, session: Session, adapter: PaperAdapter, mode: str, halted: bool
+        self, session: Session, adapter: ExecutionAdapter, mode: str, halted: bool
     ) -> None:
         plans = session.scalars(
             select(Plan).where(Plan.status == "approved").order_by(Plan.id)
@@ -325,7 +333,7 @@ class Executor:
         }
 
     def _apply_time_rules(
-        self, session: Session, adapter: PaperAdapter, now: datetime
+        self, session: Session, adapter: ExecutionAdapter, now: datetime
     ) -> None:
         plans = self._approved_plans(session)
         for order in adapter.open_orders():
@@ -363,7 +371,7 @@ class Executor:
                     )
 
     def _collect_fills(
-        self, session: Session, adapter: PaperAdapter, now: datetime
+        self, session: Session, adapter: ExecutionAdapter, now: datetime
     ) -> None:
         open_orders = adapter.open_orders()
         since = min((o.created_at for o in open_orders), default=now) - timedelta(
@@ -433,8 +441,24 @@ class Executor:
 
     # -- helpers ----------------------------------------------------------
 
+    def _sell_now(
+        self,
+        session: Session,
+        adapter: ExecutionAdapter,
+        order: Order,
+        price: Decimal,
+        now: datetime,
+    ) -> None:
+        """Place an emergency-stop or flatten market sell. Paper fills it
+        at once; a live venue reports the fill through ``poll_fills``."""
+        adapter.place(order)
+        if isinstance(adapter, PaperAdapter):
+            fill = adapter.fill_now(order, adapter.market_sell_price(price), now)
+            session.add(fill)
+            accounting.apply_fill(session, fill)
+
     def _cancel_symbol_orders(
-        self, session: Session, adapter: PaperAdapter, symbol: str
+        self, session: Session, adapter: ExecutionAdapter, symbol: str
     ) -> None:
         for order in adapter.open_orders():
             if order.symbol == symbol and not order.shadow:

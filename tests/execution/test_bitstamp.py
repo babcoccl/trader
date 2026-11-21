@@ -8,7 +8,8 @@ import hashlib
 import hmac
 import json
 import os
-from datetime import UTC, datetime
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -19,13 +20,15 @@ from sqlalchemy.orm import Session
 
 from trader.core.clock import FrozenClock
 from trader.core.config import get_settings
+from trader.execution.__main__ import Executor
 from trader.execution.bitstamp import (
     BitstampAdapter,
     BitstampError,
     LiveTradingDisabledError,
     sign,
 )
-from trader.ledger.models import (  # noqa: F401 — tables for the clean-up fixture
+from trader.ledger import accounting
+from trader.ledger.models import (
     AuditLog,
     Balance,
     Candle,
@@ -499,8 +502,172 @@ def test_cancel_collects_pending_fills(db) -> None:
             "/api/v2/order_status/": _fixture("order_status_partial.json"),
         }
     )
-    assert _adapter(t, session=db).cancel("1458532827766784") is True
+    adapter = _adapter(t, session=db)
+    assert adapter.cancel("1458532827766784") is True
     assert order.status == "cancelled"
-    stored = db.scalars(select(Fill).where(Fill.order_id == order.id)).all()
-    assert len(stored) == 1
-    assert stored[0].quantity == Decimal("0.001")
+    # The cancelled order left the open set; its fill comes out of the
+    # next poll_fills exactly once.
+    (fill,) = adapter.poll_fills(NOW)
+    assert fill.order_id == order.id
+    assert fill.quantity == Decimal("0.001")
+    assert adapter.poll_fills(NOW) == []
+
+
+# -- executor wiring (live mode) -------------------------------------------
+
+
+def _live_executor(db: Session, t: FakeTransport) -> Executor:
+    return Executor(
+        clock=FrozenClock(NOW),
+        session_factory=lambda: _cm(db),
+        live_adapter=lambda session, mode: _adapter(t, session=session, mode=mode),
+    )
+
+
+@contextmanager
+def _cm(session: Session):
+    yield session
+    session.commit()
+
+
+def _approved_buy_plan(db: Session) -> Plan:
+    decision = Decision(
+        cycle="daily", ran_at=NOW, action="none", reason="seed", details={}
+    )
+    db.add(decision)
+    db.flush()
+    plan = Plan(
+        sleeve="trend",
+        symbol="BTC-USD",
+        side="buy",
+        status="approved",
+        reference_price=Decimal("49000"),
+        target_weight=Decimal("0.5"),
+        entry_orders=[
+            {"side": "buy", "type": "limit", "price": "49000", "quantity": "0.002"}
+        ],
+        worst_case_loss=Decimal("0"),
+        est_fees=Decimal("0"),
+        rationale="test",
+        expires_at=NOW,
+        decided_at=NOW,
+        decision_id=decision.id,
+    )
+    db.add(plan)
+    db.flush()
+    return plan
+
+
+def test_executor_live_places_approved_plan_on_bitstamp(db) -> None:
+    plan = _approved_buy_plan(db)
+    t = FakeTransport(
+        posts={
+            "/api/v2/buy/btcusd/": _fixture("order_placed.json"),
+            "/api/v2/order_status/": _fixture("order_status_open.json"),
+        }
+    )
+    _live_executor(db, t).tick()
+    (order,) = db.scalars(select(Order).where(Order.plan_id == plan.id)).all()
+    assert order.venue == "bitstamp"
+    assert order.venue_order_id == "1458532827766784"
+    assert order.status == "open"
+    url, params, _ = t.calls[0]
+    assert url.endswith("/api/v2/buy/btcusd/")
+    assert params["moc_order"] == "true"
+
+
+def test_executor_live_refuses_without_live_enabled(db, monkeypatch) -> None:
+    monkeypatch.setenv("TRADER_LIVE_ENABLED", "false")
+    get_settings.cache_clear()
+    _approved_buy_plan(db)
+    t = FakeTransport()
+    with pytest.raises(LiveTradingDisabledError):
+        _live_executor(db, t).tick()
+    assert t.calls == []  # nothing reached the venue
+
+
+def test_executor_live_emergency_stop_sells_via_venue(db) -> None:
+    decision = Decision(
+        cycle="daily", ran_at=NOW, action="none", reason="seed", details={}
+    )
+    db.add(decision)
+    db.flush()
+    plan = Plan(
+        sleeve="trend",
+        symbol="BTC-USD",
+        side="buy",
+        status="completed",
+        reference_price=Decimal("60000"),
+        target_weight=Decimal("0.5"),
+        entry_orders=[],
+        stop_price=Decimal("50000"),
+        worst_case_loss=Decimal("0"),
+        est_fees=Decimal("0"),
+        rationale="test",
+        expires_at=NOW,
+        decided_at=NOW,
+        decision_id=decision.id,
+    )
+    db.add(plan)
+    db.flush()
+    db.add(
+        Order(
+            plan_id=plan.id,
+            venue="bitstamp",
+            client_order_id=f"{plan.id}-0",
+            venue_order_id="1",
+            symbol="BTC-USD",
+            side="buy",
+            type="limit",
+            quantity=Decimal("0.002"),
+            status="filled",
+            mode="live",
+        )
+    )
+    db.add(Balance(time=NOW, mode="live", asset="BTC", quantity=Decimal("0.002")))
+    db.add(Balance(time=NOW, mode="live", asset="USD", quantity=Decimal("0")))
+    db.add(
+        Candle(
+            symbol="BTC-USD",
+            interval="5m",
+            open_time=NOW - timedelta(minutes=10),
+            open=Decimal("49500"),
+            high=Decimal("49500"),
+            low=Decimal("48000"),
+            close=Decimal("49000"),
+            volume=Decimal("1"),
+            source="bitstamp",
+        )
+    )
+    db.flush()
+    finished_sell = {
+        "id": 77,
+        "status": "Finished",
+        "amount_remaining": "0",
+        "transactions": [
+            {
+                "tid": 1,
+                "price": "49000.00",
+                "usd": "98.00",
+                "btc": "0.00200000",
+                "fee": "0.40",
+                "datetime": "2026-11-21 11:59:00",
+                "type": 2,
+            }
+        ],
+    }
+    t = FakeTransport(
+        posts={
+            "/api/v2/sell/market/btcusd/": {"id": 77},
+            "/api/v2/order_status/": finished_sell,
+        }
+    )
+    _live_executor(db, t).tick()
+    assert t.calls[0][0].endswith("/api/v2/sell/market/btcusd/")
+    assert t.calls[0][1]["amount"] == "0.00200000"
+    sell = db.scalars(select(Order).where(Order.side == "sell")).one()
+    assert sell.status == "filled"
+    (fill,) = db.scalars(select(Fill).where(Fill.order_id == sell.id)).all()
+    assert fill.liquidity == "taker"
+    assert accounting.positions(db, "live") == {}
+    assert db.scalars(select(Event).where(Event.kind == "emergency_stop")).one()

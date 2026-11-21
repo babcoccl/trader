@@ -16,6 +16,7 @@ from trader.data.sources.base import SYMBOLS, Candle
 from trader.engine import daily_cycle
 from trader.ledger.models import Candle as CandleRow
 from trader.ledger.models import Decision, Signal
+from trader.strategy import rules
 
 TEST_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -135,6 +136,99 @@ def test_second_run_same_day_adds_nothing(session: Session) -> None:
     signals_before = session.scalar(select(func.count()).select_from(Signal))
     daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
     assert session.scalar(select(func.count()).select_from(Signal)) == signals_before
+
+
+def test_duplicate_source_days_deduped(session: Session) -> None:
+    """A day stored by two venues is counted once; the majority source wins."""
+    # A failover tail: the backup venue stored the last 60 days too.
+    rows = (
+        session.execute(
+            select(CandleRow)
+            .where(CandleRow.interval == "1d")
+            .order_by(CandleRow.open_time.desc())
+            .limit(60)
+        )
+        .scalars()
+        .all()
+    )
+    dupes = [
+        Candle(
+            symbol=r.symbol,
+            interval=r.interval,
+            open_time=r.open_time,
+            open=r.open * 2,
+            high=r.high * 2,
+            low=r.low * 2,
+            close=r.close * 2,
+            volume=r.volume,
+            source="coinbase",
+        )
+        for r in rows
+    ]
+    candles_mod.upsert(session, dupes)
+    session.commit()
+    clock = FrozenClock(datetime(2026, 11, 20, 0, 5, tzinfo=UTC))
+    decisions = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    session.commit()
+    assert len(decisions) == 2
+    # Expected k computed on deduped (bitstamp) closes, not the doubled count.
+    df = pd.read_csv(FIXTURE, parse_dates=["date"])
+    for d in decisions:
+        close = pd.Series(
+            df[f"{d.symbol}_close"].values,
+            index=pd.DatetimeIndex(df["date"]),
+        )
+        expected_k = sum(
+            1 for v in rules.all_rules(close).values() if v.iloc[-1] == 1.0
+        )
+        assert f"{expected_k} of 9 rules positive." in d.reason
+
+
+def test_blocked_day_reruns_once_data_arrives(session: Session) -> None:
+    """A blocked row must not suppress the day's real decisions."""
+    yesterday = datetime(2026, 11, 19, tzinfo=UTC)
+    gone = (
+        session.execute(
+            delete(CandleRow)
+            .where(
+                CandleRow.symbol == "BTC-USD",
+                CandleRow.interval == "1d",
+                CandleRow.open_time == yesterday,
+            )
+            .returning(CandleRow)
+        )
+        .scalars()
+        .one()
+    )
+    saved = {
+        c: getattr(gone, c)
+        for c in (
+            "symbol",
+            "interval",
+            "open_time",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "source",
+        )
+    }
+    session.commit()
+    clock = FrozenClock(datetime(2026, 11, 20, 0, 5, tzinfo=UTC))
+    rows = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    session.commit()
+    assert len(rows) == 1 and rows[0].action == "blocked"
+    # Data arrives; the same-day rerun now computes real decisions.
+    candles_mod.upsert(
+        session,
+        [Candle(**saved)],
+    )
+    session.commit()
+    rows = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    session.commit()
+    assert len(rows) == 2
+    assert all(r.action != "blocked" for r in rows)
 
 
 def test_reason_templates(session: Session) -> None:

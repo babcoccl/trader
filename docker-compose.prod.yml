@@ -1,0 +1,108 @@
+# Production stack for the owner's Ubuntu box (spec 4.3).
+# Self-contained: do NOT combine with docker-compose.yml — the dev file
+# publishes db and api on host ports, which the prod stack does not.
+#
+# Start:  docker compose -f docker-compose.prod.yml up -d
+#
+# Required environment (in .env next to this file):
+#   TRADER_DASHBOARD_PASSWORD  dashboard login password
+#   TRADER_LAN_ADDRESS         this box's LAN IP, e.g. 192.168.1.50
+# Optional:
+#   TRADER_POSTGRES_PASSWORD   defaults to "trader" (db is not exposed)
+#
+# The dashboard binds to ${TRADER_LAN_ADDRESS} only: reachable from the
+# LAN, never on localhost or other interfaces. The api and db services
+# publish no host ports.
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: ${TRADER_POSTGRES_PASSWORD:-trader}
+      POSTGRES_DB: trader
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trader"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:${TRADER_POSTGRES_PASSWORD:-trader}@db:5432/trader
+      TRADER_MODE: ${TRADER_MODE:-paper}
+      TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
+      TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
+      TRADER_DASHBOARD_PASSWORD: ${TRADER_DASHBOARD_PASSWORD:?set TRADER_DASHBOARD_PASSWORD in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn trader.api.app:app --host 0.0.0.0 --port 8000
+
+  collector:
+    build: .
+    restart: unless-stopped
+    environment:
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:${TRADER_POSTGRES_PASSWORD:-trader}@db:5432/trader
+      TRADER_MODE: ${TRADER_MODE:-paper}
+      TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
+      TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python -m trader.data.collector
+
+  engine:
+    build: .
+    restart: unless-stopped
+    environment:
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:${TRADER_POSTGRES_PASSWORD:-trader}@db:5432/trader
+      TRADER_MODE: ${TRADER_MODE:-paper}
+      TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
+      TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python -m trader.engine
+
+  executor:
+    build: .
+    restart: unless-stopped
+    environment:
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:${TRADER_POSTGRES_PASSWORD:-trader}@db:5432/trader
+      TRADER_MODE: ${TRADER_MODE:-paper}
+      TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
+      TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python -m trader.execution
+
+  watchdog:
+    build: .
+    restart: unless-stopped
+    environment:
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:${TRADER_POSTGRES_PASSWORD:-trader}@db:5432/trader
+      TRADER_MODE: ${TRADER_MODE:-paper}
+      TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
+      TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python -m trader.ops
+
+  web:
+    build: ./web
+    restart: unless-stopped
+    ports:
+      - "${TRADER_LAN_ADDRESS:?set TRADER_LAN_ADDRESS to this box's LAN IP in .env}:3000:80"
+    depends_on:
+      - api
+
+volumes:
+  db-data:

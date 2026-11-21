@@ -166,6 +166,36 @@ def test_duplicate_source_days_deduped(session: Session) -> None:
         for r in rows
     ]
     candles_mod.upsert(session, dupes)
+    # One mid-history day stored only by the backup venue.
+    orphan = (
+        session.execute(
+            delete(CandleRow)
+            .where(
+                CandleRow.symbol == "BTC-USD",
+                CandleRow.interval == "1d",
+                CandleRow.open_time == datetime(2025, 6, 1, tzinfo=UTC),
+            )
+            .returning(CandleRow)
+        )
+        .scalars()
+        .one()
+    )
+    candles_mod.upsert(
+        session,
+        [
+            Candle(
+                symbol=orphan.symbol,
+                interval=orphan.interval,
+                open_time=orphan.open_time,
+                open=orphan.open,
+                high=orphan.high,
+                low=orphan.low,
+                close=orphan.close,
+                volume=orphan.volume,
+                source="coinbase",
+            )
+        ],
+    )
     session.commit()
     clock = FrozenClock(datetime(2026, 11, 20, 0, 5, tzinfo=UTC))
     decisions = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())

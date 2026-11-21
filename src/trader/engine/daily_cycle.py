@@ -98,6 +98,7 @@ def run(
             df = df.assign(_primary=(df["source"] != preferred))
             df = df.sort_values("_primary", kind="stable")
             df = df[~df.index.duplicated(keep="first")].drop(columns="_primary")
+            df = df.sort_index()
         if yesterday not in df.index:
             reason = f"Yesterday's {symbol} candle is missing; no decision made."
             row = Decision(

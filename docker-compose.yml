@@ -21,6 +21,8 @@ services:
       TRADER_DATABASE_URL: postgresql+psycopg://trader:trader@db:5432/trader
       TRADER_MODE: paper
       TRADER_LOG_LEVEL: INFO
+      # Dashboard password; comes from the host environment or .env.
+      TRADER_DASHBOARD_PASSWORD: ${TRADER_DASHBOARD_PASSWORD:-}
     ports:
       - "8000:8000"
     depends_on:

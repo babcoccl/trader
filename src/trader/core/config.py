@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     mode: Literal["paper", "live"] = "paper"
     live_enabled: bool = False
     log_level: str = "INFO"
+    dashboard_password: str = ""
 
 
 @lru_cache

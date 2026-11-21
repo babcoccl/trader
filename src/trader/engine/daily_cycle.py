@@ -50,6 +50,9 @@ def _day_start(t: datetime) -> datetime:
 
 
 def _existing_today(session: Session, today: datetime) -> list[Decision]:
+    """Today's successful daily rows. ``blocked``/``error`` rows do not count:
+    a day blocked by missing candles (e.g. before the collector's first
+    backfill commits) must still get its real decisions once data arrives."""
     return list(
         session.execute(
             select(Decision)
@@ -57,6 +60,7 @@ def _existing_today(session: Session, today: datetime) -> list[Decision]:
                 Decision.cycle == "daily",
                 Decision.ran_at >= today,
                 Decision.ran_at < today + timedelta(days=1),
+                Decision.action.notin_(("blocked", "error")),
             )
             .order_by(Decision.id)
         ).scalars()
@@ -87,6 +91,13 @@ def run(
         df = candles_mod.load(
             session, symbol, "1d", datetime(1970, 1, 1, tzinfo=UTC), today
         )
+        # One day may exist from several venues (unique key includes source):
+        # keep one row per open_time, from the source covering the most days.
+        if df["source"].nunique() > 1:
+            preferred = df["source"].value_counts().idxmax()
+            df = df.assign(_primary=(df["source"] != preferred))
+            df = df.sort_values("_primary", kind="stable")
+            df = df[~df.index.duplicated(keep="first")].drop(columns="_primary")
         if yesterday not in df.index:
             reason = f"Yesterday's {symbol} candle is missing; no decision made."
             row = Decision(

@@ -1,6 +1,6 @@
 # Database schema
 
-PostgreSQL 16, created by the single Alembic revision `0001_schema`
+PostgreSQL 16, created by the Alembic revisions in `migrations/versions`
 (`alembic upgrade head`). Every table has `id BIGSERIAL PRIMARY KEY` and
 `created_at timestamptz NOT NULL DEFAULT now()` unless noted otherwise.
 All timestamps are `timestamptz`; all money and quantity columns are
@@ -26,7 +26,8 @@ UNIQUE (symbol, interval, open_time, source)
 | symbol | varchar(20) | |
 | venue | varchar(40) | |
 | time | timestamptz | indexed |
-| rate | NUMERIC(38,18) | |
+| rate | NUMERIC(38,18) | rate paid per settlement period, as a fraction (not annualised) |
+| interval_hours | integer | hours between settlements on the venue (e.g. 8 Binance, 1 Hyperliquid); CHECK > 0 |
 
 UNIQUE (symbol, venue, time)
 

@@ -199,6 +199,7 @@ def _seed(s: Session) -> dict[str, Any]:
             venue="binance",
             time=NOW - timedelta(hours=1),
             rate=Decimal("0.0001"),
+            interval_hours=8,
         )
     )
     s.add(Setting(key="t_bill_rate", value=0.04, updated_at=NOW))
@@ -298,8 +299,12 @@ def test_funding(seeded) -> None:
             "venue": "binance",
             "time": (NOW - timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
             "rate": "0.000100000000000000",
+            "interval_hours": 8,
+            "annual_rate": body["rates"][0]["annual_rate"],
         }
     ]
+    # 0.0001 per 8h settlement = 3 * 365 settlements a year.
+    assert Decimal(body["rates"][0]["annual_rate"]) == Decimal("0.1095")
 
 
 def test_login_wrong_password(seeded) -> None:

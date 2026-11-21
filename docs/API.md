@@ -119,12 +119,14 @@ timestamp are not skipped (same for `before_id` on `/api/decisions`).
 ### `GET /api/funding` → `FundingOut`
 
 Latest recorded funding rate per `(symbol, venue)` from `funding_rates`,
-plus the `t_bill_rate` setting the rate is compared against on the
-Positions screen (spec 3.4).
+plus the `t_bill_rate` setting it is compared against on the Positions
+screen (spec 3.4). `rate` is per settlement; `annual_rate` =
+`rate * 8760 / interval_hours`, the same annual basis as `t_bill_rate`.
 
 ```json
 {"rates": [{"symbol": "BTC-USD", "venue": "binance",
-  "time": "2026-11-21T17:00:00Z", "rate": "0.000100000000000000"}],
+  "time": "2026-11-21T17:00:00Z", "rate": "0.000100000000000000",
+  "interval_hours": 8, "annual_rate": "0.1095000000000000000"}],
  "t_bill_rate": 0.04}
 ```
 

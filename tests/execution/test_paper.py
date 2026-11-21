@@ -749,11 +749,21 @@ def test_expired_limit_fills_as_market_not_maker(session: Session) -> None:
     limit_order, market = _orders(session, plan)
     assert limit_order.status == "cancelled" and market.type == "market"
     assert _fills(session) == []
-    # The replacement market order fills at that candle's open, taker.
+    # Placed at that candle's close by the Clock, the market order fills at
+    # the next candle's open, taker.
+    _candle(
+        session,
+        "BTC-USD",
+        _next_candle(market.created_at),
+        "59900",
+        "59900",
+        "59900",
+        "59900",
+    )
     _executor(session).tick()
     (fill,) = _fills(session)
     assert fill.order_id == market.id and fill.liquidity == "taker"
-    assert fill.price == Decimal("60000") * (1 + Decimal(str(BITSTAMP.slippage)))
+    assert fill.price == Decimal("59900") * (1 + Decimal(str(BITSTAMP.slippage)))
 
 
 def test_pre_deadline_candle_earns_maker_fill_after_restart(

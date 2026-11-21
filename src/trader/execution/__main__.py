@@ -485,6 +485,8 @@ class Executor:
             quantity=quantity,
             status="new",
             mode=get_settings().mode,
+            # Placement time comes from the Clock, the same one fills use.
+            created_at=self._clock.now(),
         )
         session.add(order)
         session.flush()

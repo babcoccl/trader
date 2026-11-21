@@ -78,15 +78,37 @@ def test_annual_vol_nans_before_min_periods() -> None:
     assert result.iloc[20] > 0
 
 
+def test_annual_vol_missing_close_is_not_a_zero_return() -> None:
+    # Constant 1% daily returns with one missing close: if the gap were
+    # padded into a zero return the vol would be clearly positive.
+    close = pd.Series([100.0 * 1.01**i for i in range(40)])
+    close.iloc[30] = np.nan
+    assert sizing.annual_vol(close).iloc[39] < 1e-9
+
+
 def test_target_weights_basic_and_nan() -> None:
     w = sizing.target_weights({"A": 1.0, "B": float("nan")}, {"A": 0.40, "B": 0.40})
     assert w == {"A": 0.5, "B": 0.0}
 
 
-def test_target_weights_scales_above_one() -> None:
+def test_target_weights_full_signal_sums_to_one() -> None:
     w = sizing.target_weights({"A": 1.0, "B": 1.0}, {"A": 0.10, "B": 0.10})
     assert w == {"A": 0.5, "B": 0.5}
+
+
+def test_target_weights_normalizes_gross_above_one() -> None:
+    # Signals in [0, 1] cannot push the raw sum above 1.0, so use 3.0 to
+    # reach the normalization branch: raw 1.5 + 0.5 = 2.0 -> 0.75, 0.25.
+    w = sizing.target_weights({"A": 3.0, "B": 1.0}, {"A": 0.10, "B": 0.10})
+    assert w["A"] == pytest.approx(0.75)
+    assert w["B"] == pytest.approx(0.25)
     assert sum(w.values()) == pytest.approx(1.0)
+
+
+def test_target_weights_zero_vol_keeps_signal_weight() -> None:
+    w = sizing.target_weights({"A": 1.0, "B": 0.5}, {"A": 0.0, "B": 0.40})
+    assert w["A"] == pytest.approx(0.5)
+    assert w["B"] == pytest.approx(0.25)
 
 
 def test_target_weights_vol_target_scaling() -> None:

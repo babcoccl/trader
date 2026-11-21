@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from trader.backtest.costs import BITSTAMP
@@ -144,16 +144,25 @@ def run(
         }
 
     day = yesterday.date()
-    for symbol, a in per_asset.items():
-        for name, value in a["rules"].items():
+    # A retried day (all rows blocked) already stored these; re-inserting
+    # would violate signals' unique (symbol, day, rule).
+    signals_done = session.scalar(
+        select(func.count()).select_from(Signal).where(Signal.day == day)
+    )
+    if not signals_done:
+        for symbol, a in per_asset.items():
+            for name, value in a["rules"].items():
+                session.add(
+                    Signal(symbol=symbol, day=day, rule=name, value=Decimal(str(value)))
+                )
             session.add(
-                Signal(symbol=symbol, day=day, rule=name, value=Decimal(str(value)))
+                Signal(
+                    symbol=symbol,
+                    day=day,
+                    rule="ensemble",
+                    value=Decimal(str(a["signal"])),
+                )
             )
-        session.add(
-            Signal(
-                symbol=symbol, day=day, rule="ensemble", value=Decimal(str(a["signal"]))
-            )
-        )
 
     weights = sizing.target_weights(
         {s: a["signal"] for s, a in per_asset.items()},

@@ -237,6 +237,26 @@ def session():
     eng.dispose()
 
 
+def _fresh_5m(session: Session, at: datetime) -> None:
+    candles_mod.upsert(
+        session,
+        [
+            Candle(
+                symbol=symbol,
+                interval="5m",
+                open_time=at - timedelta(minutes=5),
+                open=Decimal("100"),
+                high=Decimal("100"),
+                low=Decimal("100"),
+                close=Decimal("100"),
+                volume=Decimal("0"),
+                source="fixture",
+            )
+            for symbol in SYMBOLS
+        ],
+    )
+
+
 def _portfolio(equity: Decimal, weights: dict[str, float]):
     return daily_cycle.CashOnlyPortfolio(equity_usd=equity, weights=weights)
 
@@ -275,6 +295,25 @@ def test_daily_cycle_blocked_when_halted(session: Session) -> None:
     # A vetoed plan is not saved; the exposure-reducing sell still is.
     plans = session.scalars(select(Plan)).all()
     assert all(p.side == "sell" and p.status == "approved" for p in plans)
+
+
+@NEEDS_DB
+def test_blocked_day_retries_after_halt_lifted(session: Session) -> None:
+    """An all-blocked day reruns without re-inserting the day's signals."""
+    risk_engine.halt(session, actor="test", reason="test halt")
+    clock = FrozenClock(NOW)
+    portfolio = _portfolio(EQUITY, {})
+    first = daily_cycle.run(session, clock, portfolio)
+    session.commit()
+    assert all(r.action == "blocked" for r in first)
+
+    risk_engine.resume(session, actor="test")
+    clock.advance(timedelta(minutes=10))
+    _fresh_5m(session, clock.now())
+    second = daily_cycle.run(session, clock, portfolio)  # must not IntegrityError
+    session.commit()
+    assert any(r.action == "plan_proposed" for r in second)
+    assert session.scalars(select(Plan)).all()
 
 
 @NEEDS_DB

@@ -680,6 +680,38 @@ def test_unfilled_plan_stop_does_not_govern(session: Session) -> None:
     assert event.details["plan_id"] == holding.id
 
 
+def test_same_candle_sell_funds_buy(session: Session) -> None:
+    """Within one candle a sell settles before a buy it funds, whatever the
+    order ids are."""
+    _balances(session, USD="1000", ETH="0.5")
+    buy_plan = _plan(
+        session, entry_orders=[{"type": "limit", "price": "60000", "quantity": "0.04"}]
+    )
+    sell_plan = _plan(
+        session,
+        symbol="ETH-USD",
+        side="sell",
+        entry_orders=[{"type": "market", "quantity": "0.5"}],
+    )
+    _executor(session).tick()
+    buy = _orders(session, buy_plan)[0]
+    sell = _orders(session, sell_plan)[0]
+    assert buy.id < sell.id
+    at = max(buy.created_at, sell.created_at)
+    t = _next_candle(at)
+    _candle(session, "ETH-USD", t, "3000", "3000", "3000", "3000")
+    _candle(session, "BTC-USD", t, "60000", "60000", "59900", "60000")
+
+    _executor(session).tick()
+
+    session.refresh(buy)
+    session.refresh(sell)
+    assert sell.status == "filled" and buy.status == "filled"
+    fills = _fills(session)
+    assert fills[0].order_id == sell.id and fills[1].order_id == buy.id
+    assert fills[1].liquidity == "maker"
+
+
 # --- worst-case taker setting -------------------------------------------------
 
 

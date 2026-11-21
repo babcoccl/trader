@@ -93,9 +93,10 @@ class PaperAdapter:
         """Simulate every open order against candles opened after ``since``.
 
         Returns the new ``Fill`` objects, not yet added to the session, in
-        candle-time order so the caller applies sells before the buys they
-        fund. Idempotent: an order that fills leaves the open set, so a
-        replayed ``since`` window never fills it twice.
+        candle-time order — sells before buys within one candle, since sells
+        free the cash and cut the exposure — so the caller applies sells
+        before the buys they fund. Idempotent: an order that fills leaves
+        the open set, so a replayed ``since`` window never fills it twice.
         """
         assume_taker = self._assume_taker()
         symbols = {o.symbol for o in self.open_orders()}
@@ -112,7 +113,7 @@ class PaperAdapter:
                         (candle.open_time, order.id, order, price, liquidity)
                     )
                     break  # full fill only; order is done
-        candidates.sort(key=lambda c: (c[0], c[1]))
+        candidates.sort(key=lambda c: (c[0], c[2].side != "sell", c[1]))
         new_fills: list[Fill] = []
         for time, _, order, price, liquidity in candidates:
             new_fills.append(self._make_fill(order, time, price, liquidity))

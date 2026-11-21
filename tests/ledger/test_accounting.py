@@ -267,6 +267,65 @@ def test_cost_basis_average(session: Session) -> None:
     assert accounting.cost_basis(session, "paper", "BTC-USD") == Decimal("150")
 
 
+def test_cost_basis_sell_fee_keeps_basis(session: Session) -> None:
+    """A USD fee on a sale adjusts proceeds, not the remaining basis."""
+    accounting.deposit(session, "paper", Decimal("100000"), FrozenClock(T0))
+    for i, (price, fee) in enumerate(((100, 0), (100, 0))):
+        accounting.apply_fill(
+            session,
+            _fill(
+                session,
+                "buy",
+                Decimal(price),
+                Decimal("1"),
+                Decimal(fee),
+                T0 + timedelta(minutes=i),
+            ),
+        )
+    accounting.apply_fill(
+        session,
+        _fill(
+            session,
+            "sell",
+            Decimal("150"),
+            Decimal("1"),
+            Decimal("1"),
+            T0 + timedelta(minutes=2),
+        ),
+    )
+    session.commit()
+    assert accounting.cost_basis(session, "paper", "BTC-USD") == Decimal("100")
+
+
+def test_cost_basis_base_currency_fee(session: Session) -> None:
+    """A fee paid in BTC shrinks the tracked holding, mirroring _apply."""
+    accounting.deposit(session, "paper", Decimal("100000"), FrozenClock(T0))
+    fill = _fill(session, "buy", Decimal("100"), Decimal("1"), Decimal("0"), T0)
+    # Rewrite the fee to base currency.
+    fill.fee = Decimal("0.01")
+    fill.fee_currency = "BTC"
+    accounting.apply_fill(session, fill)
+    session.commit()
+    assert accounting.positions(session, "paper") == {"BTC": Decimal("0.99")}
+    basis = accounting.cost_basis(session, "paper", "BTC-USD")
+    assert basis == pytest.approx(Decimal("101.01010101010101"))
+    # Full exit leaves no residual holding or basis.
+    accounting.apply_fill(
+        session,
+        _fill(
+            session,
+            "sell",
+            Decimal("150"),
+            Decimal("0.99"),
+            Decimal("0"),
+            T0 + timedelta(minutes=1),
+        ),
+    )
+    session.commit()
+    assert accounting.positions(session, "paper") == {}
+    assert accounting.cost_basis(session, "paper", "BTC-USD") == Decimal(0)
+
+
 def test_equity_and_portfolio_view(session: Session) -> None:
     accounting.deposit(session, "paper", Decimal("10000"), FrozenClock(T0))
     accounting.apply_fill(

@@ -145,20 +145,23 @@ def cost_basis(session: Session, mode: str, symbol: str) -> Decimal:
     held = Decimal(0)
     total_cost = Decimal(0)
     for fill, order in rows:
+        base_fee = fill.fee if fill.fee_currency == base else Decimal(0)
+        quote_fee = fill.fee - base_fee
         if order.side == "buy":
-            fee = fill.fee if fill.fee_currency != base else Decimal(0)
-            total_cost += fill.price * fill.quantity + fee
-            held += fill.quantity
+            total_cost += fill.price * fill.quantity + quote_fee
+            held += fill.quantity - base_fee
         else:
             if held < fill.quantity:
                 raise ValueError(
                     f"cannot sell {fill.quantity} {base}: only {held} held"
                 )
             avg = total_cost / held if held else Decimal(0)
-            held -= fill.quantity
+            held -= fill.quantity + base_fee
+            if held < 0:
+                raise ValueError(
+                    f"fee of {fill.fee} {base} exceeds {base} balance"
+                )
             total_cost = avg * held
-            if fill.fee_currency != base:
-                total_cost = max(total_cost - fill.fee, Decimal(0))
     if held == 0:
         return Decimal(0)
     return _q(total_cost / held)

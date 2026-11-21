@@ -9,6 +9,7 @@ bids are parked until spec 5.5.
 
 import logging
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import pandas as pd
@@ -64,7 +65,7 @@ def _nearest_stop_distance(session: Session, symbol: str, price: float) -> float
     )
     if stop is None:
         return None
-    return float(price - float(stop)) / price
+    return float((Decimal(str(price)) - stop) / Decimal(str(price)))
 
 
 def _finite(x: float | None) -> float | None:
@@ -75,7 +76,7 @@ def _finite(x: float | None) -> float | None:
 
 
 def _bid_distance(price: float, bid: float) -> float:
-    return (price - bid) / price
+    return float((Decimal(str(price)) - Decimal(str(bid))) / Decimal(str(price)))
 
 
 def run(session: Session, clock: Clock) -> Decision:
@@ -151,7 +152,7 @@ def run(session: Session, clock: Clock) -> Decision:
         if (d := per_asset[s]["nearest_stop_distance"]) is not None
     }
     if stops:
-        nearest = max(stops, key=lambda s: stops[s])
+        nearest = min(stops, key=lambda s: stops[s])
         stop_part = (
             f"Nearest stop is {stops[nearest]:.1%} under {nearest.split('-')[0]}."
         )

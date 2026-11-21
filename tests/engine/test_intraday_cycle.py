@@ -15,7 +15,7 @@ from trader.data import candles as candles_mod
 from trader.data.sources.base import SYMBOLS, Candle
 from trader.engine import intraday_cycle
 from trader.ledger.models import Candle as CandleRow
-from trader.ledger.models import Decision, Signal
+from trader.ledger.models import Decision, Plan, Signal
 from trader.strategy import dip_bid
 
 TEST_URL = os.environ.get("TEST_DATABASE_URL")
@@ -71,7 +71,7 @@ def session():
     engine = create_engine(TEST_URL)
     _alembic("upgrade", "head")
     with Session(engine) as s:
-        for table in (CandleRow, Decision, Signal):
+        for table in (Plan, CandleRow, Decision, Signal):
             s.execute(delete(table))
         # Last closed bar opens at the 5-minute boundary just under NOW.
         last_open = NOW.replace(second=0, microsecond=0) - timedelta(minutes=5)
@@ -147,6 +147,50 @@ def test_sigma_matches_function(session: Session) -> None:
     assert row.details["per_asset"]["BTC-USD"]["hourly_sigma"] == pytest.approx(
         expected
     )
+
+
+def test_nearest_stop_distance(session: Session) -> None:
+    """Open plans' stops: details hold per-asset distance and the reason
+    names the nearest (smallest-distance) stop, not the farthest."""
+    anchor = Decision(
+        cycle="daily",
+        ran_at=NOW,
+        action="none",
+        reason="seed",
+        details={},
+    )
+    session.add(anchor)
+    session.flush()
+    for symbol, stop in (("BTC-USD", "59000"), ("ETH-USD", "1000")):
+        session.add(
+            Plan(
+                sleeve="trend",
+                symbol=symbol,
+                side="buy",
+                status="approved",
+                reference_price=Decimal("60000"),
+                target_weight=Decimal("0.5"),
+                entry_orders=[],
+                stop_price=Decimal(stop),
+                worst_case_loss=Decimal("0"),
+                est_fees=Decimal("0"),
+                rationale="seed",
+                expires_at=NOW + timedelta(hours=6),
+                decision_id=anchor.id,
+            )
+        )
+    session.commit()
+    row = intraday_cycle.run(session, FrozenClock(NOW))
+    session.commit()
+    per_asset = row.details["per_asset"]
+    # BTC stop ~1.5% under price; ETH stop ~40% under. Nearest = BTC.
+    assert per_asset["BTC-USD"]["nearest_stop_distance"] == pytest.approx(
+        (per_asset["BTC-USD"]["last_price"] - 59000)
+        / per_asset["BTC-USD"]["last_price"],
+        rel=1e-9,
+    )
+    assert "Nearest stop is" in row.reason
+    assert "under BTC." in row.reason
 
 
 def test_stale_data_blocked(session: Session) -> None:

@@ -46,29 +46,29 @@ function PlanPanel({ id, onClose }: { id: number; onClose: () => void }) {
       </div>
       <p>{p.rationale}</p>
       <table className="data-table">
-        <tbody>
-          <tr>
-            <td>Status</td>
-            <td>{p.status}</td>
-          </tr>
-          <tr>
-            <td>Stop</td>
-            <td>{p.stop_price ? usd(p.stop_price) : "—"}</td>
-          </tr>
-          <tr>
-            <td>Worst case</td>
-            <td>{usd(p.worst_case_loss)}</td>
-          </tr>
-          <tr>
-            <td>Est. fees</td>
-            <td>{usd(p.est_fees)}</td>
-          </tr>
-          <tr>
-            <td>Expires</td>
-            <td>{p.expires_at.slice(0, 16).replace("T", " ")}Z</td>
-          </tr>
-        </tbody>
-      </table>
+          <tbody>
+            <tr>
+              <td>Status</td>
+              <td>{p.status}</td>
+            </tr>
+            <tr>
+              <td>Stop</td>
+              <td>{p.stop_price ? usd(p.stop_price) : "—"}</td>
+            </tr>
+            <tr>
+              <td>Worst case</td>
+              <td>{usd(p.worst_case_loss)}</td>
+            </tr>
+            <tr>
+              <td>Est. fees</td>
+              <td>{usd(p.est_fees)}</td>
+            </tr>
+            <tr>
+              <td>Expires</td>
+              <td>{p.expires_at.slice(0, 16).replace("T", " ")}Z</td>
+            </tr>
+          </tbody>
+        </table>
     </div>
   );
 }
@@ -88,61 +88,63 @@ export function Positions() {
         {positions.data.length === 0 ? (
           <p className="muted">All cash. No positions.</p>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Asset</th>
-                <th>Value</th>
-                <th>Share</th>
-                <th>Avg price</th>
-                <th>Gain</th>
-                <th>Stop</th>
-                <th>Resting orders</th>
-                <th>Plan</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.data.map((p) => (
-                <tr key={p.symbol}>
-                  <td>
-                    {p.asset}
-                    <div className="muted">{p.quantity}</div>
-                  </td>
-                  <td>{usd(p.value_usd)}</td>
-                  <td>{pct(p.share)}</td>
-                  <td>{p.avg_cost ? usd(p.avg_cost) : "—"}</td>
-                  <td>
-                    {p.unrealised_gain_usd === null
-                      ? "—"
-                      : usd(p.unrealised_gain_usd)}
-                  </td>
-                  <td>{p.stop_price ? usd(p.stop_price) : "—"}</td>
-                  <td>
-                    {p.resting_orders.length === 0
-                      ? "—"
-                      : p.resting_orders.map((o) => (
-                          <div key={o.id}>
-                            {o.side} {o.type} {o.quantity} @{" "}
-                            {o.price ? usd(o.price) : "market"} ({o.status})
-                          </div>
-                        ))}
-                  </td>
-                  <td>
-                    {p.plan_id === null ? (
-                      "—"
-                    ) : (
-                      <button
-                        className="link-button"
-                        onClick={() => setPlanId(p.plan_id)}
-                      >
-                        plan {p.plan_id}
-                      </button>
-                    )}
-                  </td>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>Value</th>
+                  <th>Share</th>
+                  <th>Avg price</th>
+                  <th>Gain</th>
+                  <th>Stop</th>
+                  <th>Resting orders</th>
+                  <th>Plan</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {positions.data.map((p) => (
+                  <tr key={p.symbol}>
+                    <td>
+                      {p.asset}
+                      <div className="muted">{p.quantity}</div>
+                    </td>
+                    <td>{usd(p.value_usd)}</td>
+                    <td>{pct(p.share)}</td>
+                    <td>{p.avg_cost ? usd(p.avg_cost) : "—"}</td>
+                    <td>
+                      {p.unrealised_gain_usd === null
+                        ? "—"
+                        : usd(p.unrealised_gain_usd)}
+                    </td>
+                    <td>{p.stop_price ? usd(p.stop_price) : "—"}</td>
+                    <td>
+                      {p.resting_orders.length === 0
+                        ? "—"
+                        : p.resting_orders.map((o) => (
+                            <div key={o.id}>
+                              {o.side} {o.type} {o.quantity} @{" "}
+                              {o.price ? usd(o.price) : "market"} ({o.status})
+                            </div>
+                          ))}
+                    </td>
+                    <td>
+                      {p.plan_id === null ? (
+                        "—"
+                      ) : (
+                        <button
+                          className="link-button"
+                          onClick={() => setPlanId(p.plan_id)}
+                        >
+                          plan {p.plan_id}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         <FundingWatch />
       </div>

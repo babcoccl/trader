@@ -192,7 +192,7 @@ class Executor:
                     Plan.stop_price.is_not(None),
                     Plan.status.in_(("approved", "completed")),
                 )
-                .order_by(Plan.stop_price.desc())
+                .order_by(Plan.id.desc())
                 .limit(1)
             ).first()
             if plan is None or plan.stop_price is None or price > plan.stop_price:

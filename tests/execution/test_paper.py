@@ -604,6 +604,28 @@ def test_halt_cancels_buys_and_blocks_new(session: Session) -> None:
     assert _orders(session, buy_plan) == []
 
 
+def test_old_stop_does_not_liquidate_new_position(session: Session) -> None:
+    """After a full exit and re-entry, the newest stop-bearing plan governs;
+    an older plan's higher stop must not fire."""
+    _balances(session, BTC="0.5", USD="0")
+    _plan(session, status="completed", stop_price=Decimal("55000"))
+    _plan(session, status="completed", stop_price=Decimal("45000"))
+    _candle(
+        session,
+        "BTC-USD",
+        _now() - timedelta(minutes=5),
+        "50000",
+        "50000",
+        "49000",
+        "50000",
+    )
+
+    _executor(session).tick()
+
+    assert accounting.positions(session, "paper") == {"BTC": Decimal("0.5")}
+    assert _fills(session) == []
+
+
 # --- worst-case taker setting -------------------------------------------------
 
 

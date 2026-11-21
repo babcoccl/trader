@@ -32,7 +32,8 @@ from trader.data.sources.base import (
 )
 from trader.data.sources.bitstamp import BitstampSource
 from trader.data.sources.coinbase import CoinbaseSource
-from trader.ledger.models import Event, Heartbeat
+from trader.ledger.models import Event
+from trader.ops.heartbeat import beat
 
 log = logging.getLogger(__name__)
 
@@ -113,14 +114,7 @@ class Collector:
         return candles_mod.upsert(session, got, now=self._clock.now())
 
     def _heartbeat(self, session: Session, status: str, detail: str) -> None:
-        session.add(
-            Heartbeat(
-                service="collector",
-                time=self._clock.now(),
-                status=status,
-                detail=detail,
-            )
-        )
+        beat(session, "collector", status, detail)
 
     def run_once(self, session: Session) -> int:
         """One loop: recent 5m candles, yesterday's 1d, heartbeat. Rows written."""

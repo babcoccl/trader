@@ -2,14 +2,22 @@
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
+
+from trader.core.clock import Clock, SystemClock
+
+_UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
 
 
 class _JsonFormatter(logging.Formatter):
+    def __init__(self, clock: Clock) -> None:
+        super().__init__()
+        self._clock = clock
+
     def format(self, record: logging.LogRecord) -> str:
         entry: dict[str, Any] = {
-            "ts": datetime.now(UTC).isoformat(),
+            "ts": datetime.isoformat(self._clock.now()),
             "level": record.levelname,
             "service": getattr(record, "service", "trader"),
             "msg": record.getMessage(),
@@ -19,20 +27,32 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(entry)
 
 
-def setup(service: str = "trader", level: str = "INFO") -> None:
-    """Configure the root logger to emit one JSON object per line."""
+class _ServiceFilter(logging.Filter):
+    def __init__(self, service: str) -> None:
+        super().__init__()
+        self._service = service
 
-    class _ServiceFilter(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            if not hasattr(record, "service"):
-                record.service = service
-            return True
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "service"):
+            record.service = self._service
+        return True
 
+
+def setup(
+    service: str = "trader", level: str = "INFO", clock: Clock | None = None
+) -> None:
+    """Configure the root and uvicorn loggers to emit one JSON object per line."""
     handler = logging.StreamHandler()
-    handler.setFormatter(_JsonFormatter())
-    handler.addFilter(_ServiceFilter())
+    handler.setFormatter(_JsonFormatter(clock or SystemClock()))
+    handler.addFilter(_ServiceFilter(service))
 
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level.upper())
+
+    for name in _UVICORN_LOGGERS:
+        logger = logging.getLogger(name)
+        logger.handlers = [handler]
+        logger.propagate = False
+        logger.setLevel(level.upper())

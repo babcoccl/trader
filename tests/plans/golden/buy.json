@@ -1,0 +1,24 @@
+{
+  "sleeve": "trend",
+  "symbol": "BTC-USD",
+  "side": "buy",
+  "status": "pending",
+  "reference_price": "50000.000000000000000000",
+  "target_weight": "0.400000000000000000",
+  "entry_orders": [
+    {
+      "side": "buy",
+      "type": "limit",
+      "price": "50000.00",
+      "quantity": "0.08",
+      "market_after_seconds": 3600,
+      "maker_or_cancel": true,
+      "reprice_seconds": 300
+    }
+  ],
+  "stop_price": "37585.91",
+  "worst_case_loss": "1025.927200000000000000",
+  "est_fees": "32.800000000000000000",
+  "rationale": "I would like to raise BTC-USD from 0% to 40% of the account because 7 of 9 trend rules are positive and volatility is 50% a year.",
+  "expires_at": "2026-11-20T06:05:00+00:00"
+}

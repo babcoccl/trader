@@ -30,7 +30,7 @@ def _url() -> str:
         return url
     from trader.core.config import Settings
 
-    return Settings(_env_file=None).database_url
+    return Settings().database_url
 
 
 def run_migrations_offline() -> None:

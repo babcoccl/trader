@@ -1,0 +1,5 @@
+{
+  "currency_pair": "btcusd",
+  "market": "btcusd",
+  "fees": {"maker": "0.30000", "taker": "0.40000"}
+}

@@ -1,0 +1,6 @@
+[
+  {"currency": "usd", "total": "1000.00", "available": "900.00", "reserved": "100.00"},
+  {"currency": "btc", "total": "0.00200000", "available": "0.00200000", "reserved": "0"},
+  {"currency": "eth", "total": "0", "available": "0", "reserved": "0"},
+  {"currency": "eur", "total": "0", "available": "0", "reserved": "0"}
+]

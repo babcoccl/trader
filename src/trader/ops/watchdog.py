@@ -16,8 +16,9 @@ Conditions:
   cycle: more than 10 minutes since the bar closed);
 - ledger balances (replayed from deposits and fills) differ from the
   execution adapter's ``balances()`` (checked only where an adapter
-  exists: paper mode today, whose adapter reports the stored ``balances``
-  rows; spec 5.2 adds the live one).
+  exists: paper mode's adapter reports the stored ``balances`` rows;
+  live mode delegates to ``execution.reconcile`` (spec 5.2), which also
+  compares open orders with the venue).
 
 Every 3 hours ``check`` also writes one ``kind="heartbeat_summary"`` event
 counting the price checks (intraday decisions), errors and alarm activity
@@ -77,7 +78,7 @@ def _adapter_for(session: Session, mode: str, clock: Clock) -> ExecutionAdapter 
     """The venue adapter for ``mode``, or None where none exists yet."""
     if mode == "paper":
         return PaperAdapter(session, BITSTAMP, clock, mode)
-    return None  # live adapter arrives with spec 5.2
+    return None  # live mode reconciles through execution.reconcile instead
 
 
 def _conditions(session: Session, clock: Clock) -> list[Alarm]:
@@ -154,8 +155,16 @@ def _conditions(session: Session, clock: Clock) -> list[Alarm]:
                 )
             )
 
-    # 5. Ledger balances differ from the adapter's balances.
-    adapter = _adapter_for(session, get_settings().mode, clock)
+    # 5. Ledger balances (and, live, open orders) differ from the venue.
+    mode = get_settings().mode
+    if mode == "live":
+        # Spec 5.2: reconcile.run compares balances and open orders with
+        # the venue every minute and alarms on any difference over $0.01.
+        from trader.execution import reconcile
+
+        alarms.extend(reconcile.run(session, clock, mode=mode))
+        return alarms
+    adapter = _adapter_for(session, mode, clock)
     if adapter is not None:
         # Ledger side is replayed from deposits and fills, so it is
         # independent of the stored balances the paper adapter reports.

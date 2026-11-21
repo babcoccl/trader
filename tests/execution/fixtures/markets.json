@@ -1,0 +1,32 @@
+[
+  {
+    "name": "BTC/USD",
+    "market_symbol": "btcusd",
+    "base_currency": "BTC",
+    "base_decimals": 8,
+    "counter_currency": "USD",
+    "counter_decimals": 2,
+    "minimum_order_value": "10.0",
+    "maximum_order_value": "10000000.0",
+    "minimum_order_amount": "0.00001",
+    "trading": "Enabled",
+    "instant_and_market_orders": "Enabled",
+    "description": "Bitcoin / U.S. dollar",
+    "market_type": "SPOT"
+  },
+  {
+    "name": "ETH/USD",
+    "market_symbol": "ethusd",
+    "base_currency": "ETH",
+    "base_decimals": 8,
+    "counter_currency": "USD",
+    "counter_decimals": 2,
+    "minimum_order_value": "10.0",
+    "maximum_order_value": "10000000.0",
+    "minimum_order_amount": "0.001",
+    "trading": "Enabled",
+    "instant_and_market_orders": "Enabled",
+    "description": "Ether / U.S. dollar",
+    "market_type": "SPOT"
+  }
+]

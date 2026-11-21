@@ -198,6 +198,7 @@ def test_quiet_day_has_closing_line(session: Session) -> None:
 def test_day_with_fill_lists_it(session: Session) -> None:
     _quiet_day(session)
     clock = FrozenClock(START + timedelta(hours=9))
+    accounting.deposit(session, "paper", Decimal("10000"), clock)
     plan = _plan(session, "approved", clock)
     _fill(session, plan)
     session.commit()

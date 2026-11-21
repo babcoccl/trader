@@ -24,7 +24,6 @@ from trader.core.config import get_settings
 from trader.data.sources.base import SYMBOLS
 from trader.ledger import accounting
 from trader.ledger.models import (
-    Balance,
     Candle,
     Decision,
     Digest,
@@ -94,21 +93,10 @@ def _end_prices(session: Session, end: datetime) -> dict[str, Decimal]:
 
 
 def _state_at(session: Session, mode: str, before: datetime) -> dict[str, Decimal]:
-    """Balances as of ``before``: the latest ``balances`` row per asset
-    written before that time (last row id wins, as in the ledger)."""
-    rows = (
-        session.execute(
-            select(Balance)
-            .where(Balance.mode == mode, Balance.time < before)
-            .order_by(Balance.id)
-        )
-        .scalars()
-        .all()
-    )
-    state: dict[str, Decimal] = {}
-    for row in rows:  # ascending id: a later row overwrites its asset
-        state[row.asset] = row.quantity
-    return state
+    """Balances as of ``before``, replayed from deposits and fills. The
+    ``balances`` table cannot answer this: ``accounting.rebuild``
+    rewrites every row at the last transaction's time."""
+    return accounting._replay(session, mode, before)[0]
 
 
 def _equity_at(
@@ -251,18 +239,22 @@ def build(session: Session, day: date) -> Digest:
     )
     for status in ("denied", "expired", "voided"):
         plan_counts[status] = sum(1 for p in decided if p.status == status)
-    plan_counts["completed"] = (
-        session.scalar(
-            select(func.count())
-            .select_from(Event)
-            .where(
-                Event.kind == "plan_completed",
-                Event.time >= start,
-                Event.time < end,
+    completed_events = session.scalars(
+        select(Event).where(
+            Event.kind == "plan_completed",
+            Event.time >= start,
+            Event.time < end,
+        )
+    ).all()
+    plan_counts["completed"] = len(completed_events)
+    completed_plans = {
+        p.id: p
+        for p in session.scalars(
+            select(Plan).where(
+                Plan.id.in_([e.details["plan_id"] for e in completed_events])
             )
         )
-        or 0
-    )
+    }
 
     fill_rows = session.execute(
         select(Fill, Order)
@@ -314,7 +306,7 @@ def build(session: Session, day: date) -> Digest:
     lines.append("")
 
     lines.append("## Plans")
-    if proposed or decided:
+    if proposed or decided or completed_events:
         lines.append(
             "Proposed: {proposed}. Decided: {decided}.".format(
                 proposed=plan_counts["proposed"],
@@ -328,6 +320,12 @@ def build(session: Session, day: date) -> Digest:
         )
         for plan in proposed:
             lines.append(f"- #{plan.id} {plan.side} {plan.symbol}: {plan.rationale}")
+        for event in completed_events:
+            done = completed_plans.get(event.details.get("plan_id", -1))
+            desc = f"{done.side} {done.symbol}" if done else ""
+            lines.append(
+                f"- Completed plan #{event.details.get('plan_id')} {desc}".rstrip()
+            )
     else:
         lines.append("No plans proposed or decided.")
     lines.append("")

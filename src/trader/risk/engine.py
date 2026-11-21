@@ -192,18 +192,17 @@ def update_equity(
     mode = get_settings().mode
     prev = _latest_snapshot(session, mode)
     hwm = max(prev.high_water_mark, equity_usd) if prev else equity_usd
-    drawdown = 1.0 - float(equity_usd / hwm) if hwm > 0 else 0.0
-    drawdown = max(drawdown, 0.0)
+    drawdown = max(Decimal(1) - equity_usd / hwm, Decimal(0)) if hwm > 0 else Decimal(0)
     snapshot = EquitySnapshot(
         time=clock.now(),
         mode=mode,
         equity_usd=equity_usd,
         high_water_mark=hwm,
-        drawdown=Decimal(str(drawdown)),
+        drawdown=drawdown,
     )
     session.add(snapshot)
     limits = Limits.load(session)
-    if drawdown >= limits.drawdown_halt:
+    if drawdown >= Decimal(str(limits.drawdown_halt)):
         _set_halted(
             session,
             True,
@@ -227,7 +226,9 @@ def resume(session: Session, actor: str) -> None:
     if snapshot is not None:
         session.add(
             EquitySnapshot(
-                time=func.now(),
+                # Same `time` as the latest snapshot so this reset row sorts
+                # first by id even if that snapshot was future-dated.
+                time=snapshot.time,
                 mode=snapshot.mode,
                 equity_usd=snapshot.equity_usd,
                 high_water_mark=snapshot.equity_usd,

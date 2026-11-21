@@ -195,6 +195,21 @@ def test_drawdown_exactly_35_halts(session: Session) -> None:
 
 
 @NEEDS_DB
+def test_drawdown_halts_at_exact_custom_limit(session: Session) -> None:
+    """Float `1 - 0.8` = 0.1999...96 must still halt at a 0.20 limit."""
+    session.add(
+        Setting(
+            key="risk.limits.drawdown_halt", value=0.20, updated_at=datetime.now(UTC)
+        )
+    )
+    session.commit()
+    clock = FrozenClock(NOW)
+    risk.update_equity(session, Decimal("10000"), clock)
+    risk.update_equity(session, Decimal("8000"), clock)
+    assert risk.state(session).halted
+
+
+@NEEDS_DB
 def test_resume_resets_high_water_mark(session: Session) -> None:
     clock = FrozenClock(NOW)
     risk.update_equity(session, Decimal("10000"), clock)

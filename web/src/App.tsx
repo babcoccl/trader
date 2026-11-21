@@ -4,8 +4,10 @@ import { ApiError, api } from "./api/client";
 import { StatusStrip } from "./components/StatusStrip";
 import { Activity } from "./pages/Activity";
 import { Approvals } from "./pages/Approvals";
+import { Controls } from "./pages/Controls";
 import { Overview } from "./pages/Overview";
 import { Positions } from "./pages/Positions";
+import { Reports } from "./pages/Reports";
 
 const TABS = ["Overview", "Approvals", "Positions", "Activity", "Reports", "Controls"] as const;
 type Tab = (typeof TABS)[number];
@@ -96,6 +98,10 @@ export function App() {
           <Positions />
         ) : tab === "Activity" ? (
           <Activity />
+        ) : tab === "Reports" ? (
+          <Reports />
+        ) : tab === "Controls" ? (
+          <Controls />
         ) : (
           <ComingSoon name={tab} />
         )}

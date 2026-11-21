@@ -1,0 +1,169 @@
+"""Request and response models for the dashboard API (spec 3.1).
+
+All routes sit under ``/api`` and speak JSON. Money and quantities are
+``Decimal`` on the wire: pydantic v2 serializes them as strings, so no
+precision is lost between Postgres NUMERIC(38,18) and the dashboard.
+"""
+
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+class ServiceStatus(BaseModel):
+    name: str
+    status: str
+    last_heartbeat_at: datetime
+
+
+class StatusOut(BaseModel):
+    mode: str
+    halted: bool
+    halt_reason: str | None
+    equity_usd: Decimal | None
+    invested_fraction: float
+    drawdown: float
+    halt_at: float
+    pending_plans: int
+    last_check_at: datetime | None
+    last_check_reason: str | None
+    next_daily_decision_at: datetime
+    last_trade_at: datetime | None
+    services: list[ServiceStatus]
+
+
+class DecisionOut(BaseModel):
+    id: int
+    cycle: str
+    ran_at: datetime
+    symbol: str | None
+    target_weight: Decimal | None
+    current_weight: Decimal | None
+    action: str
+    reason: str
+    details: dict[str, Any]
+
+
+class OrderOut(BaseModel):
+    id: int
+    client_order_id: str
+    side: str
+    type: str
+    price: Decimal | None
+    stop_price: Decimal | None
+    quantity: Decimal
+    status: str
+    created_at: datetime
+
+
+class PlanOut(BaseModel):
+    id: int
+    sleeve: str
+    symbol: str
+    side: str
+    status: str
+    reference_price: Decimal
+    target_weight: Decimal
+    size_fraction: Decimal
+    entry_orders: list[Any]
+    stop_price: Decimal | None
+    worst_case_loss: Decimal
+    est_fees: Decimal
+    rationale: str
+    expires_at: datetime
+    decided_at: datetime | None
+    decision_id: int
+    created_at: datetime
+
+
+class ApproveRequest(BaseModel):
+    size_fraction: float = 1.0
+
+    @field_validator("size_fraction")
+    @classmethod
+    def _allowed(cls, v: float) -> float:
+        if v not in (1.0, 0.5, 0.25):
+            raise ValueError("size_fraction must be one of 1.0, 0.5, 0.25")
+        return v
+
+
+class PositionOut(BaseModel):
+    asset: str
+    symbol: str
+    quantity: Decimal
+    price: Decimal | None
+    value_usd: Decimal | None
+    share: float | None
+    avg_cost: Decimal
+    unrealised_gain_usd: Decimal | None
+    stop_price: Decimal | None
+    plan_id: int | None
+    resting_orders: list[OrderOut]
+
+
+class ActivityItem(BaseModel):
+    time: datetime
+    kind: str
+    ref_id: int
+    text: str
+    details: dict[str, Any]
+
+
+class EquityPoint(BaseModel):
+    time: datetime
+    account: Decimal
+    cash: Decimal
+    btc: Decimal | None
+    btc_eth: Decimal | None
+
+
+class VetoScorecard(BaseModel):
+    plans: int
+    shadow_fills: int
+    result_usd: Decimal | None
+
+
+class SummaryOut(BaseModel):
+    from_at: datetime | None
+    to_at: datetime | None
+    return_pct: float | None
+    worst_drop_pct: float | None
+    fees_usd: Decimal
+    vetoes: VetoScorecard
+    paper_vs_backtest_gap_pp: float | None
+
+
+class DigestOut(BaseModel):
+    id: int
+    day: date
+    body_md: str
+    stats: dict[str, Any]
+
+
+class SettingOut(BaseModel):
+    key: str
+    value: Any
+    updated_at: datetime | None
+
+
+class SettingPut(BaseModel):
+    value: Any
+
+
+class HaltRequest(BaseModel):
+    reason: str = "Manual halt from the dashboard."
+
+
+class FlattenRequest(BaseModel):
+    confirm: Literal["FLATTEN"]
+
+
+class OkOut(BaseModel):
+    status: str = "ok"
+    detail: dict[str, Any] = Field(default_factory=dict)

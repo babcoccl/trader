@@ -789,6 +789,56 @@ def test_pre_deadline_candle_earns_maker_fill_after_restart(
     assert fill.price == Decimal("60000") and fill.liquidity == "maker"
 
 
+def test_restart_after_expiry_honours_pre_deadline_candle(
+    session: Session,
+) -> None:
+    """The executor was down across the deadline: a candle that closed
+    before it and traded through the limit still earns the maker fill,
+    and no market order replaces it."""
+    _balances(session, USD="10000")
+    decided = _now() - timedelta(hours=2)
+    plan = _plan(
+        session,
+        entry_orders=[{"type": "limit", "price": "60000", "quantity": "0.1"}],
+        decided_at=decided,
+    )
+    # The book as it stood before the downtime: one resting limit.
+    order = Order(
+        plan_id=plan.id,
+        venue="paper",
+        client_order_id=f"{plan.id}-1",
+        venue_order_id=f"paper-{plan.id}-1",
+        symbol="BTC-USD",
+        side="buy",
+        type="limit",
+        price=Decimal("60000"),
+        quantity=Decimal("0.1"),
+        status="open",
+        mode="paper",
+    )
+    session.add(order)
+    session.flush()
+    order.created_at = decided + timedelta(minutes=5)
+    session.flush()
+    _candle(
+        session,
+        "BTC-USD",
+        _next_candle(decided + timedelta(minutes=10)),
+        "60000",
+        "60000",
+        "59900",
+        "60000",
+    )
+
+    _executor(session).tick()
+
+    session.refresh(order)
+    assert order.status == "filled"
+    assert len(_orders(session, plan)) == 1
+    (fill,) = _fills(session)
+    assert fill.price == Decimal("60000") and fill.liquidity == "maker"
+
+
 def test_limit_sell_does_not_fund_same_candle_buy(session: Session) -> None:
     """A limit sell fills at an unknown intra-candle time, so it cannot
     fund a same-candle buy: the buy settles first and is rejected when

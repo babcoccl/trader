@@ -1,0 +1,53 @@
+# Paper trading (spec 5.1)
+
+Paper mode is the default (`TRADER_MODE` unset or `paper`). The stack is
+the regular Compose one — see `docs/RUNBOOK.md` for the Ubuntu box.
+
+## Starting the account
+
+The account needs its $5,000 starting balance once. The `watchdog`
+service seeds it automatically on its first pass (it writes a `deposit`
+event and a `balances` row), so a normal `docker compose up -d` is
+enough. To seed by hand instead, inside the stack or a venv:
+
+```
+# Linux / macOS
+python -m trader.ops.paper_report seed
+# Windows PowerShell (same command)
+python -m trader.ops.paper_report seed
+```
+
+The seed is idempotent: any existing paper deposit (including one you
+made yourself) means it does nothing.
+
+## The weekly report
+
+The watchdog writes one `weekly_report` event every week, on Monday at
+`digest_time_utc` (default 00:30 UTC), covering the Monday–Sunday week
+just ended. To write one on demand for an arbitrary window:
+
+```
+# Linux / macOS
+python -m trader.ops.paper_report report 2026-11-16 2026-11-23
+# Windows PowerShell (same command)
+python -m trader.ops.paper_report report 2026-11-16 2026-11-23
+```
+
+(`end` is exclusive — the example covers Monday 16th through Sunday
+22nd.) The report lives in the `events` table, so it shows on the
+dashboard's Activity screen and in the log; the Markdown body and all
+numbers are in the event's `details`.
+
+Each report contains:
+
+- **Account**: paper equity at the start and end of the week.
+- **Tracking gap**: paper return minus the return of
+  `backtest.engine.run` over the same days on the stored daily candles
+  at Bitstamp costs, in percentage points. This is the number the
+  promotion gate (spec 5.3) reads; it is `null` when snapshots or
+  candles cannot cover the window.
+- **Uptime**: share of the week's minutes that held at least one
+  heartbeat, per service.
+- **Alarms**: every `alarm` and `alarm_cleared` event of the week.
+- **Approvals**: minutes from proposal to decision for every plan
+  decided in the week, plus the median and slowest.

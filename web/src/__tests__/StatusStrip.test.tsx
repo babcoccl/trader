@@ -64,4 +64,30 @@ describe("StatusStrip", () => {
     expect(screen.getByText(/collector/)).toBeInTheDocument();
     expect(document.querySelector(".status-strip--problem")).not.toBeNull();
   });
+
+  it("flags a service that keeps beating but reports an error", async () => {
+    statusMock.mockResolvedValue(
+      makeStatus({
+        services: [
+          {
+            name: "executor",
+            status: "error",
+            last_heartbeat_at: new Date(Date.now() - 5_000).toISOString(),
+          },
+        ],
+      }),
+    );
+    renderStrip();
+    expect(await screen.findByText("Problem")).toBeInTheDocument();
+    expect(screen.getByText(/executor/)).toBeInTheDocument();
+  });
+
+  it("keeps the last-check line visible in a problem state", async () => {
+    statusMock.mockResolvedValue(
+      makeStatus({ halted: true, halt_reason: "drawdown 36% >= 35%" }),
+    );
+    renderStrip();
+    expect(await screen.findByText(/Last check/)).toBeInTheDocument();
+    expect(screen.getByText(/Next daily decision/)).toBeInTheDocument();
+  });
 });

@@ -5,10 +5,14 @@ import { countdown, timeAgo } from "../lib/time";
 
 export const STALE_HEARTBEAT_MS = 5 * 60 * 1000;
 
-function staleServiceNames(services: { name: string; last_heartbeat_at: string | null }[], now: Date) {
+function staleServiceNames(
+  services: { name: string; status: string; last_heartbeat_at: string | null }[],
+  now: Date,
+) {
   return services
     .filter(
       (s) =>
+        s.status !== "ok" ||
         s.last_heartbeat_at === null ||
         now.getTime() - Date.parse(s.last_heartbeat_at) > STALE_HEARTBEAT_MS,
     )
@@ -70,7 +74,7 @@ export function StatusStrip() {
   }
   if (stale.length > 0) {
     badge = "Problem";
-    problem = `No heartbeat from ${stale.join(", ")} for over 5 minutes`;
+    problem = `${stale.join(", ")} heartbeat stale or failing`;
   }
   if (alarm) {
     badge = "Problem";
@@ -81,15 +85,10 @@ export function StatusStrip() {
     <div className={`status-strip ${problem ? "status-strip--problem" : ""}`}>
       <span className={`badge ${problem ? "badge--red" : "badge--green"}`}>{badge}</span>
       <span className="status-strip__line">
-        {problem ? (
-          <>{problem}.</>
-        ) : (
-          <>
-            {s.last_check_reason ?? "Waiting for the first check."} Last check{" "}
-            {timeAgo(s.last_check_at, now)}. Next daily decision{" "}
-            {countdown(s.next_daily_decision_at, now)}.
-          </>
-        )}
+        {problem ? <>{problem}. </> : null}
+        {s.last_check_reason ?? "Waiting for the first check."} Last check{" "}
+        {timeAgo(s.last_check_at, now)}. Next daily decision{" "}
+        {countdown(s.next_daily_decision_at, now)}.
       </span>
       <span className="status-strip__sub">Last trade {timeAgo(s.last_trade_at, now)}.</span>
     </div>

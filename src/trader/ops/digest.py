@@ -24,6 +24,7 @@ from trader.core.config import get_settings
 from trader.data.sources.base import SYMBOLS
 from trader.ledger import accounting
 from trader.ledger.models import (
+    Balance,
     Candle,
     Decision,
     Digest,
@@ -92,11 +93,30 @@ def _end_prices(session: Session, end: datetime) -> dict[str, Decimal]:
     return prices
 
 
+def _state_at(session: Session, mode: str, before: datetime) -> dict[str, Decimal]:
+    """Balances as of ``before``: the latest ``balances`` row per asset
+    written before that time (last row id wins, as in the ledger)."""
+    rows = (
+        session.execute(
+            select(Balance)
+            .where(Balance.mode == mode, Balance.time < before)
+            .order_by(Balance.id)
+        )
+        .scalars()
+        .all()
+    )
+    state: dict[str, Decimal] = {}
+    for row in rows:  # ascending id: a later row overwrites its asset
+        state[row.asset] = row.quantity
+    return state
+
+
 def _equity_at(
     session: Session, mode: str, before: datetime, end_prices: dict[str, Decimal]
 ) -> Decimal | None:
     """Latest snapshot equity strictly before ``before``; falls back to
-    the ledger marked at ``end_prices`` when no snapshot exists yet."""
+    the balances as of ``before`` marked at ``end_prices`` when no
+    snapshot exists yet."""
     snap = session.scalar(
         select(EquitySnapshot.equity_usd)
         .where(EquitySnapshot.mode == mode, EquitySnapshot.time < before)
@@ -105,10 +125,25 @@ def _equity_at(
     )
     if snap is not None:
         return snap
-    try:
-        return accounting.equity(session, mode, end_prices)
-    except KeyError:
+    state = _state_at(session, mode, before)
+    if not state:
         return None
+    total = Decimal(0)
+    for asset, qty in state.items():
+        if qty == 0:
+            continue
+        price = next(
+            (
+                p
+                for s, p in end_prices.items()
+                if s == asset or s.startswith(f"{asset}-")
+            ),
+            None,
+        )
+        if asset != accounting.CASH and price is None:
+            return None
+        total += qty if asset == accounting.CASH else qty * (price or Decimal(0))
+    return total
 
 
 def _window(day: date) -> tuple[datetime, datetime]:
@@ -159,7 +194,7 @@ def build(session: Session, day: date) -> Digest:
     invested: Decimal | None = None
     if equity_end:
         invested = Decimal(0)
-        for asset, qty in accounting.positions(session, mode).items():
+        for asset, qty in _state_at(session, mode, end).items():
             price = next(
                 (p for s, p in end_prices.items() if s.startswith(f"{asset}-")), None
             )
@@ -179,22 +214,17 @@ def build(session: Session, day: date) -> Digest:
         )
         or 0
     )
+    # Only intraday failures count against the checks counted above.
     checks_failed = (
         session.scalar(
             select(func.count())
             .select_from(Decision)
             .where(
+                Decision.cycle == "intraday",
                 Decision.action.in_(("error", "blocked")),
                 Decision.ran_at >= start,
                 Decision.ran_at < end,
             )
-        )
-        or 0
-    ) + (
-        session.scalar(
-            select(func.count())
-            .select_from(Event)
-            .where(Event.severity == "error", Event.time >= start, Event.time < end)
         )
         or 0
     )
@@ -213,9 +243,26 @@ def build(session: Session, day: date) -> Digest:
     decided = session.scalars(
         select(Plan).where(Plan.decided_at >= start, Plan.decided_at < end)
     ).all()
+    # A plan completed after approval keeps decided_at at its approval
+    # time, so "completed" still counts as approved for this day.
     plan_counts = {"proposed": len(proposed)}
-    for status in ("approved", "denied", "expired", "voided", "completed"):
+    plan_counts["approved"] = sum(
+        1 for p in decided if p.status in ("approved", "completed")
+    )
+    for status in ("denied", "expired", "voided"):
         plan_counts[status] = sum(1 for p in decided if p.status == status)
+    plan_counts["completed"] = (
+        session.scalar(
+            select(func.count())
+            .select_from(Event)
+            .where(
+                Event.kind == "plan_completed",
+                Event.time >= start,
+                Event.time < end,
+            )
+        )
+        or 0
+    )
 
     fill_rows = session.execute(
         select(Fill, Order)
@@ -311,7 +358,9 @@ def build(session: Session, day: date) -> Digest:
     lines.append("")
 
     if not fill_rows:
-        if any(d.action == "blocked" for d in daily):
+        if any(d.action == "error" for d in daily):
+            why = "the daily check failed with an error"
+        elif any(d.action == "blocked" for d in daily):
             why = "the daily check was blocked"
         elif proposed:
             why = "the proposed plan(s) were never approved and filled"

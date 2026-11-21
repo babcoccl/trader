@@ -48,7 +48,10 @@ def _diff_usd(asset: str, diff: Decimal, prices: dict[str, Decimal]) -> Decimal:
     if asset == "USD":
         return abs(diff)
     price = prices.get(f"{asset}-USD")
-    return abs(diff * price) if price is not None else abs(diff)
+    if price is None:
+        # No candle to value the difference: alarm on any discrepancy.
+        return Decimal(0) if diff == 0 else Decimal("Infinity")
+    return abs(diff * price)
 
 
 def run(
@@ -136,7 +139,17 @@ def run(
         )
         if o.venue_order_id
     }
-    theirs = {str(o["id"]) for o in getattr(adapter, "venue_open_orders", lambda: [])()}
+    try:
+        theirs = {
+            str(o["id"]) for o in getattr(adapter, "venue_open_orders", lambda: [])()
+        }
+    except Exception as exc:
+        return alarms + [
+            Alarm(
+                key="venue_unreachable",
+                message=f"Cannot read venue open orders: {exc}",
+            )
+        ]
     missing_at_venue = ours - theirs
     missing_in_ledger = theirs - ours
     if missing_at_venue or missing_in_ledger:

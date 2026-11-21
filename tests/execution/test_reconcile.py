@@ -202,6 +202,15 @@ def test_unknown_venue_order_alarms(db) -> None:
     assert [a.key for a in alarms] == ["open_orders_vs_venue"]
 
 
+def test_crypto_difference_without_price_alarms(db) -> None:
+    # No candles stored: a crypto diff can't be valued, so any nonzero
+    # difference must alarm rather than silently compare raw quantity.
+    accounting.deposit(db, "live", Decimal("1000"), FrozenClock(NOW))
+    adapter = FakeAdapter({"USD": Decimal("1000"), "BTC": Decimal("0.00000001")}, [])
+    alarms = run(db, _clock(), adapter=adapter, mode="live")
+    assert [a.key for a in alarms] == ["ledger_vs_venue"]
+
+
 def test_venue_unreachable_alarms(db) -> None:
     class DeadAdapter(FakeAdapter):
         def __init__(self) -> None:

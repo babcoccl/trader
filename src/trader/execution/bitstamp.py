@@ -101,8 +101,10 @@ def sign(
 
 
 def _default_post(url: str, params: dict[str, Any], headers: dict[str, str]) -> Any:
-    body = urllib.parse.urlencode(params).encode("utf-8")
-    request = urllib.request.Request(url, data=body, headers=headers)
+    # Empty body must send no Content-Type (the signature omits it too);
+    # urllib adds one when `data` is given, so pass None and force POST.
+    body = urllib.parse.urlencode(params).encode("utf-8") or None
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=30) as r:
             return json.loads(r.read())
@@ -153,7 +155,10 @@ class BitstampAdapter:
         self._clock = clock or SystemClock()
         self._mode = mode
         self._base = base_url.rstrip("/")
-        self._host = urllib.parse.urlsplit(base_url).netloc
+        parts = urllib.parse.urlsplit(base_url)
+        # Private paths already carry "/api/v2"; origin avoids doubling it.
+        self._origin = f"{parts.scheme}://{parts.netloc}"
+        self._host = parts.netloc
         self._post = post or _default_post
         self._get = get or _default_get
         self._nonce_fn = nonce_fn
@@ -213,7 +218,7 @@ class BitstampAdapter:
         if content_type:
             headers["Content-Type"] = content_type
         return _check_response(
-            self._post(f"{self._base}{path}", params or {}, headers), path
+            self._post(f"{self._origin}{path}", params or {}, headers), path
         )
 
     # -- ExecutionAdapter ---------------------------------------------------
@@ -278,6 +283,12 @@ class BitstampAdapter:
             )
         ).first()
         if order is not None and order.status in _OPEN_STATUSES:
+            # Collect fills the venue executed before the cancel; a
+            # cancelled order leaves poll_fills' open-order scan, so
+            # uncollected transactions would never reach the ledger.
+            payload = self._order_status(order)
+            if payload is not None:
+                self._session.add_all(self._fills_for(order, payload))
             order.status = "cancelled"
             self._session.flush()
         return True
@@ -306,29 +317,7 @@ class BitstampAdapter:
             payload = self._order_status(order)
             if payload is None:
                 continue
-            transactions = payload.get("transactions") or []
-            seen = int(
-                self._session.scalar(
-                    select(func.count())
-                    .select_from(Fill)
-                    .where(Fill.order_id == order.id)
-                )
-                or 0
-            )
-            base, quote = order.symbol.split("-", 1)
-            liquidity = "maker" if order.type == "limit" else "taker"
-            for tx in transactions[seen:]:
-                new_fills.append(
-                    Fill(
-                        order_id=order.id,
-                        time=_dt(str(tx["datetime"])),
-                        price=Decimal(str(tx["price"])),
-                        quantity=Decimal(str(tx[base.lower()])),
-                        fee=Decimal(str(tx["fee"])),
-                        fee_currency=quote,
-                        liquidity=liquidity,
-                    )
-                )
+            new_fills.extend(self._fills_for(order, payload))
             self._apply_status(order, payload)
         self._session.flush()
         return new_fills
@@ -417,6 +406,34 @@ class BitstampAdapter:
         t = self.ticker(order.symbol)
         price = t["bid"] if order.side == "buy" else t["ask"]
         return _round_down(price, self.symbol_rules(order.symbol).tick)
+
+    def _fills_for(self, order: Order, payload: dict[str, Any]) -> list[Fill]:
+        """New Fill rows from an order_status payload's transactions.
+
+        ``transactions`` are cumulative; entries past the stored fill
+        count are new, so callers never duplicate.
+        """
+        transactions = payload.get("transactions") or []
+        seen = int(
+            self._session.scalar(
+                select(func.count()).select_from(Fill).where(Fill.order_id == order.id)
+            )
+            or 0
+        )
+        base, quote = order.symbol.split("-", 1)
+        liquidity = "maker" if order.type == "limit" else "taker"
+        return [
+            Fill(
+                order_id=order.id,
+                time=_dt(str(tx["datetime"])),
+                price=Decimal(str(tx["price"])),
+                quantity=Decimal(str(tx[base.lower()])),
+                fee=Decimal(str(tx["fee"])),
+                fee_currency=quote,
+                liquidity=liquidity,
+            )
+            for tx in transactions[seen:]
+        ]
 
     def _order_status(self, order: Order) -> dict[str, Any] | None:
         params: dict[str, Any] = (

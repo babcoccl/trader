@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import create_engine, delete
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
 from trader.core.clock import FrozenClock
@@ -489,3 +489,18 @@ def test_poll_fills_partial(db) -> None:
     fills = _adapter(t, session=db).poll_fills(NOW)
     assert len(fills) == 1
     assert order.status == "partially_filled"
+
+
+def test_cancel_collects_pending_fills(db) -> None:
+    order = _db_order(db)
+    t = FakeTransport(
+        posts={
+            "/api/v2/cancel_order/": {"id": "1458532827766784"},
+            "/api/v2/order_status/": _fixture("order_status_partial.json"),
+        }
+    )
+    assert _adapter(t, session=db).cancel("1458532827766784") is True
+    assert order.status == "cancelled"
+    stored = db.scalars(select(Fill).where(Fill.order_id == order.id)).all()
+    assert len(stored) == 1
+    assert stored[0].quantity == Decimal("0.001")

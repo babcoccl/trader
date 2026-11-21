@@ -142,3 +142,40 @@ def test_coinbase_pages_in_300_candle_chunks() -> None:
     assert seen[0][0] == START.isoformat()
     assert seen[0][1] == (START + timedelta(seconds=300 * 300)).isoformat()
     assert seen[1][1] == end.isoformat()
+
+
+def test_coinbase_dedupes_boundary_candle() -> None:
+    step, t0 = 300, 1794873600
+    pages = [
+        [[t0 + i * step, 1, 1, 1, 1, 1] for i in range(301)],  # incl. boundary
+        [[t0 + 300 * step, 2, 2, 2, 2, 2], [t0 + 301 * step, 3, 3, 3, 3, 3]],
+    ]
+    calls = iter(pages)
+
+    def fake_get(url: str, params: dict[str, Any]) -> Any:
+        return next(calls, [])
+
+    src = CoinbaseSource(get_json=fake_get)
+    start = datetime.fromtimestamp(t0, UTC)
+    end = datetime.fromtimestamp(t0 + 302 * step, UTC)
+    out = src.fetch("BTC-USD", "5m", start, end)
+
+    times = [c.open_time for c in out]
+    assert len(times) == len(set(times)) == 302
+
+
+def test_coinbase_continues_past_empty_chunk() -> None:
+    # First 300-period chunk has no data; candles exist in the second.
+    step, t0 = 300, 1794873600
+    pages = [[], [[t0 + 301 * step, 1, 1, 1, 1, 1]]]
+    calls = iter(pages)
+
+    def fake_get(url: str, params: dict[str, Any]) -> Any:
+        return next(calls, [])
+
+    src = CoinbaseSource(get_json=fake_get)
+    start = datetime.fromtimestamp(t0, UTC)
+    end = datetime.fromtimestamp(t0 + 302 * step, UTC)
+    out = src.fetch("BTC-USD", "5m", start, end)
+
+    assert [c.open_time for c in out] == [datetime.fromtimestamp(t0 + 301 * step, UTC)]

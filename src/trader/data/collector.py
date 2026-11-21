@@ -152,6 +152,7 @@ class Collector:
         for symbol in SYMBOLS:
             self._store(session, symbol, "1d", DAILY_BACKFILL_START, day_end)
             self._store(session, symbol, "5m", fivem_start, now)
+            self._tick_heartbeat(f"backfilled {symbol}")
         for symbol in SYMBOLS:
             for interval, start in (
                 ("1d", DAILY_BACKFILL_START),
@@ -168,9 +169,17 @@ class Collector:
                         gap_start,
                         gap_end + timedelta(seconds=period_seconds(interval)),
                     )
+            self._tick_heartbeat(f"refilled gaps for {symbol}")
+
+    def _tick_heartbeat(self, detail: str) -> None:
+        """Heartbeat in its own committed session, so a long refill still
+        lands a row every ~60 s even before its own transaction commits."""
+        with self._session() as s:
+            self._heartbeat(s, "ok", detail)
 
     def serve(self) -> None:
         """Blocking service loop: initial gap refill, then one run per minute."""
+        self._tick_heartbeat("starting gap refill")
         with self._session() as session:
             self.refill_gaps(session)
         scheduler = BlockingScheduler(timezone=UTC)
@@ -185,6 +194,7 @@ class Collector:
                 self.run_once(session)
             except Exception as exc:
                 log.exception("collector loop failed")
+                session.rollback()
                 self._event(session, "error", f"collector loop failed: {exc}")
                 self._heartbeat(session, "error", str(exc))
 

@@ -47,6 +47,7 @@ class CoinbaseSource:
         step = period_seconds(interval)
         product = PRODUCTS[symbol]
         out: list[Candle] = []
+        seen: set[int] = set()
         cursor = start
         while cursor < end:
             chunk_end = min(cursor + timedelta(seconds=step * MAX_CANDLES), end)
@@ -58,12 +59,16 @@ class CoinbaseSource:
                     "end": chunk_end.isoformat(),
                 },
             )
-            if not rows:
-                break
             for time, low, high, open_, close, volume in rows:
-                t = datetime.fromtimestamp(int(time), UTC)
-                if t < start or t + timedelta(seconds=step) > end:
+                ts = int(time)
+                t = datetime.fromtimestamp(ts, UTC)
+                # Skip candles before this chunk (Coinbase may return them) and
+                # the boundary candle already collected from the previous chunk.
+                if t < cursor or ts in seen:
                     continue
+                if t + timedelta(seconds=step) > end:
+                    continue
+                seen.add(ts)
                 out.append(
                     Candle(
                         symbol=symbol,
@@ -77,6 +82,8 @@ class CoinbaseSource:
                         source=self.name,
                     )
                 )
+            # An empty chunk means no trades in that window, not the end of
+            # history: keep paging.
             cursor = chunk_end
         out.sort(key=lambda c: c.open_time)
         return out

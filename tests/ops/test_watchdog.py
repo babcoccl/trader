@@ -267,6 +267,26 @@ def test_summary_reports_alarms(session: Session) -> None:
     assert "All services up" not in summary.message
 
 
+def test_summary_counts_error_decisions(session: Session) -> None:
+    # A failed engine cycle records an error decision, not an event.
+    _healthy(session)
+    session.add(
+        Decision(
+            cycle="intraday",
+            ran_at=NOW,
+            action="error",
+            reason="Intraday cycle failed: boom",
+            details={},
+        )
+    )
+    session.commit()
+    watchdog.check(session, _clock())
+    session.commit()
+    summary = _events(session, "heartbeat_summary")[0]
+    assert "1 errors" in summary.message
+    assert summary.details["errors"] == 1
+
+
 def test_beat_writes_row(session: Session) -> None:
     beat(session, "collector", "ok", "loop done")
     session.commit()

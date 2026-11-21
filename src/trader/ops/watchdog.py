@@ -240,10 +240,21 @@ def _write_summary(session: Session, now: datetime) -> Event | None:
         .select_from(Decision)
         .where(Decision.cycle == "intraday", Decision.ran_at >= window)
     )
-    errors = session.scalar(
-        select(func.count())
-        .select_from(Event)
-        .where(Event.severity == "error", Event.time >= window)
+    # A failed cycle records an error decision, not an event — count both.
+    errors = (
+        session.scalar(
+            select(func.count())
+            .select_from(Event)
+            .where(Event.severity == "error", Event.time >= window)
+        )
+        or 0
+    ) + (
+        session.scalar(
+            select(func.count())
+            .select_from(Decision)
+            .where(Decision.action == "error", Decision.ran_at >= window)
+        )
+        or 0
     )
     raised = session.scalars(
         select(Event).where(Event.kind == "alarm", Event.time >= window)

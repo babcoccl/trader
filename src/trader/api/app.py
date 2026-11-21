@@ -36,11 +36,16 @@ log = logging.getLogger(__name__)
 HEARTBEAT_SECONDS = 30
 
 
+def _beat_once() -> None:
+    with session_scope() as session:
+        beat(session, "api")
+
+
 async def _heartbeat_loop() -> None:
     while True:
         try:
-            with session_scope() as session:
-                beat(session, "api")
+            # Off the event loop: a stalled Postgres must not freeze the API.
+            await asyncio.to_thread(_beat_once)
         except Exception:
             log.exception("api heartbeat failed")
         await asyncio.sleep(HEARTBEAT_SECONDS)

@@ -21,7 +21,8 @@ function staleServiceNames(
 
 export function StatusStrip() {
   const queryClient = useQueryClient();
-  const [alarm, setAlarm] = useState<string | null>(null);
+  // Open alarms by key; an alarm_cleared removes only its own key.
+  const [alarms, setAlarms] = useState<Record<string, string>>({});
   const [now, setNow] = useState(() => new Date());
   const status = useQuery({
     queryKey: ["status"],
@@ -36,12 +37,19 @@ export function StatusStrip() {
       void queryClient.invalidateQueries();
     };
     source.addEventListener("alarm", (e) => {
+      let data: { key?: string; message?: string; kind?: string } = {};
       try {
-        const data = JSON.parse((e as MessageEvent).data) as { message?: string; kind?: string };
-        setAlarm(data.kind === "alarm_cleared" ? null : (data.message ?? "alarm"));
+        data = JSON.parse((e as MessageEvent).data) as typeof data;
       } catch {
-        setAlarm("alarm");
+        // malformed payload: still show an alarm
       }
+      const key = data.key ?? "alarm";
+      setAlarms((prev) => {
+        const next = { ...prev };
+        if (data.kind === "alarm_cleared") delete next[key];
+        else next[key] = data.message ?? "alarm";
+        return next;
+      });
       refresh();
     });
     for (const ev of ["status", "decision", "plan", "fill"]) {
@@ -76,9 +84,10 @@ export function StatusStrip() {
     badge = "Problem";
     problem = `${stale.join(", ")} heartbeat stale or failing`;
   }
-  if (alarm) {
+  const open = Object.values(alarms);
+  if (open.length > 0) {
     badge = "Problem";
-    problem = alarm;
+    problem = open.join(" ");
   }
 
   return (

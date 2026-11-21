@@ -48,11 +48,11 @@ from trader.ledger.models import (
     Candle,
     Decision,
     Event,
-    Heartbeat,
     Order,
     Plan,
     Setting,
 )
+from trader.ops.heartbeat import beat
 from trader.risk import engine as risk
 
 log = logging.getLogger(__name__)
@@ -143,14 +143,7 @@ class Executor:
                     session, accounting.equity(session, mode, prices), self._clock
                 )
             self._complete_plans(session)
-            session.add(
-                Heartbeat(
-                    service=SERVICE,
-                    time=now,
-                    status="ok",
-                    detail="executor pass",
-                )
-            )
+            beat(session, SERVICE, "ok", "executor pass", clock=self._clock)
 
     def tick_safe(self) -> None:
         """tick() that records failures instead of dying (scheduler entry)."""
@@ -168,14 +161,7 @@ class Executor:
                         details={},
                     )
                 )
-                session.add(
-                    Heartbeat(
-                        service=SERVICE,
-                        time=self._clock.now(),
-                        status="error",
-                        detail=str(exc),
-                    )
-                )
+                beat(session, SERVICE, "error", str(exc), clock=self._clock)
 
     # -- steps ----------------------------------------------------------------
 

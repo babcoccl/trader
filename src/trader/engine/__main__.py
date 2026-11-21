@@ -27,7 +27,8 @@ from trader.core.logging import setup as setup_logging
 from trader.data.sources.base import SYMBOLS
 from trader.engine import daily_cycle, intraday_cycle
 from trader.ledger import accounting
-from trader.ledger.models import Candle, Decision, Heartbeat
+from trader.ledger.models import Candle, Decision
+from trader.ops.heartbeat import beat
 
 log = logging.getLogger(__name__)
 
@@ -60,14 +61,7 @@ class Engine:
 
     def _heartbeat(self, status: str, detail: str) -> None:
         with self._session() as session:
-            session.add(
-                Heartbeat(
-                    service=SERVICE,
-                    time=self._clock.now(),
-                    status=status,
-                    detail=detail,
-                )
-            )
+            beat(session, SERVICE, status, detail, clock=self._clock)
 
     def run_daily(self) -> None:
         with self._session() as session:
@@ -77,14 +71,7 @@ class Engine:
                 )
                 rows = daily_cycle.run(session, self._clock, portfolio)
                 summary = "; ".join(r.reason for r in rows)
-                session.add(
-                    Heartbeat(
-                        service=SERVICE,
-                        time=self._clock.now(),
-                        status="ok",
-                        detail=summary[:2000],
-                    )
-                )
+                beat(session, SERVICE, "ok", summary, clock=self._clock)
             except Exception as exc:
                 log.exception("daily cycle failed")
                 session.rollback()
@@ -98,27 +85,13 @@ class Engine:
                         details={},
                     )
                 )
-                session.add(
-                    Heartbeat(
-                        service=SERVICE,
-                        time=self._clock.now(),
-                        status="error",
-                        detail=str(exc),
-                    )
-                )
+                beat(session, SERVICE, "error", str(exc), clock=self._clock)
 
     def run_intraday(self) -> None:
         with self._session() as session:
             try:
                 row = intraday_cycle.run(session, self._clock)
-                session.add(
-                    Heartbeat(
-                        service=SERVICE,
-                        time=self._clock.now(),
-                        status="ok",
-                        detail=row.reason[:2000],
-                    )
-                )
+                beat(session, SERVICE, "ok", row.reason, clock=self._clock)
             except Exception as exc:
                 log.exception("intraday cycle failed")
                 session.rollback()
@@ -131,14 +104,7 @@ class Engine:
                         details={},
                     )
                 )
-                session.add(
-                    Heartbeat(
-                        service=SERVICE,
-                        time=self._clock.now(),
-                        status="error",
-                        detail=str(exc),
-                    )
-                )
+                beat(session, SERVICE, "error", str(exc), clock=self._clock)
 
     def serve(self) -> None:
         self.run_daily()  # catch-up: no-op if today's rows already exist

@@ -125,7 +125,9 @@ class Executor:
                 # Buys are vetoed while halted; only exposure-reducing sells
                 # may keep working (spec 2.1).
                 for order in adapter.open_orders():
-                    if order.side == "buy":
+                    # Shadow orders hold no exposure; cancelling them would
+                    # only lose the counterfactual result (spec 2.5).
+                    if order.side == "buy" and not order.shadow:
                         adapter.cancel(order.venue_order_id or "")
             self._place_approved(session, adapter, mode, halted)
             # Fills before time rules: a candle that traded through a
@@ -254,7 +256,8 @@ class Executor:
         session.add(decision)
         session.flush()
         for order in adapter.open_orders():
-            adapter.cancel(order.venue_order_id or "")
+            if not order.shadow:
+                adapter.cancel(order.venue_order_id or "")
         for asset, qty in positions.items():
             symbol = f"{asset}-USD"
             price = prices.get(symbol)
@@ -448,7 +451,7 @@ class Executor:
         self, session: Session, adapter: PaperAdapter, symbol: str
     ) -> None:
         for order in adapter.open_orders():
-            if order.symbol == symbol:
+            if order.symbol == symbol and not order.shadow:
                 adapter.cancel(order.venue_order_id or "")
 
     def _new_order(

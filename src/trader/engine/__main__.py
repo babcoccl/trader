@@ -1,8 +1,9 @@
-"""Engine service: runs the daily decision cycle at 00:05 UTC.
+"""Engine service: runs the daily decision cycle at 00:05 UTC and the
+five-minute intraday evaluation cycle at second 10 of every 5-minute mark.
 
-On start it runs once immediately if today's daily decision rows are missing
-(catch-up after downtime). A heartbeat row is written every 30 seconds and on
-each run.
+On start it runs the daily cycle once immediately if today's daily decision
+rows are missing (catch-up after downtime). A heartbeat row is written every
+30 seconds and on each run.
 
 Run: ``python -m trader.engine`` (Compose service ``engine``).
 """
@@ -21,7 +22,7 @@ from trader.core.clock import Clock, SystemClock
 from trader.core.config import get_settings
 from trader.core.db import session_scope
 from trader.core.logging import setup as setup_logging
-from trader.engine import daily_cycle
+from trader.engine import daily_cycle, intraday_cycle
 from trader.ledger.models import Decision, Heartbeat
 
 log = logging.getLogger(__name__)
@@ -85,6 +86,39 @@ class Engine:
                     )
                 )
 
+    def run_intraday(self) -> None:
+        with self._session() as session:
+            try:
+                row = intraday_cycle.run(session, self._clock)
+                session.add(
+                    Heartbeat(
+                        service=SERVICE,
+                        time=self._clock.now(),
+                        status="ok",
+                        detail=row.reason[:2000],
+                    )
+                )
+            except Exception as exc:
+                log.exception("intraday cycle failed")
+                session.rollback()
+                session.add(
+                    Decision(
+                        cycle="intraday",
+                        ran_at=self._clock.now(),
+                        action="error",
+                        reason=f"Intraday cycle failed: {exc}",
+                        details={},
+                    )
+                )
+                session.add(
+                    Heartbeat(
+                        service=SERVICE,
+                        time=self._clock.now(),
+                        status="error",
+                        detail=str(exc),
+                    )
+                )
+
     def serve(self) -> None:
         self.run_daily()  # catch-up: no-op if today's rows already exist
         scheduler = BlockingScheduler(timezone=UTC)
@@ -93,6 +127,14 @@ class Engine:
             "cron",
             hour=0,
             minute=5,
+            coalesce=True,
+            max_instances=1,
+        )
+        scheduler.add_job(
+            self.run_intraday,
+            "cron",
+            minute="*/5",
+            second=10,
             coalesce=True,
             max_instances=1,
         )

@@ -2,12 +2,11 @@
 heartbeats (spec 3.1). One feed for the dashboard's log view."""
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.orm import Session
-from sqlalchemy.sql.elements import ColumnElement
 
 from trader.api.auth import AuthRequired
 from trader.api.routes import SessionDep
@@ -41,10 +40,10 @@ def _fetch(
     items: list[ActivityItem] = []
 
     def cutoff(
-        time_col: ColumnElement[datetime],
-        id_col: ColumnElement[int] | None = None,
+        time_col: Any,
+        id_col: Any = None,
         source_kind: str | None = None,
-    ) -> ColumnElement[bool] | None:
+    ) -> Any:
         """Rows strictly older than the cursor under the (time, kind,
         ref_id) sort order. ``source_kind`` is the constant item kind of
         the source; None means each row's own kind (events)."""

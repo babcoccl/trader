@@ -637,7 +637,11 @@ def test_old_stop_does_not_liquidate_new_position(session: Session) -> None:
     """After a full exit and re-entry, the newest stop-bearing plan governs;
     an older plan's higher stop must not fire."""
     _balances(session, BTC="0.5", USD="0")
-    _plan(session, status="completed", stop_price=Decimal("55000"))
+    # Both plans filled a buy, so only the newest-first ordering protects
+    # the re-entered position from the older, higher stop.
+    _filled_buy(
+        session, _plan(session, status="completed", stop_price=Decimal("55000"))
+    )
     _filled_buy(
         session, _plan(session, status="completed", stop_price=Decimal("45000"))
     )

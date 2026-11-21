@@ -40,13 +40,14 @@ class Watchdog:
     def tick(self) -> None:
         with self._session() as session:
             # Beat before checking: the watchdog must not alarm on itself.
-            beat(session, SERVICE)
+            beat(session, SERVICE, clock=self._clock)
             alarms = watchdog.check(session, self._clock)
             beat(
                 session,
                 SERVICE,
                 "ok",
                 f"{len(alarms)} alarm(s) firing" if alarms else "all checks quiet",
+                clock=self._clock,
             )
 
     def tick_safe(self) -> None:
@@ -64,7 +65,7 @@ class Watchdog:
                         details={},
                     )
                 )
-                beat(session, SERVICE, "error", str(exc))
+                beat(session, SERVICE, "error", str(exc), clock=self._clock)
 
     def serve(self) -> None:
         scheduler = BlockingScheduler(timezone=UTC)

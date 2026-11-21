@@ -11,7 +11,17 @@ from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
 from trader.core.clock import FrozenClock
-from trader.ledger.models import Candle, Decision, Event, Heartbeat
+from trader.ledger import accounting
+from trader.ledger.models import (
+    Balance,
+    Candle,
+    Decision,
+    Event,
+    Fill,
+    Heartbeat,
+    Order,
+    Plan,
+)
 from trader.ops import watchdog
 from trader.ops.heartbeat import beat
 
@@ -40,7 +50,7 @@ def session():
     engine = create_engine(TEST_URL)
     _alembic("upgrade", "head")
     with Session(engine) as s:
-        for table in (Heartbeat, Candle, Decision, Event):
+        for table in (Fill, Order, Plan, Decision, Balance, Heartbeat, Candle, Event):
             s.execute(delete(table))
         s.commit()
         yield s
@@ -316,3 +326,28 @@ def test_alarm_count_grows_for_multiple_conditions(session: Session) -> None:
     assert "intraday_stale" in keys
     assert "balances_mismatch" not in keys  # paper adapter == ledger
     assert "candle_stale:BTC-USD" in keys
+
+
+def test_paper_balances_checked_against_fill_replay(session: Session) -> None:
+    # Real PaperAdapter: stored balances vs deposits+fills replayed.
+    _healthy(session)
+    accounting.deposit(session, "paper", Decimal("1000"), _clock())
+    session.commit()
+    watchdog.check(session, _clock())
+    session.commit()
+    assert not _events(session, "alarm", "balances_mismatch")
+
+    # A balance row that no deposit or fill explains.
+    session.add(Balance(time=NOW, mode="paper", asset="USD", quantity=Decimal("900")))
+    session.commit()
+    alarms = watchdog.check(session, _clock())
+    session.commit()
+    assert [a.key for a in alarms] == ["balances_mismatch"]
+    assert "USD ledger 1000" in alarms[0].message
+
+
+def test_beat_uses_the_given_clock(session: Session) -> None:
+    beat(session, "engine", clock=_clock())
+    session.commit()
+    row = session.scalars(select(Heartbeat).where(Heartbeat.service == "engine")).one()
+    assert row.time == NOW

@@ -5,7 +5,8 @@ seconds and emits ``decision``, ``fill``, ``plan``, ``alarm`` and
 ``status`` events when the underlying rows appear or change. A ``status``
 event with the full ``GET /api/status`` payload is sent on connect and
 then each time a new ``equity_snapshots`` row lands (that is when the
-account value actually moves).
+account value actually moves). Watchdog alarms still open are replayed
+as ``alarm`` events on connect.
 """
 
 import asyncio
@@ -22,6 +23,7 @@ from trader.api.auth import SESSION_COOKIE, AuthRequired, token_live
 from trader.api.routes.status import build_status
 from trader.core.db import session_scope
 from trader.ledger.models import Decision, EquitySnapshot, Event, Fill, Order, Plan
+from trader.ops import watchdog
 
 router = APIRouter(dependencies=[AuthRequired])
 
@@ -39,6 +41,18 @@ def _default(o: Any) -> str | None:
 
 def _sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=_default)}\n\n"
+
+
+def _alarm(e: Event) -> dict[str, Any]:
+    """``alarm`` payload. ``key`` pairs a watchdog alarm with its clear."""
+    return {
+        "id": e.id,
+        "key": e.details.get("alarm") or f"{e.kind}:{e.id}",
+        "kind": e.kind,
+        "severity": e.severity,
+        "message": e.message,
+        "time": e.time,
+    }
 
 
 def _new_rows() -> dict[str, Any]:
@@ -85,18 +99,7 @@ def _fetch_new(last: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[str, An
             .where(Event.id > last["event_id"], Event.kind.in_(ALARM_KINDS))
             .order_by(Event.id)
         ).all():
-            events.append(
-                (
-                    "alarm",
-                    {
-                        "id": e.id,
-                        "kind": e.kind,
-                        "severity": e.severity,
-                        "message": e.message,
-                        "time": e.time,
-                    },
-                )
-            )
+            events.append(("alarm", _alarm(e)))
         for fill, order in session.execute(
             select(Fill, Order)
             .join(Order, Fill.order_id == Order.id)
@@ -133,6 +136,10 @@ async def _stream(token: str | None) -> AsyncIterator[str]:
     last = await asyncio.to_thread(_new_rows)
     with session_scope() as session:
         yield _sse("status", build_status(session).model_dump())
+        # Alarms still open: a browser that connects late must see them too.
+        for e in watchdog.active_alarms(session).values():
+            if e.id <= last["event_id"]:
+                yield _sse("alarm", _alarm(e))
     while True:
         await asyncio.sleep(POLL_SECONDS)
         # A logged-out (or expired) token ends the stream instead of

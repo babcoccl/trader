@@ -14,9 +14,10 @@ Conditions:
 - no ``cycle="intraday"`` decision in the last 15 minutes;
 - a symbol's newest 5m candle is stale (same convention as the intraday
   cycle: more than 10 minutes since the bar closed);
-- ledger balances differ from the execution adapter's ``balances()``
-  (checked only where an adapter exists: paper mode today; spec 5.2 adds
-  the live one).
+- ledger balances (replayed from deposits and fills) differ from the
+  execution adapter's ``balances()`` (checked only where an adapter
+  exists: paper mode today, whose adapter reports the stored ``balances``
+  rows; spec 5.2 adds the live one).
 
 Every 3 hours ``check`` also writes one ``kind="heartbeat_summary"`` event
 counting the price checks (intraday decisions), errors and alarm activity
@@ -156,8 +157,9 @@ def _conditions(session: Session, clock: Clock) -> list[Alarm]:
     # 5. Ledger balances differ from the adapter's balances.
     adapter = _adapter_for(session, get_settings().mode, clock)
     if adapter is not None:
-        ledger = accounting.positions(session, get_settings().mode)
-        ledger["USD"] = accounting.cash(session, get_settings().mode)
+        # Ledger side is replayed from deposits and fills, so it is
+        # independent of the stored balances the paper adapter reports.
+        ledger = accounting.replay(session, get_settings().mode)
         venue = adapter.balances()
         diffs = {
             asset: (ledger.get(asset, Decimal(0)), venue.get(asset, Decimal(0)))
@@ -186,7 +188,7 @@ def _conditions(session: Session, clock: Clock) -> list[Alarm]:
     return alarms
 
 
-def _active_alarms(session: Session) -> dict[str, Event]:
+def active_alarms(session: Session) -> dict[str, Event]:
     """Currently open alarms: an ``alarm`` event with no later
     ``alarm_cleared`` for the same ``details["alarm"]`` key."""
     active: dict[str, Event] = {}
@@ -265,7 +267,7 @@ def _write_summary(session: Session, now: datetime) -> Event | None:
         .where(Event.kind == "alarm_cleared", Event.time >= window)
     )
     tail = f"{checks or 0} price checks, {errors or 0} errors in the last 3 hours."
-    if not raised and not _active_alarms(session):
+    if not raised and not active_alarms(session):
         message = f"All services up. {tail} Nothing to do."
     else:
         parts = []
@@ -276,7 +278,7 @@ def _write_summary(session: Session, now: datetime) -> Event | None:
             )
         if cleared:
             parts.append(f"cleared {cleared}")
-        open_keys = sorted(_active_alarms(session))
+        open_keys = sorted(active_alarms(session))
         still = f" Still open: {', '.join(open_keys)}." if open_keys else ""
         message = (
             f"Watchdog {', '.join(parts) or 'saw no alarm changes'} in the "
@@ -303,7 +305,7 @@ def check(session: Session, clock: Clock) -> list[Alarm]:
     still firing after it."""
     now = clock.now()
     firing = _conditions(session, clock)
-    active = _active_alarms(session)
+    active = active_alarms(session)
     for alarm in firing:
         if alarm.key not in active:
             _raise(session, now, alarm)

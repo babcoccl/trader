@@ -508,3 +508,43 @@ def test_stream_emits_status(seeded) -> None:
                 break
         assert lines[0] == "event: status"
         assert '"halted":false' in lines[1] or '"halted": false' in lines[1]
+
+
+def test_stream_replays_open_alarms_on_connect(seeded) -> None:
+    client, _, _ = seeded
+    engine = _shared_engine()
+    with Session(engine) as s:
+        for key, kind in (
+            ("candle_stale:BTC-USD", "alarm"),
+            ("intraday_stale", "alarm"),
+        ):
+            s.add(
+                Event(
+                    time=NOW,
+                    kind=kind,
+                    severity="alarm",
+                    message=f"{key} open",
+                    details={"alarm": key},
+                )
+            )
+        s.add(
+            Event(
+                time=NOW,
+                kind="alarm_cleared",
+                severity="info",
+                message="Cleared: intraday_stale open",
+                details={"alarm": "intraday_stale"},
+            )
+        )
+        s.commit()
+    _login(client)
+    with client.stream("GET", "/api/stream") as r:
+        lines = []
+        for line in r.iter_lines():
+            if line:
+                lines.append(line)
+            if len(lines) >= 4:
+                break
+    assert lines[0] == "event: status"
+    assert lines[2] == "event: alarm"
+    assert '"key": "candle_stale:BTC-USD"' in lines[3]

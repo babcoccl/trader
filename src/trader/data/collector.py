@@ -114,7 +114,7 @@ class Collector:
         return candles_mod.upsert(session, got, now=self._clock.now())
 
     def _heartbeat(self, session: Session, status: str, detail: str) -> None:
-        beat(session, "collector", status, detail)
+        beat(session, "collector", status, detail, clock=self._clock)
 
     def run_once(self, session: Session) -> int:
         """One loop: recent 5m candles, yesterday's 1d, heartbeat. Rows written."""

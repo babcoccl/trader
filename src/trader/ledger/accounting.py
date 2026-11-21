@@ -221,13 +221,13 @@ def deposit(session: Session, mode: str, amount: Decimal, clock: Clock) -> None:
     )
 
 
-def rebuild(session: Session, mode: str) -> None:
-    """Recompute all balances for ``mode`` from deposits and fills, in order.
+def replay(session: Session, mode: str) -> dict[str, Decimal]:
+    """Balances for ``mode`` recomputed from deposits and fills, without
+    touching the ``balances`` table (an independent check of it)."""
+    return {a: _q(q) for a, q in _replay(session, mode)[0].items()}
 
-    Deletes the mode's ``balances`` rows and writes the replayed final
-    quantities. Positions and cash afterwards equal what the same fills
-    applied one by one produced.
-    """
+
+def _replay(session: Session, mode: str) -> tuple[dict[str, Decimal], datetime | None]:
     events = (
         session.execute(
             select(Event).where(Event.kind == "deposit").order_by(Event.time, Event.id)
@@ -256,7 +256,17 @@ def rebuild(session: Session, mode: str) -> None:
         elif pair is not None:
             _apply(state, pair[1], pair[0])
         last_time = time
+    return state, last_time
 
+
+def rebuild(session: Session, mode: str) -> None:
+    """Recompute all balances for ``mode`` from deposits and fills, in order.
+
+    Deletes the mode's ``balances`` rows and writes the replayed final
+    quantities. Positions and cash afterwards equal what the same fills
+    applied one by one produced.
+    """
+    state, last_time = _replay(session, mode)
     session.execute(delete(Balance).where(Balance.mode == mode))
     if last_time is None:
         return

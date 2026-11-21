@@ -143,7 +143,7 @@ class Executor:
                     session, accounting.equity(session, mode, prices), self._clock
                 )
             self._complete_plans(session)
-            beat(session, SERVICE, "ok", "executor pass")
+            beat(session, SERVICE, "ok", "executor pass", clock=self._clock)
 
     def tick_safe(self) -> None:
         """tick() that records failures instead of dying (scheduler entry)."""
@@ -161,7 +161,7 @@ class Executor:
                         details={},
                     )
                 )
-                beat(session, SERVICE, "error", str(exc))
+                beat(session, SERVICE, "error", str(exc), clock=self._clock)
 
     # -- steps ----------------------------------------------------------------
 

@@ -61,7 +61,7 @@ class Engine:
 
     def _heartbeat(self, status: str, detail: str) -> None:
         with self._session() as session:
-            beat(session, SERVICE, status, detail)
+            beat(session, SERVICE, status, detail, clock=self._clock)
 
     def run_daily(self) -> None:
         with self._session() as session:
@@ -71,7 +71,7 @@ class Engine:
                 )
                 rows = daily_cycle.run(session, self._clock, portfolio)
                 summary = "; ".join(r.reason for r in rows)
-                beat(session, SERVICE, "ok", summary)
+                beat(session, SERVICE, "ok", summary, clock=self._clock)
             except Exception as exc:
                 log.exception("daily cycle failed")
                 session.rollback()
@@ -85,13 +85,13 @@ class Engine:
                         details={},
                     )
                 )
-                beat(session, SERVICE, "error", str(exc))
+                beat(session, SERVICE, "error", str(exc), clock=self._clock)
 
     def run_intraday(self) -> None:
         with self._session() as session:
             try:
                 row = intraday_cycle.run(session, self._clock)
-                beat(session, SERVICE, "ok", row.reason)
+                beat(session, SERVICE, "ok", row.reason, clock=self._clock)
             except Exception as exc:
                 log.exception("intraday cycle failed")
                 session.rollback()
@@ -104,7 +104,7 @@ class Engine:
                         details={},
                     )
                 )
-                beat(session, SERVICE, "error", str(exc))
+                beat(session, SERVICE, "error", str(exc), clock=self._clock)
 
     def serve(self) -> None:
         self.run_daily()  # catch-up: no-op if today's rows already exist

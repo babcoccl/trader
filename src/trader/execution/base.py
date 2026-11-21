@@ -42,7 +42,12 @@ class ExecutionAdapter(Protocol):
         ...
 
     def poll_fills(self, since: datetime) -> list[Fill]:
-        """New fills for orders working against candles after ``since``."""
+        """New fills for orders working against candles after ``since``.
+
+        The adapter marks each filled order ``filled``; the returned ``Fill``
+        rows are transient. The caller owns persistence: it adds each fill
+        to the session and books it with ``accounting.apply_fill``, or
+        rejects the order when the ledger refuses the fill."""
         ...
 
     def balances(self) -> dict[str, Decimal]:

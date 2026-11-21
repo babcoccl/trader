@@ -58,6 +58,7 @@ class Collector:
         self._source_idx = 0
         self._clock = clock or SystemClock()
         self._session = session_factory
+        self._outage = False
 
     def _event(self, session: Session, severity: str, message: str) -> None:
         session.add(
@@ -96,6 +97,7 @@ class Collector:
                     f"switched to {self._sources[self._source_idx].name}",
                 )
                 if last:
+                    self._outage = True
                     return []
         return []
 
@@ -123,6 +125,7 @@ class Collector:
     def run_once(self, session: Session) -> int:
         """One loop: recent 5m candles, yesterday's 1d, heartbeat. Rows written."""
         now = self._clock.now()
+        self._outage = False
         written = 0
         # Last two closed 5m candles.
         last_open = _floor(now, 300) - timedelta(seconds=300)
@@ -141,7 +144,13 @@ class Collector:
                 written += self._store(
                     session, symbol, "1d", today - timedelta(days=1), today
                 )
-        self._heartbeat(session, "ok", f"stored {written} candles")
+        status = "error" if self._outage else "ok"
+        detail = (
+            "all sources failed; no candles stored"
+            if self._outage
+            else f"stored {written} candles"
+        )
+        self._heartbeat(session, status, detail)
         return written
 
     def refill_gaps(self, session: Session) -> None:

@@ -148,3 +148,20 @@ def test_all_sources_down_writes_error_no_candles(session: Session) -> None:
     assert written == 0
     events = session.scalars(select(Event)).all()
     assert events and all(e.severity == "error" for e in events)
+    # The heartbeat reports the outage, not ok.
+    hb = session.scalars(select(Heartbeat)).all()
+    assert hb and all(h.status == "error" for h in hb)
+
+
+def test_heartbeat_recovers_after_outage(session: Session) -> None:
+    sources = [FakeSource("a", fail=True), FakeSource("b", fail=True)]
+    collector = Collector(sources=sources, clock=_Frozen())
+    collector.run_once(session)
+    # Source a recovers; rotation put it first again.
+    sources[0]._fail = False
+    collector.run_once(session)
+    session.commit()
+    statuses = [
+        h.status for h in session.scalars(select(Heartbeat).order_by(Heartbeat.id))
+    ]
+    assert statuses == ["error", "ok"]

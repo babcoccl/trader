@@ -1,24 +1,34 @@
 """Opt-in Bitstamp sandbox integration test (spec 5.2).
 
-Runs only when TRADER_SANDBOX_TEST=1 and sandbox credentials are set:
+Runs only when TRADER_SANDBOX_TEST=1 and sandbox credentials are set.
 
-    TRADER_SANDBOX_TEST=1 \
+Unix shell:
+
+    TRADER_SANDBOX_TEST=1 TRADER_MODE=live TRADER_LIVE_ENABLED=true \
     TRADER_BITSTAMP_KEY=... TRADER_BITSTAMP_SECRET=... \
     TRADER_BITSTAMP_BASE_URL=https://sandbox.bitstamp.net/api/v2 \
-    TRADER_MODE=live TRADER_LIVE_ENABLED=true \
     pytest tests/execution/test_bitstamp_sandbox.py
 
-It places one tiny limit buy on the SANDBOX priced a cent above zero
-(can never fill), reads it back through open_orders, then cancels it.
+PowerShell:
+
+    $env:TRADER_SANDBOX_TEST="1"; $env:TRADER_MODE="live"
+    $env:TRADER_LIVE_ENABLED="true"
+    $env:TRADER_BITSTAMP_KEY="..."; $env:TRADER_BITSTAMP_SECRET="..."
+    $env:TRADER_BITSTAMP_BASE_URL="https://sandbox.bitstamp.net/api/v2"
+    pytest tests/execution/test_bitstamp_sandbox.py
+
+Places one limit buy on the SANDBOX 15% under the best bid (inside the
+venue's 20% deviation limit, far enough not to fill) sized at 1.5x the
+market's minimum order value, reads it back through open_orders, then
+cancels it.
 """
 
 import os
-from decimal import Decimal
+from decimal import ROUND_UP, Decimal
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
 
+from trader.core.config import get_settings
 from trader.execution.bitstamp import BitstampAdapter
 from trader.ledger.models import Order
 
@@ -28,33 +38,43 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture()
-def session():
-    engine = create_engine("sqlite://")
-    with Session(engine) as s:
-        yield s
+class _NoDb:
+    """The lifecycle needs no database: no stored order to update."""
+
+    def flush(self) -> None:
+        pass
+
+    def scalars(self, *_args: object, **_kw: object) -> "_NoDb":
+        return self
+
+    def first(self) -> None:
+        return None
 
 
-def test_sandbox_limit_order_lifecycle(session) -> None:
-    from trader.core.config import get_settings
-
+def test_sandbox_limit_order_lifecycle() -> None:
     get_settings.cache_clear()
-    adapter = BitstampAdapter.from_env(session)
+    assert "sandbox" in get_settings().bitstamp_base_url, "sandbox only"
+    adapter = BitstampAdapter.from_env(_NoDb())  # type: ignore[arg-type]
+    rules = adapter.symbol_rules("BTC-USD")
+    price = (adapter.ticker("BTC-USD")["bid"] * Decimal("0.85")).quantize(rules.tick)
+    quantity = (rules.min_notional * Decimal("1.5") / price).quantize(
+        rules.lot, rounding=ROUND_UP
+    )
     order = Order(
         plan_id=0,
         venue="",
-        client_order_id="devin-sandbox-test",
+        client_order_id="sandbox-lifecycle-test",
         symbol="BTC-USD",
         side="buy",
         type="limit",
-        price=Decimal("0.02"),
-        quantity=Decimal("0.4"),
+        price=price,
+        quantity=quantity,
         status="new",
         mode="live",
     )
     venue_id = adapter.place(order)
-    assert venue_id
-    venue_orders = adapter.venue_open_orders()
-    assert venue_id in {row["id"] for row in venue_orders}
-    assert adapter.cancel(venue_id) is True
+    try:
+        assert venue_id in {str(row["id"]) for row in adapter.venue_open_orders()}
+    finally:
+        assert adapter.cancel(venue_id) is True
     get_settings.cache_clear()

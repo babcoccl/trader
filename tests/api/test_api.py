@@ -26,6 +26,7 @@ from trader.ledger.models import (
     EquitySnapshot,
     Event,
     Fill,
+    FundingRate,
     Heartbeat,
     Order,
     Plan,
@@ -192,6 +193,15 @@ def _seed(s: Session) -> dict[str, Any]:
             details={},
         )
     )
+    s.add(
+        FundingRate(
+            symbol="BTC-USD",
+            venue="binance",
+            time=NOW - timedelta(hours=1),
+            rate=Decimal("0.0001"),
+        )
+    )
+    s.add(Setting(key="t_bill_rate", value=0.04, updated_at=NOW))
     s.add(Digest(day=date(2026, 11, 20), body_md="# digest", stats={"a": 1}))
     s.commit()
     return {
@@ -220,6 +230,7 @@ def seeded(monkeypatch):
             Setting,
             EquitySnapshot,
             Heartbeat,
+            FundingRate,
             AuditLog,
             Digest,
         ):
@@ -259,6 +270,7 @@ def test_routes_require_login(seeded) -> None:
         "/api/plans/1",
         "/api/positions",
         "/api/activity",
+        "/api/funding",
         "/api/reports/equity",
         "/api/reports/summary",
         "/api/digests",
@@ -271,6 +283,23 @@ def test_routes_require_login(seeded) -> None:
         client.post("/api/controls/flatten", json={"confirm": "FLATTEN"}).status_code
         == 401
     )
+
+
+def test_funding(seeded) -> None:
+    client, _, _ = seeded
+    _login(client)
+    r = client.get("/api/funding")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["t_bill_rate"] == 0.04
+    assert body["rates"] == [
+        {
+            "symbol": "BTC-USD",
+            "venue": "binance",
+            "time": (NOW - timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+            "rate": "0.000100000000000000",
+        }
+    ]
 
 
 def test_login_wrong_password(seeded) -> None:

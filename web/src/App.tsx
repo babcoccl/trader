@@ -2,7 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api } from "./api/client";
 import { StatusStrip } from "./components/StatusStrip";
+import { Activity } from "./pages/Activity";
 import { Overview } from "./pages/Overview";
+import { Positions } from "./pages/Positions";
 
 const TABS = ["Overview", "Approvals", "Positions", "Activity", "Reports", "Controls"] as const;
 type Tab = (typeof TABS)[number];
@@ -84,7 +86,17 @@ export function App() {
           </button>
         ))}
       </nav>
-      <main>{tab === "Overview" ? <Overview /> : <ComingSoon name={tab} />}</main>
+      <main>
+        {tab === "Overview" ? (
+          <Overview />
+        ) : tab === "Positions" ? (
+          <Positions />
+        ) : tab === "Activity" ? (
+          <Activity />
+        ) : (
+          <ComingSoon name={tab} />
+        )}
+      </main>
     </div>
   );
 }

@@ -163,6 +163,17 @@ def test_due_week_marks_done_and_midweek_build_dedupes(session: Session) -> None
     )
 
 
+def test_partial_report_does_not_settle_week(session: Session) -> None:
+    # An on-demand report covering only part of the week must not stop
+    # the watchdog writing the full Monday-to-Monday one.
+    paper_report.build(session, WEEK_START, WEEK_START + timedelta(days=3))
+    session.commit()
+    assert paper_report.due_week(session, FrozenClock(MONDAY_30)) == (
+        WEEK_START,
+        WEEK_END,
+    )
+
+
 def test_tracking_gap_points(session: Session) -> None:
     _daily_candles(session)
     _snapshots(session, Decimal("5000"), Decimal("5500"))

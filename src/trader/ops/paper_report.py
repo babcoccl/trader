@@ -79,7 +79,13 @@ def _week_key(start: datetime) -> str:
     return start.date().isoformat()
 
 
-def _report_exists(session: Session, week_start: datetime) -> bool:
+def _week_end_key(end: datetime) -> str:
+    return (end - timedelta(seconds=1)).date().isoformat()
+
+
+def _report_exists(session: Session, week_start: datetime, week_end: datetime) -> bool:
+    # A report only settles a week when it covers the whole window; a
+    # shorter on-demand report does not block the scheduled one.
     return (
         session.scalar(
             select(func.count())
@@ -87,6 +93,7 @@ def _report_exists(session: Session, week_start: datetime) -> bool:
             .where(
                 Event.kind == REPORT_KIND,
                 Event.details["week_start"].as_string() == _week_key(week_start),
+                Event.details["week_end"].as_string() == _week_end_key(week_end),
             )
         )
         or 0
@@ -97,8 +104,8 @@ def due_week(session: Session, clock: Clock) -> tuple[datetime, datetime] | None
     """The [start, end) window whose report should exist now.
 
     Due once ``digest_time_utc`` has passed on the Monday after the week
-    closed; a ``weekly_report`` event carrying that week's start date
-    marks it done.
+    closed; a ``weekly_report`` event carrying that week's start and end
+    dates marks it done.
     """
     now = clock.now()
     hour, minute = digest._digest_time(session)
@@ -107,7 +114,7 @@ def due_week(session: Session, clock: Clock) -> tuple[datetime, datetime] | None
         return None
     end = today - timedelta(days=today.weekday())  # Monday 00:00
     start = end - timedelta(days=7)
-    if _report_exists(session, start):
+    if _report_exists(session, start, end):
         return None
     return start, end
 
@@ -271,9 +278,9 @@ def build(session: Session, start: datetime, end: datetime) -> Event:
     approvals = _approval_times(session, start, end)
     answered = [a["minutes"] for a in approvals]
 
-    week_end = (end - timedelta(seconds=1)).date()
+    week_end = _week_end_key(end)
     lines: list[str] = [
-        f"# Weekly paper report — {_week_key(start)} to {week_end.isoformat()}",
+        f"# Weekly paper report — {_week_key(start)} to {week_end}",
         "",
     ]
     acct = f"**Account:** {digest._money(eq_end)}"
@@ -328,7 +335,7 @@ def build(session: Session, start: datetime, end: datetime) -> Event:
     mean_uptime = sum(up.values()) / len(up) if up else None
     stats: dict[str, Any] = {
         "week_start": _week_key(start),
-        "week_end": week_end.isoformat(),
+        "week_end": week_end,
         "equity_start_usd": str(eq_start) if eq_start is not None else None,
         "equity_end_usd": str(eq_end) if eq_end is not None else None,
         "paper_return": gap["paper_return"],
@@ -348,7 +355,7 @@ def build(session: Session, start: datetime, end: datetime) -> Event:
         else "not computable"
     )
     message = (
-        f"Weekly paper report {_week_key(start)} to {week_end.isoformat()}: "
+        f"Weekly paper report {_week_key(start)} to {week_end}: "
         f"account {digest._money(eq_end)}, tracking gap {gap_txt}, "
         f"{len(raised)} alarm(s) raised."
     )

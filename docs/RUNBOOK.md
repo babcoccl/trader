@@ -55,13 +55,20 @@ older than 14 days. Point `TRADER_BACKUP_DIR` at a directory on the
 
 ```bash
 sudo mkdir -p /mnt/data/trader-backups
+sudo chown "$USER" /mnt/data/trader-backups
 echo 'TRADER_BACKUP_DIR=/mnt/data/trader-backups' | sudo tee -a /etc/environment
 ```
 
-Cron entry (`crontab -e`), nightly at 03:17:
+```powershell
+# Windows PowerShell equivalent
+ssh trader-box 'sudo mkdir -p /mnt/data/trader-backups && sudo chown $USER /mnt/data/trader-backups'
+```
+
+Cron entry (`crontab -e`), nightly at 03:17. The log goes in your home
+directory — `/var/log` is not writable by a non-root account:
 
 ```
-17 3 * * * TRADER_BACKUP_DIR=/mnt/data/trader-backups /opt/trader/scripts/backup.sh >> /var/log/trader-backup.log 2>&1
+17 3 * * * TRADER_BACKUP_DIR=/mnt/data/trader-backups /opt/trader/scripts/backup.sh >> $HOME/trader-backup.log 2>&1
 ```
 
 ## Upgrade
@@ -72,6 +79,11 @@ git pull
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml exec api alembic upgrade head
 docker compose -f docker-compose.prod.yml ps   # all "running"
+```
+
+```powershell
+# Windows PowerShell equivalent
+ssh trader-box "cd /opt/trader && git pull && docker compose -f docker-compose.prod.yml up -d --build && docker compose -f docker-compose.prod.yml exec api alembic upgrade head && docker compose -f docker-compose.prod.yml ps"
 ```
 
 ## Reboot behaviour
@@ -91,12 +103,22 @@ database named `trader_restore`):
 scripts/restore.sh /mnt/data/trader-backups/trader-20261122T031700Z.dump
 ```
 
+```powershell
+# Windows PowerShell equivalent
+ssh trader-box "cd /opt/trader && scripts/restore.sh /mnt/data/trader-backups/trader-20261122T031700Z.dump"
+```
+
 Real restore into the live `trader` database — **destroys current data**:
 
 ```bash
 docker compose -f docker-compose.prod.yml stop api collector engine executor watchdog
 scripts/restore.sh /mnt/data/trader-backups/trader-20261122T031700Z.dump trader
 docker compose -f docker-compose.prod.yml up -d
+```
+
+```powershell
+# Windows PowerShell equivalent
+ssh trader-box "cd /opt/trader && docker compose -f docker-compose.prod.yml stop api collector engine executor watchdog && scripts/restore.sh /mnt/data/trader-backups/trader-20261122T031700Z.dump trader && docker compose -f docker-compose.prod.yml up -d"
 ```
 
 ## Halt, resume, flatten from the command line
@@ -133,12 +155,22 @@ Invoke-RestMethod -WebSession $s -Method Post "$LAN/api/controls/flatten" `
 If the API itself is down but Postgres is up, halt by writing the
 setting directly:
 
+The risk engine reads the `risk.halted` and `risk.halt_reason` settings
+keys (`src/trader/risk/engine.py`); the values are JSONB, so quote them
+as `'true'::jsonb` and `'"reason"'::jsonb`:
+
 ```bash
 docker compose -f docker-compose.prod.yml exec db \
     psql -U trader -c \
     "INSERT INTO settings (key, value, updated_at)
-     VALUES ('halted', 'true', now())
-     ON CONFLICT (key) DO UPDATE SET value = 'true', updated_at = now();"
+     VALUES ('risk.halted', 'true'::jsonb, now()),
+            ('risk.halt_reason', '\"manual halt\"'::jsonb, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();"
+```
+
+```powershell
+# Windows PowerShell equivalent
+ssh trader-box 'cd /opt/trader && docker compose -f docker-compose.prod.yml exec db psql -U trader -c "INSERT INTO settings (key, value, updated_at) VALUES (''risk.halted'', ''true''::jsonb, now()), (''risk.halt_reason'', ''\"manual halt\"''::jsonb, now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();"'
 ```
 
 ## Alarms: what each one means

@@ -507,6 +507,71 @@ def test_earned_fill_survives_repricing(session: Session) -> None:
     assert _fills(session)[0].liquidity == "maker"
 
 
+def test_unaffordable_fill_rejects_order_not_pass(session: Session) -> None:
+    """A market buy above available cash rejects that order; other fills in
+    the same pass still settle."""
+    _balances(session, USD="1000", ETH="0.5")
+    buy_plan = _plan(session, entry_orders=[{"type": "market", "quantity": "1"}])
+    sell_plan = _plan(
+        session,
+        symbol="ETH-USD",
+        side="sell",
+        entry_orders=[{"type": "market", "quantity": "0.5"}],
+    )
+    _executor(session).tick()
+    buy = _orders(session, buy_plan)[0]
+    sell = _orders(session, sell_plan)[0]
+    at = max(buy.created_at, sell.created_at)
+    _candle(session, "BTC-USD", _next_candle(at), "60000", "60000", "60000", "60000")
+    _candle(session, "ETH-USD", _next_candle(at), "3000", "3000", "3000", "3000")
+
+    _executor(session).tick()
+
+    session.refresh(buy)
+    session.refresh(sell)
+    assert buy.status == "rejected"
+    assert sell.status == "filled"
+    assert len(_fills(session)) == 1
+    assert accounting.cash(session, "paper") > Decimal("1000")
+    session.scalars(select(Event).where(Event.kind == "fill_rejected")).one()
+
+
+def test_catchup_fills_apply_in_candle_order(session: Session) -> None:
+    """A sale on an earlier candle settles before a buy it funds on a later
+    candle, even though the buy's order row came first."""
+    _balances(session, USD="1000", ETH="0.5")
+    buy_plan = _plan(session, entry_orders=[{"type": "market", "quantity": "0.04"}])
+    sell_plan = _plan(
+        session,
+        symbol="ETH-USD",
+        side="sell",
+        entry_orders=[{"type": "market", "quantity": "0.5"}],
+    )
+    _executor(session).tick()
+    buy = _orders(session, buy_plan)[0]
+    sell = _orders(session, sell_plan)[0]
+    at = max(buy.created_at, sell.created_at)
+    _candle(session, "ETH-USD", _next_candle(at), "3000", "3000", "3000", "3000")
+    _candle(
+        session,
+        "BTC-USD",
+        _next_candle(at, 2),
+        "60000",
+        "60000",
+        "60000",
+        "60000",
+    )
+
+    _executor(session).tick()
+
+    session.refresh(buy)
+    session.refresh(sell)
+    assert sell.status == "filled" and buy.status == "filled"
+    assert len(_fills(session)) == 2
+    fills = _fills(session)
+    assert fills[0].order_id == sell.id and fills[1].order_id == buy.id
+
+
 # --- worst-case taker setting -------------------------------------------------
 
 

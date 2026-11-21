@@ -92,21 +92,32 @@ class PaperAdapter:
     def poll_fills(self, since: datetime) -> list[Fill]:
         """Simulate every open order against candles opened after ``since``.
 
-        Returns the new ``Fill`` rows. Idempotent: an order that fills leaves
-        the open set, so a replayed ``since`` window never fills it twice.
+        Returns the new ``Fill`` objects, not yet added to the session, in
+        candle-time order so the caller applies sells before the buys they
+        fund. Idempotent: an order that fills leaves the open set, so a
+        replayed ``since`` window never fills it twice.
         """
         assume_taker = self._assume_taker()
-        new_fills: list[Fill] = []
         symbols = {o.symbol for o in self.open_orders()}
         candles = self._candles_after(symbols, since)
+        candidates: list[tuple[datetime, int, Order, Decimal, str]] = []
         for order in self.open_orders():
             for candle in candles.get(order.symbol, []):
                 if candle.open_time < order.created_at:
                     continue  # order did not exist when this candle opened
-                fill = self._try_fill(order, candle, assume_taker)
-                if fill is not None:
-                    new_fills.append(fill)
+                result = self._fill_price(order, candle, assume_taker)
+                if result is not None:
+                    price, liquidity = result
+                    candidates.append(
+                        (candle.open_time, order.id, order, price, liquidity)
+                    )
                     break  # full fill only; order is done
+        candidates.sort(key=lambda c: (c[0], c[1]))
+        new_fills: list[Fill] = []
+        for time, _, order, price, liquidity in candidates:
+            new_fills.append(self._make_fill(order, time, price, liquidity))
+            order.status = "filled"
+        self._session.flush()
         return new_fills
 
     def balances(self) -> dict[str, Decimal]:
@@ -122,10 +133,10 @@ class PaperAdapter:
     def fill_now(self, order: Order, price: Decimal, time: datetime) -> Fill:
         """Fill an order immediately at ``price`` with taker fee and slippage
         already applied by the caller. Used for emergency-stop and flatten
-        market sells, which cannot wait for the next candle."""
+        market sells, which cannot wait for the next candle. The returned
+        fill is transient: the caller adds it to the session."""
         fill = self._make_fill(order, time, price, "taker")
         order.status = "filled"
-        self._session.flush()
         return fill
 
     def market_sell_price(self, price: Decimal) -> Decimal:
@@ -165,9 +176,10 @@ class PaperAdapter:
             )
         return out
 
-    def _try_fill(
+    def _fill_price(
         self, order: Order, candle: Candle, assume_taker: bool
-    ) -> Fill | None:
+    ) -> tuple[Decimal, str] | None:
+        """(price, liquidity) when ``order`` fills on ``candle``, else None."""
         price: Decimal | None = None
         liquidity = "taker"
         if order.type == "limit" and not assume_taker:
@@ -193,14 +205,12 @@ class PaperAdapter:
                 )
         if price is None:
             return None
-        fill = self._make_fill(order, candle.open_time, price, liquidity)
-        order.status = "filled"
-        self._session.flush()
-        return fill
+        return price, liquidity
 
     def _make_fill(
         self, order: Order, time: datetime, price: Decimal, liquidity: str
     ) -> Fill:
+        """A transient Fill row; the caller adds it to the session."""
         fee_rate = (
             self._cost.maker_fee if liquidity == "maker" else self._cost.taker_fee
         )
@@ -213,6 +223,4 @@ class PaperAdapter:
             fee_currency=order.symbol.split("-", 1)[1],
             liquidity=liquidity,
         )
-        self._session.add(fill)
-        self._session.flush()
         return fill

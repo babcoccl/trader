@@ -196,6 +196,7 @@ class Executor:
             )
             adapter.place(order)
             fill = adapter.fill_now(order, adapter.market_sell_price(price), now)
+            session.add(fill)
             accounting.apply_fill(session, fill)
             session.add(
                 Event(
@@ -264,6 +265,7 @@ class Executor:
             order = self._new_order(session, plan, type="market", quantity=qty)
             adapter.place(order)
             fill = adapter.fill_now(order, adapter.market_sell_price(price), now)
+            session.add(fill)
             accounting.apply_fill(session, fill)
         row.value = False
         row.updated_at = now
@@ -369,8 +371,27 @@ class Executor:
             seconds=300
         )
         for fill in adapter.poll_fills(since):
-            accounting.apply_fill(session, fill)
             order = session.get(Order, fill.order_id)
+            try:
+                with session.begin_nested():
+                    session.add(fill)
+                    accounting.apply_fill(session, fill)
+            except ValueError as exc:
+                # Unfillable in the ledger (e.g. a market buy gapping above
+                # available cash): reject the order instead of stalling the
+                # whole pass, and record why.
+                if order is not None:
+                    order.status = "rejected"
+                session.add(
+                    Event(
+                        time=now,
+                        kind="fill_rejected",
+                        severity="error",
+                        message=(f"Rejected fill on order {fill.order_id}: {exc}"),
+                        details={"order_id": fill.order_id},
+                    )
+                )
+                continue
             session.add(
                 Event(
                     time=now,

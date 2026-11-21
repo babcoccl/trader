@@ -120,6 +120,8 @@ class FundingRateOut(BaseModel):
     venue: str
     time: datetime
     rate: Decimal
+    interval_hours: int
+    annual_rate: Decimal
 
 
 class FundingOut(BaseModel):

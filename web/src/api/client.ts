@@ -106,6 +106,8 @@ export interface FundingRateOut {
   venue: string;
   time: string;
   rate: string;
+  interval_hours: number;
+  annual_rate: string;
 }
 
 export interface FundingOut {

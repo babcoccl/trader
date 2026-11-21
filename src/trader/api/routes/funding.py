@@ -1,6 +1,7 @@
 """GET /api/funding: latest recorded funding rate per symbol/venue against
 the Treasury-bill setting (spec 3.4 funding-watch line)."""
 
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter
@@ -13,6 +14,8 @@ from trader.api.schemas import FundingOut, FundingRateOut
 from trader.ledger.models import FundingRate, Setting
 
 router = APIRouter(dependencies=[AuthRequired])
+
+HOURS_PER_YEAR = Decimal(24 * 365)
 
 
 @router.get("/api/funding", response_model=FundingOut)
@@ -35,7 +38,14 @@ def funding(session: Session = SessionDep) -> FundingOut:
         )
     ).scalars()
     rates = [
-        FundingRateOut(symbol=r.symbol, venue=r.venue, time=r.time, rate=r.rate)
+        FundingRateOut(
+            symbol=r.symbol,
+            venue=r.venue,
+            time=r.time,
+            rate=r.rate,
+            interval_hours=r.interval_hours,
+            annual_rate=r.rate * HOURS_PER_YEAR / r.interval_hours,
+        )
         for r in rows
     ]
     rates.sort(key=lambda r: (r.symbol, r.venue))

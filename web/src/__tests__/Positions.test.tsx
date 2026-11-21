@@ -64,6 +64,8 @@ describe("Positions", () => {
           venue: "binance",
           time: new Date().toISOString(),
           rate: "0.0001",
+          interval_hours: 8,
+          annual_rate: "0.12",
         },
       ],
       t_bill_rate: 0.04,
@@ -76,7 +78,8 @@ describe("Positions", () => {
     expect(screen.getByText("$45,000")).toBeInTheDocument();
     expect(screen.getByText(/sell limit 0\.01 @ \$61,000/)).toBeInTheDocument();
     expect(await screen.findByText(/Funding watch:/)).toBeInTheDocument();
-    expect(screen.getByText(/0\.0100%/)).toBeInTheDocument();
+    expect(screen.getByText(/BTC-USD 12\.0% a year/)).toBeInTheDocument();
+    expect(screen.getByText(/funding beats T-bills/)).toBeInTheDocument();
     expect(screen.getByText(/T-bill 4\.0%/)).toBeInTheDocument();
   });
 

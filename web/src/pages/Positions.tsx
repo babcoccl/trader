@@ -3,10 +3,6 @@ import { useState } from "react";
 import { api, type PlanOut } from "../api/client";
 import { pct, timeAgo, usd } from "../lib/time";
 
-function fmtRate(rate: string): string {
-  return `${(Number(rate) * 100).toFixed(4)}%`;
-}
-
 function FundingWatch() {
   const funding = useQuery({ queryKey: ["funding"], queryFn: api.funding });
   if (funding.isLoading) return <p className="muted">Loading funding watch…</p>;
@@ -21,13 +17,13 @@ function FundingWatch() {
       ) : (
         rates.map((r) => (
           <span key={`${r.symbol}-${r.venue}`} className="funding-line__rate">
-            {r.symbol} {fmtRate(r.rate)} ({r.venue},{" "}
+            {r.symbol} {pct(Number(r.annual_rate))} a year ({r.venue},{" "}
             {timeAgo(r.time, new Date())})
           </span>
         ))
       )}{" "}
       vs T-bill {pct(t_bill_rate)}
-      {rates.length > 0 && rates.every((r) => Number(r.rate) > t_bill_rate)
+      {rates.length > 0 && rates.every((r) => Number(r.annual_rate) > t_bill_rate)
         ? " — funding beats T-bills; a carry trade is worth proposing."
         : ""}
     </p>

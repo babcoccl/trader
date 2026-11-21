@@ -1,4 +1,5 @@
-"""All ORM models. One Alembic migration (spec 0.3) creates these tables.
+"""All ORM models. Alembic migrations (base revision from spec 0.3) create
+these tables.
 
 Conventions: every table has `id BIGSERIAL PK` and
 `created_at timestamptz default now()` unless the spec states otherwise
@@ -14,9 +15,11 @@ from typing import Any, Literal
 from sqlalchemy import (
     JSON,
     BigInteger,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -61,7 +64,10 @@ class Candle(Base):
 
 class FundingRate(Base):
     __tablename__ = "funding_rates"
-    __table_args__ = (UniqueConstraint("symbol", "venue", "time"),)
+    __table_args__ = (
+        UniqueConstraint("symbol", "venue", "time"),
+        CheckConstraint("interval_hours > 0", name="funding_interval_positive"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -70,7 +76,11 @@ class FundingRate(Base):
     symbol: Mapped[str] = mapped_column(String(20))
     venue: Mapped[str] = mapped_column(String(40))
     time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # Rate paid per settlement period (a fraction, not annualised).
     rate: Mapped[Decimal] = mapped_column(Money)
+    # Hours between settlements on this venue (e.g. 8 on Binance, 1 on
+    # Hyperliquid); annual rate = rate * 8760 / interval_hours.
+    interval_hours: Mapped[int] = mapped_column(Integer)
 
 
 class Signal(Base):

@@ -164,8 +164,8 @@ class PaperAdapter:
         """The approval-time + ``LIMIT_TTL`` deadline for a limit order,
         or None for other types. Candles that opened after it belong to
         the market order the expired limit converts into."""
-        if order.type != "limit":
-            return None
+        if order.type != "limit" or order.shadow:
+            return None  # shadow orders never convert; they wait for their print
         plan = self._session.get(Plan, order.plan_id)
         if plan is None:
             return None

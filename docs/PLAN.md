@@ -83,7 +83,7 @@ Sessions inside a phase are listed in dependency order. "Parallel" marks session
 |---|---|---|---|
 | 2.1 | Risk engine: exposure caps, per-plan worst-case loss, 35% drawdown halt, stale-data and stale-price guards, global halt and flatten state | 1.4 | Property tests: no sequence of inputs produces an order that breaches a limit; halt blocks new plans |
 | 2.2 | Plan builder: turns a target-exposure change into a plan (entry ladder, stop, expiry, fees, worst case, rationale text) | 2.1 | Golden-file tests for buy, reduce and exit plans; worst-case figure equals the sum of its parts |
-| 2.3 | Ledger and accounting: append-only orders, fills, fees; positions, cost basis, equity curve, high-water mark | 0.3 | Recomputing balances from fills equals stored balances on randomised sequences |
+| 2.3 | Ledger and accounting: append-only orders, fills, fees; positions, cost basis, equity curve, high-water mark | 0.3, 1.4 | Recomputing balances from fills equals stored balances on randomised sequences |
 | 2.4 | Paper execution adapter: simulated limit and stop orders against live prices with fees and slippage; same interface the live adapter will use | 2.3 | A scripted price path produces the expected fills; partial fills and expiries handled |
 | 2.5 | Approval state machine: pending, approved (with size reduction), denied, expired, voided on price move; shadow ledger for denied and expired plans | 2.2, 2.4 | State-transition tests cover every edge; an unanswered plan expires at 6 hours and is tracked in shadow |
 
@@ -141,7 +141,7 @@ Detailed per-session specifications for a lightweight model are in `docs/SPECS.m
 |---|---|---|
 | 0 Foundation | 3 | none |
 | 1 Data and strategy | 4 | 1.1 and 1.2 in parallel |
-| 2 Risk, plans, ledger, paper | 5 | 2.3 in parallel with 2.1-2.2 |
+| 2 Risk, plans, ledger, paper | 5 | 2.3 in parallel with 2.1 |
 | 3 API and dashboard | 6 | 3.2-3.5 in parallel |
 | 4 Liveness and operations | 3 | Phase 6 start |
 | 5 Paper gate and live | 4 | 4 weeks of paper running is the long pole |

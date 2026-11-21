@@ -13,6 +13,7 @@ Nothing is built yet. This repo currently holds the agreed design, the implement
 | `docs/mockup.html` | Clickable dashboard mockup (open in a browser); `docs/mockup-source.html` is its source |
 | `docs/studies/` | The two interactive study reports |
 | `research/` | Study scripts, and `research/fixtures/` with the prices and expected values the tests compare against |
+| `docs/KICKOFF.md` | The prompt for session 0.1, a template for later sessions, and the session order |
 | `AGENTS.md` | Rules for agent sessions working in this repo |
 
 ## How development proceeds

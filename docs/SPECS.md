@@ -246,7 +246,7 @@ Each spec lists: Goal, Depends on, Files, Interfaces, Steps, Tests, Done when, O
 ### 2.3 Ledger and accounting
 
 - **Goal:** positions, cash, equity and high-water mark derived from fills only.
-- **Depends on:** 0.3.
+- **Depends on:** 0.3, 1.4.
 - **Files:** `ledger/accounting.py`, `tests/ledger/test_accounting.py`.
 - **Interfaces:** `accounting.apply_fill(session, fill)`; `accounting.positions(session, mode) -> dict[str, Decimal]`; `accounting.cash(session, mode) -> Decimal`; `accounting.cost_basis(session, mode, symbol) -> Decimal` (average cost); `accounting.equity(session, mode, prices) -> Decimal`; `accounting.portfolio_view(session, mode, prices) -> PortfolioView`; `accounting.rebuild(session, mode)` recomputes balances from all fills; `accounting.deposit(session, mode, amount, clock)` for the paper starting balance.
 - **Tests:** `hypothesis` generates random fill sequences; balances after `apply_fill` equal balances after `rebuild`; fees reduce cash; selling more than held raises.

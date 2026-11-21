@@ -185,6 +185,22 @@ def test_tracking_gap_points(session: Session) -> None:
     assert gap["gap_points"] == pytest.approx(10.0)
 
 
+def test_gap_none_when_a_day_lacks_candles(session: Session) -> None:
+    _daily_candles(session)
+    _snapshots(session, Decimal("5000"), Decimal("5500"))
+    session.execute(
+        delete(Candle).where(
+            Candle.interval == "1d",
+            Candle.open_time == WEEK_START + timedelta(days=3),
+        )
+    )
+    session.commit()
+    gap = paper_report.tracking_gap(session, "paper", WEEK_START, WEEK_END)
+    assert gap["paper_return"] == pytest.approx(0.10)
+    assert gap["backtest_return"] is None
+    assert gap["gap_points"] is None
+
+
 def test_gap_none_without_coverage(session: Session) -> None:
     gap = paper_report.tracking_gap(session, "paper", WEEK_START, WEEK_END)
     assert gap["gap_points"] is None

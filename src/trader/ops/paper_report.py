@@ -194,21 +194,30 @@ def tracking_gap(
         out["paper_return"] = float(eq_end / eq_start - 1)
     frames = _candle_frames(session, end)
     if frames is not None:
-        try:
-            result = bt_engine.run(
-                *frames,
-                BITSTAMP,
-                start=start.date().isoformat(),
-                end=(end - timedelta(seconds=1)).date().isoformat(),
-            )
-            equity = result.equity.dropna()
-            if len(equity) >= 1:
-                # `run` starts with cash 1.0 at the first open, so
-                # equity itself is the cumulative return; measuring
-                # from equity[0] would drop opening-day performance.
-                out["backtest_return"] = float(equity.iloc[-1] - 1)
-        except (KeyError, ValueError, ZeroDivisionError):
-            pass
+        opens, closes = frames
+        # Publish only a full-window comparison: the backtest silently
+        # shortens to the days it has candles for.
+        days = {
+            d.date()
+            for d in pd.date_range(start.date(), (end - timedelta(seconds=1)).date())
+        }
+        if days <= {t.date() for t in closes.index}:
+            try:
+                result = bt_engine.run(
+                    opens,
+                    closes,
+                    BITSTAMP,
+                    start=start.date().isoformat(),
+                    end=(end - timedelta(seconds=1)).date().isoformat(),
+                )
+                equity = result.equity.dropna()
+                if len(equity) >= 1:
+                    # `run` starts with cash 1.0 at the first open, so
+                    # equity itself is the cumulative return; measuring
+                    # from equity[0] would drop opening-day performance.
+                    out["backtest_return"] = float(equity.iloc[-1] - 1)
+            except (KeyError, ValueError, ZeroDivisionError):
+                pass
     if out["paper_return"] is not None and out["backtest_return"] is not None:
         out["gap_points"] = (out["paper_return"] - out["backtest_return"]) * 100
     return out

@@ -256,6 +256,10 @@ def test_daily_cycle_saves_proposed_plan(session: Session) -> None:
         assert plan.side == "buy" and plan.status == "pending"
         assert plan.sleeve == "trend"
         assert plan.entry_orders[0]["type"] == "limit"
+        # Priced at the freshest close (the seeded 5m candle), not
+        # yesterday's daily close — the same price the portfolio weights
+        # are marked with.
+        assert plan.reference_price == Decimal("100")
 
 
 @NEEDS_DB

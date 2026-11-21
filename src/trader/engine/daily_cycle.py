@@ -24,7 +24,7 @@ from trader.backtest.costs import BITSTAMP
 from trader.core.clock import Clock
 from trader.data import candles as candles_mod
 from trader.data.sources.base import SYMBOLS
-from trader.ledger.models import Decision, Signal
+from trader.ledger.models import Candle, Decision, Signal
 from trader.plans import builder
 from trader.risk import engine as risk_engine
 from trader.risk.limits import Limits
@@ -168,6 +168,15 @@ def run(
         a = per_asset[symbol]
         target = weights[symbol]
         current = portfolio.weights.get(symbol, 0.0)
+        # Size the plan at the freshest stored close (what the portfolio is
+        # marked with), not yesterday's daily close: a higher latest price
+        # would otherwise make an exit request more coins than held.
+        plan_price = session.scalar(
+            select(Candle.close)
+            .where(Candle.symbol == symbol)
+            .order_by(Candle.open_time.desc())
+            .limit(1)
+        ) or Decimal(str(a["last_close"]))
         prefix = (
             f"Checked {symbol}. {a['k']} of 9 rules positive. "
             f"Target {target:.0%}, holding {current:.0%}."
@@ -205,7 +214,7 @@ def run(
                 target,
                 current,
                 portfolio.equity_usd,
-                Decimal(str(a["last_close"])),
+                plan_price,
                 a["vol"],
                 BITSTAMP,
                 clock,

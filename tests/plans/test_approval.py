@@ -390,3 +390,36 @@ def test_shadow_limit_has_no_market_deadline(session: Session) -> None:
     fills = adapter.poll_fills(order.created_at - timedelta(seconds=1))
     assert len(fills) == 1
     assert fills[0].price == Decimal("60000")
+
+
+def test_halt_keeps_shadow_orders(session: Session) -> None:
+    """A plan denied while trading is halted keeps its shadow order: the
+    executor's halt cancels real buys only, so the counterfactual fill
+    still happens (and still never touches balances)."""
+    from contextlib import contextmanager
+
+    from trader.execution.__main__ import Executor
+    from trader.risk import engine as risk
+
+    _funded(session)
+    plan = _plan(session)
+    approval.deny(session, plan.id, "owner", _clock())
+    risk.halt(session, "owner", "test halt")
+    _candle(session, open_time=NOW, o="60100", h="60100", low="59900", c="59950")
+    session.commit()
+    cash_before = accounting.cash(session, "paper")
+
+    @contextmanager
+    def _cm():
+        yield session
+        session.commit()
+
+    Executor(clock=_clock(NOW + timedelta(minutes=5)), session_factory=_cm).tick()
+
+    order = _orders(session, plan)[0]
+    assert order.shadow is True
+    assert order.status == "filled"
+    fills = list(session.scalars(select(Fill).where(Fill.order_id == order.id)))
+    assert len(fills) == 1 and fills[0].quantity == Decimal("0.1")
+    assert accounting.cash(session, "paper") == cash_before
+    assert accounting.positions(session, "paper") == {}

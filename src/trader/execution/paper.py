@@ -23,7 +23,7 @@ makes limit orders never fill as maker; they wait for the executor's time
 limit and convert to market, simulating the worst-case cost path.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -38,6 +38,7 @@ from trader.ledger.models import Candle, Fill, Order, Plan, Setting
 # Price must trade through the limit by this fraction to fill (spec 2.4).
 TRADE_THROUGH = Decimal("0.0001")
 INTERVAL_SECONDS = 300
+_PERIOD = timedelta(seconds=INTERVAL_SECONDS)
 
 # Bitstamp btcusd/ethusd: $0.01 tick, 8-decimal base, $10 minimum order.
 RULES = SymbolRules(
@@ -108,8 +109,9 @@ class PaperAdapter:
         Order within a candle: market sells first (they provably fill at
         the open and free the cash), then market buys, then limit/stop
         fills in order-id order — a limit sell cannot fund a same-candle
-        buy because its trade-through could print after the open. A limit
-        earns nothing on candles that opened past its plan's deadline.
+        buy because its trade-through could print after the open. Only
+        candles closed by the Clock count, and a limit earns nothing on a
+        candle that closed after its plan's deadline.
         Idempotent: an order that fills leaves the open set, so a
         replayed ``since`` window never fills it twice.
         """
@@ -122,8 +124,8 @@ class PaperAdapter:
             for candle in candles.get(order.symbol, []):
                 if candle.open_time < order.created_at:
                     continue  # order did not exist when this candle opened
-                if deadline is not None and candle.open_time > deadline:
-                    break  # expired: the executor converts it to market
+                if deadline is not None and candle.open_time + _PERIOD > deadline:
+                    break  # closed after the deadline: converts to market
                 result = self._fill_price(order, candle, assume_taker)
                 if result is not None:
                     price, liquidity = result
@@ -200,6 +202,8 @@ class PaperAdapter:
                     Candle.symbol == symbol,
                     Candle.interval == "5m",
                     Candle.open_time > since,
+                    # Closed periods only, by the Clock (spec 1.1 rule).
+                    Candle.open_time + _PERIOD <= self._clock.now(),
                 )
                 .order_by(Candle.open_time, Candle.source != PRIMARY_SOURCE)
             )

@@ -11,10 +11,11 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from trader.backtest.costs import BITSTAMP
+from trader.core.clock import FrozenClock
 from trader.execution.__main__ import Executor, _latest_prices
 from trader.ledger import accounting
 from trader.ledger.models import (
@@ -99,7 +100,11 @@ def _cm(session: Session):
 
 
 def _executor(session: Session) -> Executor:
-    return Executor(session_factory=lambda: _cm(session))
+    """An executor whose Clock stands where the collector would: just after
+    the newest fixture candle has closed (or now, if that is later)."""
+    newest = session.scalar(select(func.max(Candle.open_time)))
+    at = _now() if newest is None else max(_now(), newest + timedelta(minutes=5))
+    return Executor(clock=FrozenClock(at), session_factory=lambda: _cm(session))
 
 
 def _now() -> datetime:
@@ -403,7 +408,7 @@ def test_emergency_stop_after_restart(session: Session) -> None:
         "49500",
     )
 
-    Executor(session_factory=lambda: _cm(session)).tick()
+    _executor(session).tick()
 
     assert accounting.positions(session, "paper") == {}
     assert len(_fills(session)) == 1
@@ -482,7 +487,7 @@ def test_restart_neither_loses_nor_duplicates(session: Session) -> None:
     _executor(session).tick()
 
     # Restart: a new executor must not place the plan's orders again.
-    Executor(session_factory=lambda: _cm(session)).tick()
+    _executor(session).tick()
     orders = _orders(session, plan)
     assert len(orders) == 1
     assert orders[0].client_order_id == f"{plan.id}-1"
@@ -496,8 +501,8 @@ def test_restart_neither_loses_nor_duplicates(session: Session) -> None:
         "59980",
         "60000",
     )
-    Executor(session_factory=lambda: _cm(session)).tick()
-    Executor(session_factory=lambda: _cm(session)).tick()
+    _executor(session).tick()
+    _executor(session).tick()
 
     assert len(_fills(session)) == 1
     session.refresh(plan)
@@ -834,6 +839,58 @@ def test_primary_source_candle_wins_period(session: Session) -> None:
     assert _fills(session) == []
     assert all(o.status != "filled" for o in _orders(session, plan))
     assert _latest_prices(session)["BTC-USD"] == Decimal("60015")
+
+
+def test_unclosed_candle_never_fills(session: Session) -> None:
+    """A candle whose period has not ended by the Clock is not simulated,
+    even if it is already stored."""
+    _balances(session, USD="10000")
+    plan = _plan(
+        session,
+        entry_orders=[{"type": "limit", "price": "60000", "quantity": "0.1"}],
+    )
+    _executor(session).tick()
+    order = _orders(session, plan)[0]
+    t = _next_candle(order.created_at)
+    _candle(session, "BTC-USD", t, "60000", "60000", "59900", "60000")
+
+    clock = FrozenClock(t + timedelta(minutes=4))
+    Executor(clock=clock, session_factory=lambda: _cm(session)).tick()
+    assert _fills(session) == []
+
+    clock.advance(timedelta(minutes=1))
+    Executor(clock=clock, session_factory=lambda: _cm(session)).tick()
+    (fill,) = _fills(session)
+    assert fill.order_id == order.id and fill.liquidity == "maker"
+
+
+def test_candle_spanning_deadline_does_not_fill_limit(session: Session) -> None:
+    """A candle that opened before the deadline but closed after it cannot
+    tell whether the trade-through came before expiry: no maker fill, the
+    limit converts to market."""
+    _balances(session, USD="10000")
+    b = _next_candle(_now() - timedelta(hours=2))
+    decided = b - timedelta(minutes=58)  # deadline = b + 2 minutes
+    plan = _plan(
+        session,
+        entry_orders=[{"type": "limit", "price": "60000", "quantity": "0.1"}],
+        decided_at=decided,
+    )
+    _executor(session).tick()
+    limit_order = _orders(session, plan)[0]
+    limit_order.created_at = decided + timedelta(minutes=1)
+    for order in _orders(session, plan)[1:]:
+        session.delete(order)  # rebuild the pre-expiry book
+    limit_order.status = "open"
+    session.flush()
+    _candle(session, "BTC-USD", b, "60000", "60000", "59900", "60000")
+
+    _executor(session).tick()
+
+    assert _fills(session) == []
+    session.refresh(limit_order)
+    assert limit_order.status == "cancelled"
+    assert _orders(session, plan)[-1].type == "market"
 
 
 # --- worst-case taker setting -------------------------------------------------

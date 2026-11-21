@@ -185,12 +185,19 @@ class Executor:
             price = prices.get(symbol)
             if price is None:
                 continue
+            # The stop of the plan that established this position: the
+            # newest stop-bearing plan with a filled buy on the symbol. A
+            # plan that has not filled does not govern the position.
             plan = session.scalars(
                 select(Plan)
+                .join(Order, Order.plan_id == Plan.id)
                 .where(
                     Plan.symbol == symbol,
                     Plan.stop_price.is_not(None),
                     Plan.status.in_(("approved", "completed")),
+                    Order.symbol == symbol,
+                    Order.side == "buy",
+                    Order.status == "filled",
                 )
                 .order_by(Plan.id.desc())
                 .limit(1)

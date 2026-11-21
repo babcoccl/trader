@@ -197,6 +197,26 @@ def _fills(session: Session) -> list[Fill]:
     return list(session.scalars(select(Fill).order_by(Fill.id)))
 
 
+def _filled_buy(session: Session, plan: Plan, symbol: str = "BTC-USD") -> Order:
+    """A filled buy order under ``plan`` — marks the plan as the one that
+    established the position, so its stop governs the emergency check."""
+    order = Order(
+        plan_id=plan.id,
+        venue="paper",
+        client_order_id=f"{plan.id}-0",
+        venue_order_id=f"paper-{plan.id}-0",
+        symbol=symbol,
+        side="buy",
+        type="market",
+        quantity=Decimal("1"),
+        status="filled",
+        mode="paper",
+    )
+    session.add(order)
+    session.flush()
+    return order
+
+
 # --- fill simulation --------------------------------------------------------
 
 
@@ -323,6 +343,7 @@ def test_emergency_stop_sells_position_first_loop(session: Session) -> None:
     executor loop after start-up, with no approval."""
     _balances(session, BTC="1.0", USD="1000")
     plan = _plan(session, status="completed", stop_price=Decimal("50000"))
+    _filled_buy(session, plan)
     # A resting order on the same asset must be cancelled too.
     resting_plan = _plan(session)
     resting = Order(
@@ -368,7 +389,9 @@ def test_emergency_stop_after_restart(session: Session) -> None:
     """A fresh Executor instance (the restart case) fires the stop on its
     first pass — nothing depends on in-memory state."""
     _balances(session, BTC="0.25", USD="0")
-    _plan(session, status="completed", stop_price=Decimal("50000"))
+    _filled_buy(
+        session, _plan(session, status="completed", stop_price=Decimal("50000"))
+    )
     _candle(
         session,
         "BTC-USD",
@@ -609,7 +632,9 @@ def test_old_stop_does_not_liquidate_new_position(session: Session) -> None:
     an older plan's higher stop must not fire."""
     _balances(session, BTC="0.5", USD="0")
     _plan(session, status="completed", stop_price=Decimal("55000"))
-    _plan(session, status="completed", stop_price=Decimal("45000"))
+    _filled_buy(
+        session, _plan(session, status="completed", stop_price=Decimal("45000"))
+    )
     _candle(
         session,
         "BTC-USD",
@@ -624,6 +649,35 @@ def test_old_stop_does_not_liquidate_new_position(session: Session) -> None:
 
     assert accounting.positions(session, "paper") == {"BTC": Decimal("0.5")}
     assert _fills(session) == []
+
+
+def test_unfilled_plan_stop_does_not_govern(session: Session) -> None:
+    """A newer plan that has not filled yet cannot replace the governing
+    stop: the position's own stop still fires at its price."""
+    _balances(session, BTC="0.5", USD="0")
+    holding = _plan(session, status="completed", stop_price=Decimal("55000"))
+    _filled_buy(session, holding)
+    # Approved but not filled: its lower stop must not shield the position.
+    _plan(
+        session,
+        stop_price=Decimal("45000"),
+        entry_orders=[{"type": "limit", "price": "48000", "quantity": "0.1"}],
+    )
+    _candle(
+        session,
+        "BTC-USD",
+        _now() - timedelta(minutes=5),
+        "51000",
+        "51000",
+        "50000",
+        "50000",
+    )
+
+    _executor(session).tick()
+
+    assert accounting.positions(session, "paper") == {}
+    event = session.scalars(select(Event).where(Event.kind == "emergency_stop")).one()
+    assert event.details["plan_id"] == holding.id
 
 
 # --- worst-case taker setting -------------------------------------------------

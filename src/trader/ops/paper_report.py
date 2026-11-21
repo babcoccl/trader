@@ -25,7 +25,7 @@ from statistics import median
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from trader.backtest import engine as bt_engine
@@ -49,6 +49,9 @@ log = logging.getLogger(__name__)
 
 SEED_AMOUNT = Decimal("5000")
 REPORT_KIND = "weekly_report"
+# Advisory-lock key serializing the seed check + deposit, so the watchdog
+# and a manual `seed` cannot both fund the account.
+_SEED_LOCK = 510_000_001
 
 
 def _paper_deposit_exists(session: Session) -> bool:
@@ -62,7 +65,10 @@ def ensure_seeded(session: Session, clock: Clock) -> bool:
     Returns True when the deposit was written. No-op in live mode or when
     any paper deposit already exists (manual funding counts).
     """
-    if get_settings().mode != "paper" or _paper_deposit_exists(session):
+    if get_settings().mode != "paper":
+        return False
+    session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _SEED_LOCK})
+    if _paper_deposit_exists(session):
         return False
     accounting.deposit(session, "paper", SEED_AMOUNT, clock)
     log.info("paper account seeded with %s USD", SEED_AMOUNT)

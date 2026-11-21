@@ -1,0 +1,20 @@
+# research data is downloaded, never committed (about 200 MB)
+research/data/
+research/*.pkl
+research/results*.json
+research/results*.csv
+research/other_results.json
+research/intraday_results.csv
+research/intraday_alpha.csv
+
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

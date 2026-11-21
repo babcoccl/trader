@@ -1,0 +1,150 @@
+<div id="root"></div>
+<script type="text/jsx">
+const WR = { whiteSpace: "normal", verticalAlign: "top" };
+const eq = [10000,10040,10110,10090,10230,10410,10380,10520,10470,10610,10790,10730,10840].map((v, i) => ({ d: "W" + (i + 1), v, b: [10000,10150,10420,10300,10650,11020,10800,11100,10700,10950,11300,10900,11050][i] }));
+const eqCfg = { v: { label: "Account", color: chartColors[0] }, b: { label: "Buy and hold BTC", color: chartColors[1] } };
+function Box({ title, right, children }) {
+  return (<Card><CardBody><div className="flex flex-col gap-3"><div className="flex items-center justify-between gap-3"><Text size={14} weight="semibold">{title}</Text>{right}</div>{children}</div></CardBody></Card>);
+}
+function KV({ rows }) {
+  return (<Table><TableBody>{rows.map(([k, v]) => (<TableRow key={k}><TableCell style={{ ...WR, width: "38%" }} className="text-secondary">{k}</TableCell><TableCell style={WR}>{v}</TableCell></TableRow>))}</TableBody></Table>);
+}
+function P({ children }) { return <Text size={13} className="text-secondary">{children}</Text>; }
+
+function Mock() {
+  const [tab, setTab] = useState(() => { const h = (typeof location !== "undefined" ? location.hash.slice(1) : ""); return ["approvals", "positions", "activity", "reports", "settings"].includes(h) ? h : "overview"; });
+  const [state, setState] = useState("pending");
+  const [size, setSize] = useState("100");
+  const [halted, setHalted] = useState(false);
+  const worst = Math.round(335 * size / 100), amt = Math.round(1300 * size / 100);
+  const badge = state === "pending" ? <Badge variant="warning">Waiting for you, expires in 5h 40m</Badge> : state === "approved" ? <Badge variant="success">Approved at {size}% size</Badge> : <Badge variant="destructive">Denied, tracked in shadow ledger</Badge>;
+  return (
+    <PageLayout title="Trading dashboard: recommended user experience" subtitle="Clickable mockup with made-up numbers. Use the tabs; the approve, deny and halt buttons respond." themeToggle>
+      {halted && <BannerCard variant="error" title="Trading is halted">Open orders are cancelled and no new plans will be proposed. Positions and their stops stay in place until you resume or flatten.</BannerCard>}
+      <Card><CardBody><div className="flex items-center gap-3 flex-wrap">
+        <Badge variant={halted ? "destructive" : "success"}>{halted ? "Halted" : "Running"}</Badge>
+        <Text size={13}>{halted ? "Halted by you. Still watching prices and stops; no new plans." : "Watching prices. Last check 40 seconds ago: no action needed. Next daily decision in 3h 12m."}</Text>
+        <Text size={12} className="text-secondary">Last trade 2 days ago. 14 daily decisions since then, each logged with its reason.</Text>
+      </div></CardBody></Card>
+      <SegmentedControl value={tab} onValueChange={setTab}>
+        <SegmentedControlItem value="overview">Overview</SegmentedControlItem>
+        <SegmentedControlItem value="approvals">Approvals{state === "pending" ? " (1)" : ""}</SegmentedControlItem>
+        <SegmentedControlItem value="positions">Positions</SegmentedControlItem>
+        <SegmentedControlItem value="activity">Activity</SegmentedControlItem>
+        <SegmentedControlItem value="reports">Reports</SegmentedControlItem>
+        <SegmentedControlItem value="settings">Controls</SegmentedControlItem>
+      </SegmentedControl>
+
+      {tab === "overview" && (<>
+        <StatsRow>
+          <StatCard label="Account value"><StatCardValue>$10,840</StatCardValue><StatCardCaption>+8.4% since start, paper mode</StatCardCaption></StatCard>
+          <StatCard label="Invested now"><StatCardValue>31%</StatCardValue><StatCardCaption>BTC 19%, ETH 12%, cash 69%</StatCardCaption></StatCard>
+          <StatCard label="Drop from peak"><StatCardValue>-0.5%</StatCardValue><StatCardCaption>Halt at -35%</StatCardCaption></StatCard>
+          <StatCard label="Needs your decision"><StatCardValue>{state === "pending" ? 1 : 0}</StatCardValue><StatCardCaption>{state === "pending" ? "Buy ETH plan, expires in 5h 40m" : "Nothing waiting"}</StatCardCaption></StatCard>
+        </StatsRow>
+        <Box title="Account value against buy and hold" right={<Badge variant="blue">Paper mode</Badge>}>
+          <ChartContainer config={eqCfg} style={{ height: 220, width: "100%" }}>
+            <LineChart data={eq}><ChartGrid /><ChartXAxis dataKey="d" /><ChartYAxis domain={[9800, 11400]} title="USD" /><ChartTooltip content={<ChartTooltipContent />} /><ChartLegend content={<ChartLegendContent />} /><ChartLine dataKey="v" dot={false} /><ChartLine dataKey="b" dot={false} /></LineChart>
+          </ChartContainer>
+        </Box>
+        <Box title="What the system thinks right now">
+          <KV rows={[["Market state", "Uptrend, 7 of 9 trend rules positive on BTC, 6 of 9 on ETH"], ["Volatility", "BTC 46% a year, ETH 61%; position scaled to the 40% target"], ["News view (local LLM)", "Neutral. 2 events tracked: ETF flow report (positive), exchange outage (resolved). No opinion strong enough to tilt size."], ["Next scheduled decision", "Today 00:05 UTC, after the daily close"], ["System health", "Prices: live, 2s old. Exchange: connected. LLM box: online, last article read 6 min ago. Ledger: matches exchange. Scheduler: on time."]]} />
+        </Box>
+        <Box title="Why nothing has happened lately" right={<Badge variant="blue">Quiet for 2 days</Badge>}>
+          <KV rows={[["Today 00:04", "Checked BTC and ETH. Target 43% invested, holding 31%. Proposed plan #42 for the gap."], ["Yesterday 00:04", "Checked. Target 33%, holding 31%. Gap is under the 20% trading band, so no trade."], ["2 days ago 00:04", "Checked. Target 31%, holding 31%. No change."], ["Every minute", "Stops, resting orders and exchange balances verified. 1,440 of 1,440 checks passed in the last day."]]} />
+          <P>Every decision cycle writes one line here, including when the answer is "do nothing" and why. If a check is late or fails, the status strip turns red and says which part stopped.</P>
+        </Box>
+        <P>Purpose: one screen that answers "how am I doing, what is it holding, and does it need me?" in ten seconds.</P>
+      </>)}
+
+      {tab === "approvals" && (<>
+        <Box title="Plan #42: buy ETH, add 12% of account" right={badge}>
+          <Text size={13}>I would like to raise ETH from 12% to 24% of the account because 6 of 9 trend rules turned positive after the close above the 100-day average, and volatility has fallen enough to allow a larger position.</Text>
+          <KV rows={[
+            ["Entry", `Buy $${amt.toLocaleString("en-US")} with a limit order at the current bid (about $1,785), moved every 5 minutes. Any unfilled part is bought at market after 1 hour.`],
+            ["Exit targets", "Reduce by half if 5 of 9 rules turn negative; no fixed profit target"],
+            ["Stop", "Emergency stop at $1,340 (-25%), checked by this application every 30 seconds; it does not run while this machine is offline. Runs without asking you again. Normal exits come from the daily trend check."],
+            ["Worst case on this plan", `-$${worst} (${(worst / 108.4).toFixed(1)}% of account), including fees`],
+            ["Fees and slippage", "About $4 to $5 in and $4 to $5 out at Bitstamp rates"],
+            ["Account after", `Invested ${Math.round(31 + 12 * size / 100)}%, cash ${Math.round(69 - 12 * size / 100)}%`],
+            ["News view", "Neutral; no events against this trade"],
+            ["Void if", "ETH moves more than 2% from $1,785 before you answer"],
+          ]} />
+          {state === "pending" ? (
+            <div className="flex items-center gap-3 flex-wrap">
+              <Text size={12} className="text-secondary">Size</Text>
+              <SegmentedControl value={size} onValueChange={setSize}>
+                <SegmentedControlItem value="100">Full</SegmentedControlItem><SegmentedControlItem value="50">Half</SegmentedControlItem><SegmentedControlItem value="25">Quarter</SegmentedControlItem>
+              </SegmentedControl>
+              <Button variant="primary" onClick={() => setState("approved")}>Approve</Button>
+              <Button variant="destructive-muted" onClick={() => setState("denied")}>Deny</Button>
+            </div>
+          ) : (<Button variant="secondary" onClick={() => setState("pending")}>Reset mockup</Button>)}
+        </Box>
+        <Box title="Past decisions">
+          <Table><TableHeader><TableRow><TableHead style={WR}>Plan</TableHead><TableHead style={WR}>Your answer</TableHead><TableHead style={WR}>Result if followed</TableHead><TableHead style={WR}>Your result</TableHead></TableRow></TableHeader>
+            <TableBody>
+              <TableRow><TableCell style={WR}>#41 Buy BTC, +10%</TableCell><TableCell style={WR}>Approved, full</TableCell><TableCell style={WR}>+$210</TableCell><TableCell style={WR}>+$210</TableCell></TableRow>
+              <TableRow><TableCell style={WR}>#40 Buy ETH, +8%</TableCell><TableCell style={WR}>Denied</TableCell><TableCell style={WR}>-$95</TableCell><TableCell style={WR}>$0 (veto helped)</TableCell></TableRow>
+              <TableRow><TableCell style={WR}>#39 Buy BTC, +9%</TableCell><TableCell style={WR}>Expired, no answer</TableCell><TableCell style={WR}>+$140</TableCell><TableCell style={WR}>$0 (missed)</TableCell></TableRow>
+            </TableBody></Table>
+        </Box>
+        <P>Purpose: every request reads "I would like to make this trade because...", states the worst case in dollars, and can be shrunk but never enlarged. No answer means no trade.</P>
+      </>)}
+
+      {tab === "positions" && (<>
+        <Box title="Open positions and their plans">
+          <Table><TableHeader><TableRow><TableHead style={WR}>Asset</TableHead><TableHead style={WR}>Value</TableHead><TableHead style={WR}>Avg price</TableHead><TableHead style={WR}>Gain</TableHead><TableHead style={WR}>Stop</TableHead><TableHead style={WR}>Resting orders</TableHead><TableHead style={WR}>Plan</TableHead></TableRow></TableHeader>
+            <TableBody>
+              <TableRow><TableCell style={WR}>BTC</TableCell><TableCell style={WR}>$2,060 (19%)</TableCell><TableCell style={WR}>$60,150</TableCell><TableCell style={WR} className="text-green">+$62</TableCell><TableCell style={WR}>$45,100 (emergency)</TableCell><TableCell style={WR}>1 buy at $59,800</TableCell><TableCell style={WR}>#41</TableCell></TableRow>
+              <TableRow><TableCell style={WR}>ETH</TableCell><TableCell style={WR}>$1,300 (12%)</TableCell><TableCell style={WR}>$1,742</TableCell><TableCell style={WR} className="text-green">+$11</TableCell><TableCell style={WR}>$1,310 (emergency)</TableCell><TableCell style={WR}>None</TableCell><TableCell style={WR}>#38</TableCell></TableRow>
+              <TableRow><TableCell style={WR}>USD</TableCell><TableCell style={WR}>$7,480 (69%)</TableCell><TableCell style={WR} colSpan={5} className="text-secondary">Idle cash</TableCell></TableRow>
+            </TableBody></Table>
+        </Box>
+        <Box title="Five-minute watch"><P>288 checks today, none missed. Nearest emergency stop is 24% under the price. Sudden-drop bids are recorded for study only (1.8% under BTC, 2.3% under ETH); they are not traded.</P></Box>
+        <Box title="Funding watch"><P>BTC perpetual funding 3.1% a year, Treasury bills 4.2%. No carry trade proposed; it would be proposed above 8%.</P></Box>
+        <P>Purpose: what is held, why (the plan link), and where each position will be sold if it goes wrong.</P>
+      </>)}
+
+      {tab === "activity" && (<>
+        <Box title="Activity log">
+          <Table><TableHeader><TableRow><TableHead style={WR}>Time (UTC)</TableHead><TableHead style={WR}>Event</TableHead><TableHead style={WR}>Detail</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {[["Today 03:00", "Heartbeat", "All services up. 180 price checks, 0 errors in the last 3 hours. Nothing to do."], ["Today 00:05", "Plan proposed", "#42 Buy ETH, +12%. Waiting for approval."], ["Today 00:04", "Daily decision", "Signals recomputed: BTC 7/9, ETH 6/9. Target invested 43%, now 31%."], ["Yesterday 14:22", "Order filled", "Bought 0.0057 BTC at $59,950, fee $1.37 (plan #41)"], ["Yesterday 09:10", "News event", "ETF flow report scored positive, confidence medium, 2 sources"], ["2 days ago", "Check passed", "Ledger matches exchange balances to the cent"], ["3 days ago", "Plan expired", "#39 Buy BTC had no answer in 6 hours; recorded in shadow ledger"]].map((r) => (<TableRow key={r[0] + r[1]}>{r.map((c, i) => <TableCell key={i} style={WR}>{c}</TableCell>)}</TableRow>))}
+            </TableBody></Table>
+        </Box>
+        <P>Purpose: a complete, searchable record of every decision, order, fill, fee, news event and check, so any number on the other screens can be traced.</P>
+      </>)}
+
+      {tab === "reports" && (<>
+        <StatsRow>
+          <StatCard label="Return since start"><StatCardValue>+8.4%</StatCardValue><StatCardCaption>Buy and hold BTC: +10.5%</StatCardCaption></StatCard>
+          <StatCard label="Worst drop so far"><StatCardValue>-3.1%</StatCardValue><StatCardCaption>Buy and hold BTC: -9.6%</StatCardCaption></StatCard>
+          <StatCard label="Fees paid"><StatCardValue>$46</StatCardValue><StatCardCaption>0.4% of account</StatCardCaption></StatCard>
+          <StatCard label="Live vs backtest"><StatCardValue>-0.3 points</StatCardValue><StatCardCaption>Gap between real fills and the model</StatCardCaption></StatCard>
+        </StatsRow>
+        <Box title="Scorecards">
+          <KV rows={[["Against baselines", "Account vs cash, buy and hold BTC, buy and hold BTC+ETH, monthly"], ["Your vetoes", "3 denied or expired: saved $95, missed $140. Net effect -$45."], ["News view", "Shadow mode: 14 calls scored, 8 right. Not yet allowed to change sizes."], ["Promotion gate", "Paper week 3 of 4. Next step: live with $1,000 after your sign-off."]]} />
+        </Box>
+        <P>Purpose: the evidence for each step up the autonomy ladder (paper, approve everything, auto-approve small trades, fully automatic).</P>
+      </>)}
+
+      {tab === "settings" && (<>
+        <Box title="Emergency controls" right={halted ? <Badge variant="destructive">Halted</Badge> : <Badge variant="success">Running</Badge>}>
+          <div className="flex gap-3 flex-wrap">
+            <Button variant={halted ? "primary" : "warning"} onClick={() => setHalted(!halted)}>{halted ? "Resume trading" : "Halt: cancel orders, stop new plans"}</Button>
+            <Button variant="destructive">Flatten: sell everything to cash</Button>
+          </div>
+          <P>Halt is one click. Flatten asks you to type FLATTEN first. Both also trigger automatically at a 35% drop from the peak.</P>
+        </Box>
+        <Box title="Limits and behaviour">
+          <KV rows={[["Mode", "Paper / Live (switching to live needs a passed promotion gate)"], ["Autonomy level", "Approve every plan (now) / auto-approve plans risking under 0.5% of account / fully automatic"], ["Drawdown halt", "35% from peak"], ["Sizing", "Volatility target 40%, BTC and ETH only, long only, no leverage"], ["Approval expiry", "6 hours; void if price moves more than 2%"], ["Daily digest", "One summary a day even when nothing traded: checks run, decisions and reasons, account value, anything unusual"], ["Silence alarm", "Alert if any part misses its check for 5 minutes, or a daily decision does not run"], ["Notifications", "Dashboard now; email, phone push or chat later"], ["Venue and keys", "Bitstamp. API key without withdrawal permission, stored on your machine, never in the repository"], ["LLM", "Extraction model on GPU 1, analyst model on GPU 2; trading continues on rules if offline"]]} />
+        </Box>
+        <P>Purpose: the few settings that carry risk, each with its current value visible, and every change logged.</P>
+      </>)}
+      <Footnote>Mockup only. All figures are invented to show layout and wording, not results.</Footnote>
+    </PageLayout>
+  );
+}
+render(<Mock />);
+</script>

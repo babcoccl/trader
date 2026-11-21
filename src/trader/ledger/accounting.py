@@ -158,9 +158,7 @@ def cost_basis(session: Session, mode: str, symbol: str) -> Decimal:
             avg = total_cost / held if held else Decimal(0)
             held -= fill.quantity + base_fee
             if held < 0:
-                raise ValueError(
-                    f"fee of {fill.fee} {base} exceeds {base} balance"
-                )
+                raise ValueError(f"fee of {fill.fee} {base} exceeds {base} balance")
             total_cost = avg * held
     if held == 0:
         return Decimal(0)

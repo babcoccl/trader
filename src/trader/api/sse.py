@@ -14,11 +14,11 @@ from collections.abc import AsyncIterator
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
-from trader.api.auth import AuthRequired
+from trader.api.auth import SESSION_COOKIE, AuthRequired, token_live
 from trader.api.routes.status import build_status
 from trader.core.db import session_scope
 from trader.ledger.models import Decision, EquitySnapshot, Event, Fill, Order, Plan
@@ -129,21 +129,25 @@ def _fetch_new(last: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[str, An
     return cur, events
 
 
-async def _stream() -> AsyncIterator[str]:
+async def _stream(token: str | None) -> AsyncIterator[str]:
     last = await asyncio.to_thread(_new_rows)
     with session_scope() as session:
         yield _sse("status", build_status(session).model_dump())
     while True:
         await asyncio.sleep(POLL_SECONDS)
+        # A logged-out (or expired) token ends the stream instead of
+        # streaming trading data forever.
+        if not token_live(token):
+            return
         last, events = await asyncio.to_thread(_fetch_new, last)
         for event, data in events:
             yield _sse(event, data)
 
 
 @router.get("/api/stream", include_in_schema=False)
-async def stream() -> StreamingResponse:
+async def stream(request: Request) -> StreamingResponse:
     return StreamingResponse(
-        _stream(),
+        _stream(request.cookies.get(SESSION_COOKIE)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

@@ -1,9 +1,11 @@
-"""Daily decision cycle (spec 1.4).
+"""Daily decision cycle (spec 1.4 + 2.2 wiring).
 
 Once a day (scheduled for 00:05 UTC) compute the ensemble target weights from
 daily candles up to the day that just closed and write one ``decisions`` row
-per asset with a plain-English reason. Plans and orders are out of scope until
-spec 2.2, so a warranted trade is recorded as ``plan_proposed`` only.
+per asset with a plain-English reason. When the trading band says trade,
+spec 2.2 turns the weight change into a plan: ``plans.builder.build`` makes
+the row, ``risk.check_plan`` can veto it, and the decision is recorded as
+``plan_proposed`` (plan saved) or ``blocked`` (vetoed, reasons in ``reason``).
 
 ``run`` is idempotent per UTC day: if daily rows for today already exist it
 returns them and writes nothing.
@@ -15,19 +17,27 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from trader.backtest.costs import BITSTAMP
 from trader.core.clock import Clock
 from trader.data import candles as candles_mod
 from trader.data.sources.base import SYMBOLS
-from trader.ledger.models import Decision, Signal
+from trader.ledger.models import Candle, Decision, Signal
+from trader.plans import builder
+from trader.risk import engine as risk_engine
+from trader.risk.limits import Limits
 from trader.strategy import ensemble, rules, sizing
 
 log = logging.getLogger(__name__)
 
 BAND = 0.20
 VOL_TARGET = 0.40
+# Bitstamp market rules until the executor reads them from ``/markets/``
+# (spec 2.4): counter_decimals=2, base_decimals=8 for btcusd and ethusd.
+VENUE_TICK = Decimal("0.01")
+VENUE_LOT = Decimal("0.00000001")
 
 
 class PortfolioView(Protocol):
@@ -50,21 +60,28 @@ def _day_start(t: datetime) -> datetime:
 
 
 def _existing_today(session: Session, today: datetime) -> list[Decision]:
-    """Today's successful daily rows. ``blocked``/``error`` rows do not count:
-    a day blocked by missing candles (e.g. before the collector's first
-    backfill commits) must still get its real decisions once data arrives."""
-    return list(
+    """Today's daily rows once the day produced a real decision.
+
+    A day whose rows are all ``blocked``/``error`` did not complete: missing
+    candles (e.g. before the collector's first backfill commits) or a risk
+    veto that may lift later, so the cycle retries. Once any row is
+    ``none``/``plan_proposed`` the day is done and every row is returned,
+    including a ``blocked`` row from a vetoed sibling asset.
+    """
+    rows = list(
         session.execute(
             select(Decision)
             .where(
                 Decision.cycle == "daily",
                 Decision.ran_at >= today,
                 Decision.ran_at < today + timedelta(days=1),
-                Decision.action.notin_(("blocked", "error")),
             )
             .order_by(Decision.id)
         ).scalars()
     )
+    if any(r.action not in ("blocked", "error") for r in rows):
+        return rows
+    return []
 
 
 def _finite(x: float) -> float | None:
@@ -123,31 +140,52 @@ def run(
             "signal": sig,
             "vol": vol,
             "k": sum(1 for v in rule_values.values() if v == 1.0),
+            "last_close": close.iloc[-1],
         }
 
     day = yesterday.date()
-    for symbol, a in per_asset.items():
-        for name, value in a["rules"].items():
+    # A retried day (all rows blocked) already stored these; re-inserting
+    # would violate signals' unique (symbol, day, rule).
+    signals_done = session.scalar(
+        select(func.count()).select_from(Signal).where(Signal.day == day)
+    )
+    if not signals_done:
+        for symbol, a in per_asset.items():
+            for name, value in a["rules"].items():
+                session.add(
+                    Signal(symbol=symbol, day=day, rule=name, value=Decimal(str(value)))
+                )
             session.add(
-                Signal(symbol=symbol, day=day, rule=name, value=Decimal(str(value)))
+                Signal(
+                    symbol=symbol,
+                    day=day,
+                    rule="ensemble",
+                    value=Decimal(str(a["signal"])),
+                )
             )
-        session.add(
-            Signal(
-                symbol=symbol, day=day, rule="ensemble", value=Decimal(str(a["signal"]))
-            )
-        )
 
     weights = sizing.target_weights(
         {s: a["signal"] for s, a in per_asset.items()},
         {s: a["vol"] for s, a in per_asset.items()},
         vol_target=VOL_TARGET,
     )
+    limits = Limits.load(session)
+    risk_state = risk_engine.state(session, clock)
 
     decisions: list[Decision] = []
     for symbol in SYMBOLS:
         a = per_asset[symbol]
         target = weights[symbol]
         current = portfolio.weights.get(symbol, 0.0)
+        # Size the plan at the freshest stored close (what the portfolio is
+        # marked with), not yesterday's daily close: a higher latest price
+        # would otherwise make an exit request more coins than held.
+        plan_price = session.scalar(
+            select(Candle.close)
+            .where(Candle.symbol == symbol)
+            .order_by(Candle.open_time.desc())
+            .limit(1)
+        ) or Decimal(str(a["last_close"]))
         prefix = (
             f"Checked {symbol}. {a['k']} of 9 rules positive. "
             f"Target {target:.0%}, holding {current:.0%}."
@@ -162,23 +200,48 @@ def run(
         else:
             action = "none"
             reason = f"{prefix} Gap is under the 20% trading band, so no trade."
-        decisions.append(
-            Decision(
-                cycle="daily",
-                ran_at=now,
-                symbol=symbol,
-                target_weight=Decimal(str(target)),
-                current_weight=Decimal(str(current)),
-                action=action,
-                reason=reason,
-                details={
-                    "rules": {n: _finite(v) for n, v in a["rules"].items()},
-                    "annual_vol": _finite(a["vol"]),
-                    "raw_weight": _finite(a["signal"] / len(SYMBOLS)),
-                    "scaled_weight": target,
-                },
-            )
+        decision = Decision(
+            cycle="daily",
+            ran_at=now,
+            symbol=symbol,
+            target_weight=Decimal(str(target)),
+            current_weight=Decimal(str(current)),
+            action=action,
+            reason=reason,
+            details={
+                "rules": {n: _finite(v) for n, v in a["rules"].items()},
+                "annual_vol": _finite(a["vol"]),
+                "raw_weight": _finite(a["signal"] / len(SYMBOLS)),
+                "scaled_weight": target,
+            },
         )
-    session.add_all(decisions)
-    session.flush()
+        session.add(decision)
+        session.flush()  # plan.decision_id needs the row id
+        if action == "plan_proposed":
+            plan = builder.build(
+                symbol,
+                target,
+                current,
+                portfolio.equity_usd,
+                plan_price,
+                a["vol"],
+                BITSTAMP,
+                clock,
+                rules_positive=a["k"],
+                tick=VENUE_TICK,
+                lot=VENUE_LOT,
+            )
+            if plan is not None:
+                verdict = risk_engine.check_plan(plan, portfolio, limits, risk_state)
+                if verdict.ok:
+                    plan.decision_id = decision.id
+                    session.add(plan)
+                    session.flush()
+                else:
+                    decision.action = "blocked"
+                    decision.reason = (
+                        f"{prefix} Trade blocked by risk: {' '.join(verdict.reasons)}"
+                    )
+                    session.flush()
+        decisions.append(decision)
     return decisions

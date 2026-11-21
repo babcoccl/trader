@@ -14,8 +14,19 @@ from trader.core.clock import FrozenClock
 from trader.data import candles as candles_mod
 from trader.data.sources.base import SYMBOLS, Candle
 from trader.engine import daily_cycle
+from trader.ledger.models import (
+    AuditLog,
+    Balance,
+    Decision,
+    EquitySnapshot,
+    Event,
+    Fill,
+    Order,
+    Plan,
+    Setting,
+    Signal,
+)
 from trader.ledger.models import Candle as CandleRow
-from trader.ledger.models import Decision, Signal
 from trader.strategy import rules
 
 TEST_URL = os.environ.get("TEST_DATABASE_URL")
@@ -72,12 +83,46 @@ def session():
     engine = create_engine(TEST_URL)
     _alembic("upgrade", "head")
     with Session(engine) as s:
-        for table in (CandleRow, Decision, Signal):
+        # FK order: orders/fills reference plans, plans reference decisions.
+        for table in (
+            Fill,
+            Order,
+            Plan,
+            Decision,
+            Signal,
+            CandleRow,
+            Setting,
+            AuditLog,
+            EquitySnapshot,
+            Balance,
+            Event,
+        ):
             s.execute(delete(table))
         candles_mod.upsert(s, _load_fixture_candles())
         s.commit()
         yield s
     engine.dispose()
+
+
+def _fresh_5m(session: Session, at: datetime) -> None:
+    """A just-closed 5m candle per symbol so risk's staleness check passes."""
+    candles_mod.upsert(
+        session,
+        [
+            Candle(
+                symbol=symbol,
+                interval="5m",
+                open_time=at - timedelta(minutes=5),
+                open=Decimal("1"),
+                high=Decimal("1"),
+                low=Decimal("1"),
+                close=Decimal("1"),
+                volume=Decimal("0"),
+                source="fixture",
+            )
+            for symbol in SYMBOLS
+        ],
+    )
 
 
 def _decision_count(session: Session) -> int:
@@ -87,15 +132,18 @@ def _decision_count(session: Session) -> int:
 def test_replay_thirty_days(session: Session) -> None:
     """30 consecutive fixture days, frozen clock: 60 decision rows, none skipped."""
     start_day = datetime(2026, 10, 1, tzinfo=UTC)
+    portfolio = daily_cycle.CashOnlyPortfolio(equity_usd=Decimal("10000"))
     for i in range(30):
         day = start_day + timedelta(days=i)
         clock = FrozenClock(day + timedelta(minutes=5))
-        rows = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+        _fresh_5m(session, clock.now())
+        rows = daily_cycle.run(session, clock, portfolio)
         session.commit()
         assert len(rows) == 2
         assert {r.symbol for r in rows} == set(SYMBOLS)
         assert all(r.cycle == "daily" for r in rows)
-        assert all(r.action in ("none", "plan_proposed") for r in rows)
+        # "blocked" is possible since spec 2.2: risk vetoes a proposed plan.
+        assert all(r.action in ("none", "plan_proposed", "blocked") for r in rows)
         assert all("Checked" in r.reason for r in rows)
     assert _decision_count(session) == 60
     # Signals stored for every replayed day and both symbols.
@@ -126,15 +174,20 @@ def test_missing_yesterday_candle_blocks(session: Session) -> None:
 
 def test_second_run_same_day_adds_nothing(session: Session) -> None:
     clock = FrozenClock(datetime(2026, 11, 20, 0, 5, tzinfo=UTC))
-    first = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    _fresh_5m(session, clock.now())
+    # Half-invested so proposed sells are exposure-reducing (risk allows).
+    portfolio = daily_cycle.CashOnlyPortfolio(
+        equity_usd=Decimal("10000"), weights={"BTC-USD": 0.5, "ETH-USD": 0.5}
+    )
+    first = daily_cycle.run(session, clock, portfolio)
     session.commit()
     clock.advance(timedelta(hours=1))
-    second = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    second = daily_cycle.run(session, clock, portfolio)
     session.commit()
     assert [r.id for r in second] == [r.id for r in first]
     assert _decision_count(session) == 2
     signals_before = session.scalar(select(func.count()).select_from(Signal))
-    daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    daily_cycle.run(session, clock, portfolio)
     assert session.scalar(select(func.count()).select_from(Signal)) == signals_before
 
 

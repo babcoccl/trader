@@ -1,0 +1,22 @@
+{
+  "sleeve": "trend",
+  "symbol": "ETH-USD",
+  "side": "sell",
+  "status": "approved",
+  "reference_price": "3000.000000000000000000",
+  "target_weight": "0.200000000000000000",
+  "entry_orders": [
+    {
+      "side": "sell",
+      "type": "limit",
+      "price": "3000.00",
+      "quantity": "1",
+      "market_after_seconds": 3600
+    }
+  ],
+  "stop_price": null,
+  "worst_case_loss": "24.600000000000000000",
+  "est_fees": "24.600000000000000000",
+  "rationale": "I would like to lower ETH-USD from 50% to 20% of the account because 4 of 9 trend rules are positive and volatility is 90% a year.",
+  "expires_at": "2026-11-20T06:05:00+00:00"
+}

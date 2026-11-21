@@ -121,7 +121,14 @@ class Executor:
             now = self._clock.now()
             self._emergency_stop(session, adapter, mode, now)
             self._flatten(session, adapter, mode, now)
-            self._place_approved(session, adapter, mode)
+            halted = risk.state(session, self._clock).halted
+            if halted:
+                # Buys are vetoed while halted; only exposure-reducing sells
+                # may keep working (spec 2.1).
+                for order in adapter.open_orders():
+                    if order.side == "buy":
+                        adapter.cancel(order.venue_order_id or "")
+            self._place_approved(session, adapter, mode, halted)
             # Fills before time rules: a candle that traded through a resting
             # limit earns its maker fill before re-pricing or the market
             # conversion can cancel the order.
@@ -289,12 +296,14 @@ class Executor:
         )
 
     def _place_approved(
-        self, session: Session, adapter: PaperAdapter, mode: str
+        self, session: Session, adapter: PaperAdapter, mode: str, halted: bool
     ) -> None:
         plans = session.scalars(
             select(Plan).where(Plan.status == "approved").order_by(Plan.id)
         ).all()
         for plan in plans:
+            if halted and plan.side != "sell":
+                continue
             has_orders = session.scalar(
                 select(func.count()).select_from(Order).where(Order.plan_id == plan.id)
             )

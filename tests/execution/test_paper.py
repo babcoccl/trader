@@ -572,6 +572,38 @@ def test_catchup_fills_apply_in_candle_order(session: Session) -> None:
     assert fills[0].order_id == sell.id and fills[1].order_id == buy.id
 
 
+def test_halt_cancels_buys_and_blocks_new(session: Session) -> None:
+    """While halted, resting buys are cancelled and no new buy orders are
+    placed (spec 2.1 veto applies to execution too)."""
+    _balances(session, USD="10000")
+    session.add(Setting(key="risk.halted", value=True, updated_at=_now()))
+    buy_plan = _plan(
+        session,
+        entry_orders=[{"type": "limit", "price": "60000", "quantity": "0.1"}],
+    )
+    resting_plan = _plan(session)
+    resting = Order(
+        plan_id=resting_plan.id,
+        venue="paper",
+        client_order_id=f"{resting_plan.id}-1",
+        venue_order_id=f"paper-{resting_plan.id}-1",
+        symbol="BTC-USD",
+        side="buy",
+        type="limit",
+        price=Decimal("60000"),
+        quantity=Decimal("0.1"),
+        status="open",
+        mode="paper",
+    )
+    session.add(resting)
+
+    _executor(session).tick()
+
+    session.refresh(resting)
+    assert resting.status == "cancelled"
+    assert _orders(session, buy_plan) == []
+
+
 # --- worst-case taker setting -------------------------------------------------
 
 

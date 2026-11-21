@@ -156,7 +156,7 @@ def _veto_scorecard(session: Session, mode: str) -> VetoScorecard:
 def _backtest_gap(session: Session, snaps: list[EquitySnapshot]) -> float | None:
     """Paper-versus-backtest gap in percentage points over the snapshot
     window, or None when daily candles do not cover it."""
-    if len(snaps) < 2:
+    if len(snaps) < 2 or snaps[0].equity_usd <= 0:
         return None
     start = snaps[0].time
     end = snaps[-1].time

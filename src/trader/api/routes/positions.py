@@ -32,12 +32,23 @@ def positions(session: Session = SessionDep) -> list[PositionOut]:
         avg_cost = accounting.cost_basis(session, mode, symbol)
         gain = (price - avg_cost) * qty if price is not None else None
 
+        # The governing stop comes from the plan that actually bought: a
+        # pending or approved-but-unfilled plan's stop does not protect the
+        # holding (the executor's emergency-stop check uses filled buys).
         plan = session.scalars(
             select(Plan)
             .where(
                 Plan.symbol == symbol,
                 Plan.stop_price.is_not(None),
                 Plan.status.in_(LIVE_STOP_STATUSES),
+                select(Order.id)
+                .where(
+                    Order.plan_id == Plan.id,
+                    Order.symbol == symbol,
+                    Order.status.in_(("filled", "partially_filled")),
+                    Order.shadow.is_(False),
+                )
+                .exists(),
             )
             .order_by(Plan.id.desc())
             .limit(1)

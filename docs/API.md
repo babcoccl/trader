@@ -43,7 +43,7 @@ without the cookie.
 }
 ```
 
-### `GET /api/decisions?cycle=&limit=&before=` → `DecisionOut[]`
+### `GET /api/decisions?cycle=&limit=&before=&before_id=` → `DecisionOut[]`
 
 `cycle` is `daily` or `intraday`; `limit` 1–500 (default 50); `before` is
 an ISO `ran_at` cursor — pass the oldest `ran_at` of the previous page.
@@ -99,12 +99,14 @@ would-have-been result. Refused when not `pending` (`409`).
 }]
 ```
 
-### `GET /api/activity?kind=&q=&limit=&before=` → `ActivityItem[]`
+### `GET /api/activity?kind=&q=&limit=&before=&before_kind=&before_id=` → `ActivityItem[]`
 
 Newest-first union of `events` (kind = the event kind, e.g. `deposit`,
 `alarm`), `decisions` (`decision`), `fills` (`fill`) and `heartbeats`
 (`heartbeat`). `kind` filters on that item kind; `q` is a substring match
-on the text; `before` is a time cursor.
+on the text; `before` is a time cursor — pair it with the oldest item's
+`kind` as `before_kind` and `ref_id` as `before_id` so rows sharing a
+timestamp are not skipped (same for `before_id` on `/api/decisions`).
 
 ```json
 [{

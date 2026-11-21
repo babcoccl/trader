@@ -480,6 +480,33 @@ def test_restart_neither_loses_nor_duplicates(session: Session) -> None:
     assert plan.status == "completed"
 
 
+def test_earned_fill_survives_repricing(session: Session) -> None:
+    """A candle that both trades through the limit and closes elsewhere must
+    fill the order — re-pricing runs after fills, not before."""
+    _balances(session, USD="10000")
+    plan = _plan(
+        session,
+        entry_orders=[{"type": "limit", "price": "60000", "quantity": "0.1"}],
+    )
+    _executor(session).tick()
+    order = _orders(session, plan)[0]
+
+    _candle(
+        session,
+        "BTC-USD",
+        _next_candle(order.created_at),
+        "60000",
+        "60000",
+        "59980",
+        "59950",
+    )
+    _executor(session).tick()
+
+    orders = _orders(session, plan)
+    assert len(orders) == 1 and orders[0].status == "filled"
+    assert _fills(session)[0].liquidity == "maker"
+
+
 # --- worst-case taker setting -------------------------------------------------
 
 

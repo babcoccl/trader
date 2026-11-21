@@ -122,8 +122,11 @@ class Executor:
             self._emergency_stop(session, adapter, mode, now)
             self._flatten(session, adapter, mode, now)
             self._place_approved(session, adapter, mode)
-            self._apply_time_rules(session, adapter, now)
+            # Fills before time rules: a candle that traded through a resting
+            # limit earns its maker fill before re-pricing or the market
+            # conversion can cancel the order.
             self._collect_fills(session, adapter, now)
+            self._apply_time_rules(session, adapter, now)
             prices = _latest_prices(session)
             if prices:
                 risk.update_equity(

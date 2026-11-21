@@ -159,8 +159,36 @@ describe("Approvals", () => {
       },
     ]);
     renderApprovals();
-    // Would-have-been: -1000 - 3 + 1 * 1100 = +97; owner's result $0.
+    // Would-have-been: -1000 - 3 + 1 * 1100 = +97; owner missed a winner.
     expect(await screen.findByText("+$97")).toBeInTheDocument();
+    expect(screen.getByText("$0 (missed)")).toBeInTheDocument();
+  });
+
+  it("marks held shadow units at the fill price when the asset is unheld", async () => {
+    seed(makePlan({ id: 41, status: "denied", decided_at: new Date().toISOString() }));
+    activityMock.mockResolvedValue([
+      {
+        time: new Date().toISOString(),
+        kind: "fill",
+        ref_id: 10,
+        text: "Buy fill",
+        details: {
+          plan_id: 41,
+          shadow: true,
+          symbol: "BTC-USD",
+          side: "buy",
+          price: "1000",
+          quantity: "1",
+          fee: "3",
+          fee_currency: "USD",
+          liquidity: "taker",
+        },
+      },
+    ]);
+    positionsMock.mockResolvedValue([]);
+    renderApprovals();
+    // No mark for BTC-USD: held 1 unit valued at its fill price -> -$3 fee.
+    expect(await screen.findByText("-$3")).toBeInTheDocument();
     expect(screen.getByText("$0 (veto helped)")).toBeInTheDocument();
   });
 });

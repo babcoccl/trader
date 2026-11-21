@@ -162,12 +162,14 @@ function fillsPnl(
 ): number {
   let cash = 0;
   const held: Record<string, number> = {};
+  const lastFillPrice: Record<string, number> = {};
   for (const f of fills) {
     const d = f.details;
     const symbol = String(d.symbol ?? "");
     const asset = symbol.split("-")[0];
     const qty = Number(d.quantity ?? 0);
     const price = Number(d.price ?? 0);
+    lastFillPrice[symbol] = price;
     const feeUsd =
       d.fee_currency === "USD" ? Number(d.fee ?? 0) : Number(d.fee ?? 0) * price;
     if (d.side === "buy") {
@@ -180,7 +182,9 @@ function fillsPnl(
     cash -= feeUsd;
   }
   for (const [asset, qty] of Object.entries(held)) {
-    const price = prices[`${asset}-USD`];
+    // A shadow-bought asset the account does not hold has no mark in
+    // /positions; fall back to its own last fill price.
+    const price = prices[`${asset}-USD`] ?? lastFillPrice[`${asset}-USD`];
     if (price !== undefined) cash += qty * price;
   }
   return cash;
@@ -241,7 +245,8 @@ function PastDecisions() {
               const followed =
                 shadow.length > 0 ? fillsPnl(shadow, prices) : fillsPnl(real, prices);
               const yours = fillsPnl(real, prices);
-              const dead = p.status === "denied" || p.status === "expired" || p.status === "voided";
+              const dead =
+                p.status === "denied" || p.status === "expired" || p.status === "voided";
               return (
                 <tr key={p.id}>
                   <td>{planLabel(p)}</td>
@@ -251,7 +256,9 @@ function PastDecisions() {
                   </td>
                   <td>
                     {dead
-                      ? `$0 (${p.status === "denied" ? "veto helped" : "missed"})`
+                      ? shadow.length === 0
+                        ? "—"
+                        : `$0 (${followed <= 0 ? "veto helped" : "missed"})`
                       : real.length === 0
                         ? "No fills"
                         : pnlText(yours)}

@@ -28,5 +28,16 @@ services:
         condition: service_healthy
     command: uvicorn trader.api.app:app --host 0.0.0.0 --port 8000
 
+  collector:
+    build: .
+    environment:
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:trader@db:5432/trader
+      TRADER_MODE: paper
+      TRADER_LOG_LEVEL: INFO
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python -m trader.data.collector
+
 volumes:
   db-data:

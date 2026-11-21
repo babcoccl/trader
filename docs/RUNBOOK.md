@@ -61,7 +61,8 @@ echo 'TRADER_BACKUP_DIR=/mnt/data/trader-backups' | sudo tee -a /etc/environment
 
 ```powershell
 # Windows PowerShell equivalent
-ssh trader-box 'sudo mkdir -p /mnt/data/trader-backups && sudo chown $USER /mnt/data/trader-backups'
+# -t allocates a terminal so sudo can prompt for its password
+ssh -t trader-box 'sudo mkdir -p /mnt/data/trader-backups && sudo chown $USER /mnt/data/trader-backups'
 ```
 
 Cron entry (`crontab -e`), nightly at 03:17. The log goes in your home
@@ -83,7 +84,7 @@ docker compose -f docker-compose.prod.yml ps   # all "running"
 
 ```powershell
 # Windows PowerShell equivalent
-ssh trader-box "cd /opt/trader && git pull && docker compose -f docker-compose.prod.yml up -d --build && docker compose -f docker-compose.prod.yml exec api alembic upgrade head && docker compose -f docker-compose.prod.yml ps"
+ssh trader-box "cd /opt/trader && git pull && docker compose -f docker-compose.prod.yml up -d --build && docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head && docker compose -f docker-compose.prod.yml ps"
 ```
 
 ## Reboot behaviour
@@ -170,7 +171,7 @@ docker compose -f docker-compose.prod.yml exec db \
 
 ```powershell
 # Windows PowerShell equivalent
-ssh trader-box 'cd /opt/trader && docker compose -f docker-compose.prod.yml exec db psql -U trader -c "INSERT INTO settings (key, value, updated_at) VALUES (''risk.halted'', ''true''::jsonb, now()), (''risk.halt_reason'', ''\"manual halt\"''::jsonb, now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();"'
+ssh trader-box 'cd /opt/trader && docker compose -f docker-compose.prod.yml exec -T db psql -U trader -c "INSERT INTO settings (key, value, updated_at) VALUES (''risk.halted'', ''true''::jsonb, now()), (''risk.halt_reason'', ''\"manual halt\"''::jsonb, now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();"'
 ```
 
 ## Alarms: what each one means

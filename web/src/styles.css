@@ -316,3 +316,111 @@ button.link {
   font-size: 13px;
   margin: 6px 0;
 }
+
+
+.badge--amber {
+  background: rgb(245 158 11 / 0.15);
+  color: #b45309;
+}
+
+.kv {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.kv td {
+  padding: 4px 0;
+  vertical-align: top;
+}
+
+.kv__key {
+  width: 34%;
+  color: rgb(25 25 25 / 0.56);
+  padding-right: 12px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 600;
+  padding: 4px 8px 6px 0;
+  border-bottom: 1px solid rgb(0 0 0 / 0.08);
+}
+
+.table td {
+  padding: 6px 8px 6px 0;
+  vertical-align: top;
+}
+
+.plan-card__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.plan-card__rationale {
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+
+.plan-card__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.size-selector {
+  display: inline-flex;
+  border: 1px solid rgb(0 0 0 / 0.15);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.size-selector__option {
+  border: none;
+  background: #fff;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: rgb(25 25 25 / 0.56);
+}
+
+.size-selector__option--active {
+  background: #191919;
+  color: #fff;
+}
+
+.plan-card__approve,
+.plan-card__deny {
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.plan-card__approve {
+  background: #191919;
+  color: #fff;
+}
+
+.plan-card__deny {
+  background: rgb(245 59 58 / 0.12);
+  color: #f53b3a;
+}
+
+.plan-card__approve:disabled,
+.plan-card__deny:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

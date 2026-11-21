@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api } from "./api/client";
 import { StatusStrip } from "./components/StatusStrip";
+import { Approvals } from "./pages/Approvals";
 import { Controls } from "./pages/Controls";
 import { Overview } from "./pages/Overview";
 import { Reports } from "./pages/Reports";
@@ -89,6 +90,8 @@ export function App() {
       <main>
         {tab === "Overview" ? (
           <Overview />
+        ) : tab === "Approvals" ? (
+          <Approvals />
         ) : tab === "Reports" ? (
           <Reports />
         ) : tab === "Controls" ? (

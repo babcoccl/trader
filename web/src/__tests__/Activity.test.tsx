@@ -79,7 +79,7 @@ describe("Activity", () => {
     );
   });
 
-  it("load more raises the limit", async () => {
+  it("load more fetches the next page via cursor", async () => {
     const page = Array.from({ length: 50 }, (_, i) => ({
       time: "2026-11-21T18:29:00Z",
       kind: "heartbeat",
@@ -94,8 +94,23 @@ describe("Activity", () => {
     await userEvent.click(screen.getByRole("button", { name: "load more" }));
     await waitFor(() =>
       expect(activityMock).toHaveBeenLastCalledWith(
-        expect.objectContaining({ limit: 100 }),
+        expect.objectContaining({ limit: 50, before: page[49] }),
       ),
     );
+  });
+
+  it("expands rows independently when kind and ref_id collide", async () => {
+    const items = [
+      { time: "2026-11-21T18:29:00Z", kind: "fill", ref_id: 7, text: "fill event", details: { source: "event" } },
+      { time: "2026-11-21T18:29:00Z", kind: "fill", ref_id: 7, text: "ledger fill", details: { source: "ledger" } },
+    ];
+    activityMock.mockResolvedValue(items);
+    renderActivity();
+
+    await screen.findByText("fill event");
+    await userEvent.click(screen.getByText("fill event"));
+
+    expect(await screen.findByText(/"source": "event"/)).toBeInTheDocument();
+    expect(screen.queryByText(/"source": "ledger"/)).not.toBeInTheDocument();
   });
 });

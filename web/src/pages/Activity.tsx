@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { api } from "../api/client";
+import { api, type ActivityItem } from "../api/client";
 import { timeAgo } from "../lib/time";
 
 const PAGE_SIZE = 50;
@@ -9,17 +9,23 @@ const KINDS = ["decision", "fill", "heartbeat", "alarm", "alarm_cleared", "heart
 export function Activity() {
   const [kind, setKind] = useState("");
   const [q, setQ] = useState("");
-  const [limit, setLimit] = useState(PAGE_SIZE);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const activity = useQuery({
-    queryKey: ["activity", kind, q, limit],
-    queryFn: () =>
-      api.activity({ kind: kind || undefined, q: q || undefined, limit }),
-    placeholderData: (prev) => prev,
+  const activity = useInfiniteQuery({
+    queryKey: ["activity", kind, q],
+    queryFn: ({ pageParam }) =>
+      api.activity({
+        kind: kind || undefined,
+        q: q || undefined,
+        limit: PAGE_SIZE,
+        before: pageParam,
+      }),
+    initialPageParam: undefined as ActivityItem | undefined,
+    getNextPageParam: (last) =>
+      last.length === PAGE_SIZE ? last[last.length - 1] : undefined,
   });
 
-  const items = activity.data ?? [];
+  const items = activity.data?.pages.flat() ?? [];
   const kinds = Array.from(new Set([...KINDS, ...items.map((i) => i.kind)])).sort();
 
   const toggle = (key: string) =>
@@ -38,10 +44,7 @@ export function Activity() {
           <select
             aria-label="kind filter"
             value={kind}
-            onChange={(e) => {
-              setKind(e.target.value);
-              setLimit(PAGE_SIZE);
-            }}
+            onChange={(e) => setKind(e.target.value)}
           >
             <option value="">all kinds</option>
             {kinds.map((k) => (
@@ -54,10 +57,7 @@ export function Activity() {
             aria-label="search"
             placeholder="search text…"
             value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setLimit(PAGE_SIZE);
-            }}
+            onChange={(e) => setQ(e.target.value)}
           />
         </div>
         {activity.isLoading ? (
@@ -69,8 +69,8 @@ export function Activity() {
         ) : (
           <>
             <ul className="activity-list">
-              {items.map((i) => {
-                const key = `${i.kind}-${i.ref_id}`;
+              {items.map((i, idx) => {
+                const key = `${i.kind}-${i.ref_id}-${idx}`;
                 return (
                   <li key={key}>
                     <button className="activity-row" onClick={() => toggle(key)}>
@@ -86,10 +86,10 @@ export function Activity() {
                 );
               })}
             </ul>
-            {items.length >= limit ? (
+            {activity.hasNextPage ? (
               <button
                 className="link-button"
-                onClick={() => setLimit((l) => l + PAGE_SIZE)}
+                onClick={() => void activity.fetchNextPage()}
               >
                 load more
               </button>

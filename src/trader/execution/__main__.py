@@ -42,7 +42,7 @@ from trader.core.db import session_scope
 from trader.core.logging import setup as setup_logging
 from trader.data.sources.base import SYMBOLS
 from trader.execution.base import LIMIT_TTL
-from trader.execution.paper import PaperAdapter
+from trader.execution.paper import PRIMARY_SOURCE, PaperAdapter
 from trader.ledger import accounting
 from trader.ledger.models import (
     AuditLog,
@@ -70,7 +70,7 @@ def _latest_prices(session: Session) -> dict[str, Decimal]:
         close = session.scalar(
             select(Candle.close)
             .where(Candle.symbol == symbol, Candle.interval == "5m")
-            .order_by(Candle.open_time.desc())
+            .order_by(Candle.open_time.desc(), Candle.source != PRIMARY_SOURCE)
             .limit(1)
         )
         if close is not None:
@@ -82,7 +82,7 @@ def _newest_candle(session: Session, symbol: str) -> Candle | None:
     return session.scalars(
         select(Candle)
         .where(Candle.symbol == symbol, Candle.interval == "5m")
-        .order_by(Candle.open_time.desc())
+        .order_by(Candle.open_time.desc(), Candle.source != PRIMARY_SOURCE)
         .limit(1)
     ).first()
 

@@ -46,6 +46,10 @@ RULES = SymbolRules(
 
 _OPEN_STATUSES = ("new", "open", "partially_filled")
 
+# After a collector failover one period can hold candles from both venues;
+# the primary (spec 1.1) wins so fills and prices see one candle per period.
+PRIMARY_SOURCE = "bitstamp"
+
 
 def _fill_rank(order: Order) -> int:
     """Within a candle: market sells fill at the open (0), market buys next
@@ -190,17 +194,19 @@ class PaperAdapter:
     ) -> dict[str, list[Candle]]:
         out: dict[str, list[Candle]] = {}
         for symbol in symbols:
-            out[symbol] = list(
-                self._session.scalars(
-                    select(Candle)
-                    .where(
-                        Candle.symbol == symbol,
-                        Candle.interval == "5m",
-                        Candle.open_time > since,
-                    )
-                    .order_by(Candle.open_time)
+            rows = self._session.scalars(
+                select(Candle)
+                .where(
+                    Candle.symbol == symbol,
+                    Candle.interval == "5m",
+                    Candle.open_time > since,
                 )
+                .order_by(Candle.open_time, Candle.source != PRIMARY_SOURCE)
             )
+            per_period: dict[datetime, Candle] = {}
+            for row in rows:
+                per_period.setdefault(row.open_time, row)
+            out[symbol] = list(per_period.values())
         return out
 
     def _fill_price(

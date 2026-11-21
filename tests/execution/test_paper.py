@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
 from trader.backtest.costs import BITSTAMP
-from trader.execution.__main__ import Executor
+from trader.execution.__main__ import Executor, _latest_prices
 from trader.ledger import accounting
 from trader.ledger.models import (
     AuditLog,
@@ -160,6 +160,7 @@ def _candle(
     h: str,
     low: str,
     c: str,
+    source: str = "bitstamp",
 ) -> Candle:
     candle = Candle(
         symbol=symbol,
@@ -170,7 +171,7 @@ def _candle(
         low=Decimal(low),
         close=Decimal(c),
         volume=Decimal("1"),
-        source="bitstamp",
+        source=source,
     )
     session.add(candle)
     session.flush()
@@ -811,6 +812,28 @@ def test_limit_sell_does_not_fund_same_candle_buy(session: Session) -> None:
     assert sell.status == "filled"
     (fill,) = _fills(session)
     assert fill.order_id == sell.id
+
+
+def test_primary_source_candle_wins_period(session: Session) -> None:
+    """After a failover both venues may store the same period; only the
+    primary's candle drives fills and the latest price."""
+    _balances(session, USD="10000")
+    plan = _plan(
+        session,
+        entry_orders=[{"type": "limit", "price": "60000", "quantity": "0.1"}],
+    )
+    _executor(session).tick()
+    order = _orders(session, plan)[0]
+    t = _next_candle(order.created_at)
+    # Backup venue traded through the limit; the primary did not.
+    _candle(session, "BTC-USD", t, "60010", "60010", "59900", "59950", "coinbase")
+    _candle(session, "BTC-USD", t, "60010", "60020", "60000", "60015")
+
+    _executor(session).tick()
+
+    assert _fills(session) == []
+    assert all(o.status != "filled" for o in _orders(session, plan))
+    assert _latest_prices(session)["BTC-USD"] == Decimal("60015")
 
 
 # --- worst-case taker setting -------------------------------------------------

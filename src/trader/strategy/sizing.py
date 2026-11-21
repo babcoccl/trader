@@ -8,8 +8,9 @@ import pandas as pd
 def annual_vol(close: pd.Series) -> pd.Series:
     """Annualized vol: EW std (span 30, min 20) of daily returns * sqrt(365).
 
-    A missing close leaves its return undefined (as research/bt.py does),
-    rather than pandas 2.x's default of padding it into a zero return.
+    A missing close leaves its return undefined, as in research/bt.py, which
+    generated expected_signals.csv (research/check_spec.py pads instead, on
+    pandas 2.x; the fixtures have no gaps, so both match them).
     """
     returns = close.pct_change(fill_method=None)
     return returns.ewm(span=30, min_periods=20).std() * math.sqrt(365)
@@ -22,14 +23,15 @@ def target_weights(
 ) -> dict[str, float]:
     """Per-asset weight = signal / n_assets * min(1, vol_target / vol).
 
-    NaN signal or vol gives 0. Zero vol gives a scale of 1, the limit of
-    min(1, vol_target / vol), as in research/bt.py. If the weights sum
-    above 1.0, scale all down to sum 1.0. No leverage, no shorts.
+    NaN signal or vol, or a missing vol, gives 0. Zero vol gives a scale
+    of 1, the limit of min(1, vol_target / vol), as in research/bt.py. If
+    the weights sum above 1.0, scale all down to sum 1.0. No leverage, no
+    shorts.
     """
     n_assets = len(signals)
     weights: dict[str, float] = {}
     for symbol, sig in signals.items():
-        vol = vols[symbol]
+        vol = vols.get(symbol, math.nan)
         if pd.isna(sig) or pd.isna(vol):
             weights[symbol] = 0.0
         else:

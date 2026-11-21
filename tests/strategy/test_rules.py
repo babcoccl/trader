@@ -91,6 +91,11 @@ def test_target_weights_basic_and_nan() -> None:
     assert w == {"A": 0.5, "B": 0.0}
 
 
+def test_target_weights_missing_vol_gives_zero() -> None:
+    w = sizing.target_weights({"A": float("nan"), "B": 1.0}, {})
+    assert w == {"A": 0.0, "B": 0.0}
+
+
 def test_target_weights_full_signal_sums_to_one() -> None:
     w = sizing.target_weights({"A": 1.0, "B": 1.0}, {"A": 0.10, "B": 0.10})
     assert w == {"A": 0.5, "B": 0.5}

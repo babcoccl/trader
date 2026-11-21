@@ -48,6 +48,17 @@ export interface OrderOut {
   created_at: string;
 }
 
+export interface PlanOrderSpec {
+  side: "buy" | "sell";
+  type: "limit" | "market" | "stop";
+  price: string | null;
+  stop_price: string | null;
+  quantity: string;
+  market_after_seconds?: number;
+  maker_or_cancel?: boolean;
+  reprice_seconds?: number;
+}
+
 export interface PlanOut {
   id: number;
   sleeve: "trend" | "dip_bid";
@@ -57,7 +68,7 @@ export interface PlanOut {
   reference_price: string;
   target_weight: string;
   size_fraction: string;
-  entry_orders: OrderOut[];
+  entry_orders: PlanOrderSpec[];
   stop_price: string | null;
   worst_case_loss: string;
   est_fees: string;

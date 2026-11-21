@@ -31,10 +31,21 @@ afterEach(() => vi.restoreAllMocks());
 describe("Overview", () => {
   it("renders the four stat cards and decision sections", async () => {
     statusMock.mockResolvedValue(makeStatus());
-    decisionsMock.mockResolvedValue([
-      makeDecision({ id: 2, cycle: "daily", reason: "Checked BTC-USD. 5 of 9 rules positive." }),
-      makeDecision({ id: 1, cycle: "intraday", reason: "Checked prices. Nothing to do." }),
-    ]);
+    const dailyDecision = makeDecision({
+      id: 2,
+      cycle: "daily",
+      reason: "Checked BTC-USD. 5 of 9 rules positive.",
+    });
+    const intradayDecision = makeDecision({
+      id: 1,
+      cycle: "intraday",
+      reason: "Checked prices. Nothing to do.",
+    });
+    decisionsMock.mockImplementation((params) => {
+      if (params?.cycle === "daily") return Promise.resolve([dailyDecision]);
+      if (params?.cycle === "intraday") return Promise.resolve([intradayDecision]);
+      return Promise.resolve([intradayDecision, dailyDecision]);
+    });
     equityMock.mockResolvedValue([
       { time: "2026-11-21T00:00:00Z", account: "10420.5", cash: "10420.5", btc: "10300", btc_eth: "10350" },
     ]);

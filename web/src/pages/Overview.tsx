@@ -25,19 +25,26 @@ function StatCard({ title, value, sub }: { title: string; value: string; sub?: s
 export function Overview() {
   const status = useQuery({ queryKey: ["status"], queryFn: api.status, refetchInterval: 30_000 });
   const equity = useQuery({ queryKey: ["equity"], queryFn: () => api.equityReport() });
-  const decisions = useQuery({
-    queryKey: ["decisions"],
-    queryFn: () => api.decisions({ limit: 50 }),
+  const daily = useQuery({
+    queryKey: ["decisions", "daily"],
+    queryFn: () => api.decisions({ cycle: "daily", limit: 1 }),
+  });
+  const intraday = useQuery({
+    queryKey: ["decisions", "intraday"],
+    queryFn: () => api.decisions({ cycle: "intraday", limit: 1 }),
+  });
+  const recent = useQuery({
+    queryKey: ["decisions", "recent"],
+    queryFn: () => api.decisions({ limit: 10 }),
   });
 
   if (status.isLoading) return <p>Loading…</p>;
   if (status.isError || !status.data) return <p>Could not load status.</p>;
   const s = status.data;
 
-  const rows = decisions.data ?? [];
-  const latestDaily = rows.find((d) => d.cycle === "daily");
-  const latestIntraday = rows.find((d) => d.cycle === "intraday");
-  const last10 = rows.slice(0, 10);
+  const latestDaily = daily.data?.[0];
+  const latestIntraday = intraday.data?.[0];
+  const last10 = recent.data ?? [];
 
   const chartData = (equity.data ?? []).map((p) => ({
     time: p.time.slice(0, 10),
@@ -65,7 +72,9 @@ export function Overview() {
 
       <div className="card">
         <div className="card__title">Account vs buy and hold</div>
-        {chartData.length === 0 ? (
+        {equity.isError ? (
+          <p className="muted">Could not load equity history.</p>
+        ) : chartData.length === 0 ? (
           <p className="muted">No equity history yet.</p>
         ) : (
           <ResponsiveContainer width="100%" height={280}>
@@ -109,27 +118,37 @@ export function Overview() {
 
       <div className="card">
         <div className="card__title">What the system thinks right now</div>
-        {latestDaily ? (
-          <p>
-            <span className="muted">Daily, {timeAgo(latestDaily.ran_at, new Date())}:</span>{" "}
-            {latestDaily.reason}
-          </p>
+        {daily.isError || intraday.isError ? (
+          <p className="muted">Could not load the latest decisions.</p>
         ) : (
-          <p className="muted">No daily decision yet.</p>
-        )}
-        {latestIntraday ? (
-          <p>
-            <span className="muted">Intraday, {timeAgo(latestIntraday.ran_at, new Date())}:</span>{" "}
-            {latestIntraday.reason}
-          </p>
-        ) : (
-          <p className="muted">No intraday check yet.</p>
+          <>
+            {latestDaily ? (
+              <p>
+                <span className="muted">Daily, {timeAgo(latestDaily.ran_at, new Date())}:</span>{" "}
+                {latestDaily.reason}
+              </p>
+            ) : (
+              <p className="muted">No daily decision yet.</p>
+            )}
+            {latestIntraday ? (
+              <p>
+                <span className="muted">
+                  Intraday, {timeAgo(latestIntraday.ran_at, new Date())}:
+                </span>{" "}
+                {latestIntraday.reason}
+              </p>
+            ) : (
+              <p className="muted">No intraday check yet.</p>
+            )}
+          </>
         )}
       </div>
 
       <div className="card">
         <div className="card__title">Why nothing has happened lately</div>
-        {last10.length === 0 ? (
+        {recent.isError ? (
+          <p className="muted">Could not load decisions.</p>
+        ) : last10.length === 0 ? (
           <p className="muted">No decisions recorded yet.</p>
         ) : (
           <ul className="reason-list">

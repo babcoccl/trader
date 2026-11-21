@@ -169,7 +169,8 @@ function fillsPnl(
     const asset = symbol.split("-")[0];
     const qty = Number(d.quantity ?? 0);
     const price = Number(d.price ?? 0);
-    lastFillPrice[symbol] = price;
+    // The feed is newest-first: keep the first (latest) price per symbol.
+    lastFillPrice[symbol] ??= price;
     const feeUsd =
       d.fee_currency === "USD" ? Number(d.fee ?? 0) : Number(d.fee ?? 0) * price;
     if (d.side === "buy") {

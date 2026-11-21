@@ -34,7 +34,7 @@ from decimal import ROUND_DOWN, Decimal
 from apscheduler.schedulers.blocking import (  # type: ignore[import-untyped]
     BlockingScheduler,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from trader.backtest.costs import BITSTAMP, CostModel
@@ -51,6 +51,7 @@ from trader.ledger.models import (
     Candle,
     Decision,
     Event,
+    Fill,
     Order,
     Plan,
     Setting,
@@ -148,9 +149,12 @@ class Executor:
             # limit's deadline cannot fill it (adapter), so the order
             # converts to market here instead.
             self._collect_fills(session, adapter, now)
+            if not isinstance(adapter, PaperAdapter):
+                # Shadow orders of denied/expired plans stay simulated.
+                self._collect_fills(
+                    session, PaperAdapter(session, self._cost, self._clock, mode), now
+                )
             self._apply_time_rules(session, adapter, now)
-            # A venue cancel can surface fills executed just before it.
-            self._collect_fills(session, adapter, now)
             prices = _latest_prices(session)
             if prices:
                 risk.update_equity(
@@ -200,7 +204,12 @@ class Executor:
                     Plan.status.in_(("approved", "completed")),
                     Order.symbol == symbol,
                     Order.side == "buy",
-                    Order.status == "filled",
+                    # A live buy can be partially filled (or cancelled after
+                    # a partial fill) and still hold a position.
+                    or_(
+                        Order.status.in_(("filled", "partially_filled")),
+                        Order.id.in_(select(Fill.order_id)),
+                    ),
                 )
                 .order_by(Plan.id.desc())
                 .limit(1)
@@ -208,6 +217,9 @@ class Executor:
             if plan is None or plan.stop_price is None or price > plan.stop_price:
                 continue
             self._cancel_symbol_orders(session, adapter, symbol)
+            qty = self._sellable(session, adapter, mode, asset, now)
+            if qty <= 0:
+                continue
             order = self._new_order(
                 session, plan, type="market", quantity=qty, side="sell"
             )
@@ -255,10 +267,11 @@ class Executor:
         for order in adapter.open_orders():
             if not order.shadow:
                 adapter.cancel(order.venue_order_id or "")
-        for asset, qty in positions.items():
+        for asset in positions:
             symbol = f"{asset}-USD"
             price = prices.get(symbol)
-            if price is None:
+            qty = self._sellable(session, adapter, mode, asset, now)
+            if price is None or qty <= 0:
                 continue
             plan = Plan(
                 sleeve="trend",
@@ -339,14 +352,17 @@ class Executor:
         for order in adapter.open_orders():
             if order.type != "limit" or order.plan_id not in plans:
                 continue
+            if order.status not in ("new", "open", "partially_filled"):
+                continue  # settled by a fill collected earlier in this loop
             plan = plans[order.plan_id]
             if now > _approved_at(plan) + LIMIT_TTL:
-                adapter.cancel(order.venue_order_id or "")
-                adapter.place(
-                    self._new_order(
-                        session, plan, type="market", quantity=order.quantity
+                remaining = self._cancel_for_replace(session, adapter, order, now)
+                if remaining > 0:
+                    adapter.place(
+                        self._new_order(
+                            session, plan, type="market", quantity=remaining
+                        )
                     )
-                )
                 continue
             if order.side == "buy":
                 candle = _newest_candle(session, order.symbol)
@@ -355,7 +371,9 @@ class Executor:
                     and candle.open_time >= order.created_at
                     and candle.close != order.price
                 ):
-                    adapter.cancel(order.venue_order_id or "")
+                    remaining = self._cancel_for_replace(session, adapter, order, now)
+                    if remaining <= 0:
+                        continue
                     price = candle.close.quantize(
                         adapter.symbol_rules(order.symbol).tick,
                         rounding=ROUND_DOWN,
@@ -366,7 +384,7 @@ class Executor:
                             plan,
                             type="limit",
                             price=price,
-                            quantity=order.quantity,
+                            quantity=remaining,
                         )
                     )
 
@@ -440,6 +458,55 @@ class Executor:
                 )
 
     # -- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _filled(session: Session, order: Order) -> Decimal:
+        total = session.scalar(
+            select(func.sum(Fill.quantity)).where(Fill.order_id == order.id)
+        )
+        return Decimal(total or 0)
+
+    def _cancel_for_replace(
+        self, session: Session, adapter: ExecutionAdapter, order: Order, now: datetime
+    ) -> Decimal:
+        """Cancel ``order`` and return the quantity its replacement may
+        carry. Paper orders never part-fill; a live order's fills up to the
+        cancel are collected first and the remainder is dropped when it is
+        under the venue minimum."""
+        adapter.cancel(order.venue_order_id or "")
+        if isinstance(adapter, PaperAdapter):
+            return order.quantity
+        self._collect_fills(session, adapter, now)
+        remaining = order.quantity - self._filled(session, order)
+        price = order.price or _latest_prices(session).get(order.symbol)
+        rules = adapter.symbol_rules(order.symbol)
+        if price is None or remaining * price < rules.min_notional:
+            return Decimal(0)
+        return remaining
+
+    def _sellable(
+        self,
+        session: Session,
+        adapter: ExecutionAdapter,
+        mode: str,
+        asset: str,
+        now: datetime,
+    ) -> Decimal:
+        """Position not already being sold. A live venue fills
+        asynchronously: settle fills found by the cancels first, then
+        subtract sells still working (their cancel failed: executing)."""
+        if isinstance(adapter, PaperAdapter):
+            return accounting.positions(session, mode).get(asset, Decimal(0))
+        self._collect_fills(session, adapter, now)
+        working = sum(
+            (
+                o.quantity - self._filled(session, o)
+                for o in adapter.open_orders()
+                if o.symbol == f"{asset}-USD" and o.side == "sell" and not o.shadow
+            ),
+            Decimal(0),
+        )
+        return accounting.positions(session, mode).get(asset, Decimal(0)) - working
 
     def _sell_now(
         self,

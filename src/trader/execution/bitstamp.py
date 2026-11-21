@@ -261,7 +261,10 @@ class BitstampAdapter:
                 order.price = price
                 order.quantity = quantity
                 order.status = "open"
-                self._session.flush()
+                # The venue holds the order now: persist its id at once so a
+                # later failure in the same pass cannot roll back the only
+                # local record of it.
+                self._session.commit()
                 return venue_id
             # Maker-or-cancel rejection: the order would have taken
             # liquidity. Re-quote at the new best bid (buy) or ask (sell).

@@ -95,6 +95,9 @@ class _SessionStub:
     def flush(self) -> None:
         self.flushed += 1
 
+    def commit(self) -> None:
+        self.flush()
+
     def scalars(self, *_args: Any, **_kw: Any) -> _EmptyResult:
         return _EmptyResult()
 
@@ -586,7 +589,9 @@ def test_executor_live_refuses_without_live_enabled(db, monkeypatch) -> None:
     assert t.calls == []  # nothing reached the venue
 
 
-def test_executor_live_emergency_stop_sells_via_venue(db) -> None:
+def _stop_position(db: Session, buy_status: str = "filled") -> Plan:
+    """A live BTC position of 0.002 governed by a plan stopped at 50,000,
+    with the newest 5m close (49,000) under the stop."""
     decision = Decision(
         cycle="daily", ran_at=NOW, action="none", reason="seed", details={}
     )
@@ -619,8 +624,9 @@ def test_executor_live_emergency_stop_sells_via_venue(db) -> None:
             symbol="BTC-USD",
             side="buy",
             type="limit",
-            quantity=Decimal("0.002"),
-            status="filled",
+            price=Decimal("60000"),
+            quantity=Decimal("0.004"),
+            status=buy_status,
             mode="live",
         )
     )
@@ -640,6 +646,11 @@ def test_executor_live_emergency_stop_sells_via_venue(db) -> None:
         )
     )
     db.flush()
+    return plan
+
+
+def test_executor_live_emergency_stop_sells_via_venue(db) -> None:
+    _stop_position(db)
     finished_sell = {
         "id": 77,
         "status": "Finished",
@@ -671,3 +682,132 @@ def test_executor_live_emergency_stop_sells_via_venue(db) -> None:
     assert fill.liquidity == "taker"
     assert accounting.positions(db, "live") == {}
     assert db.scalars(select(Event).where(Event.kind == "emergency_stop")).one()
+
+
+def test_emergency_stop_governs_partially_filled_buy(db) -> None:
+    """A live entry still partially filled holds a position; its plan's
+    stop must still fire."""
+    _stop_position(db, buy_status="partially_filled")
+    t = FakeTransport(
+        posts={
+            "/api/v2/cancel_order/": {"id": "1"},
+            "/api/v2/sell/market/btcusd/": {"id": 77},
+            "/api/v2/order_status/": {
+                "status": "Open",
+                "amount_remaining": "0.002",
+                "transactions": [],
+            },
+        }
+    )
+    _live_executor(db, t).tick()
+    assert any(c[0].endswith("/api/v2/sell/market/btcusd/") for c in t.calls)
+
+
+def test_emergency_stop_does_not_resell_a_working_sell(db) -> None:
+    """A market sell the venue is already executing (its cancel fails)
+    covers the position: no second full-position sell."""
+    plan = _stop_position(db)
+    db.add(
+        Order(
+            plan_id=plan.id,
+            venue="bitstamp",
+            client_order_id=f"{plan.id}-9",
+            venue_order_id="77",
+            symbol="BTC-USD",
+            side="sell",
+            type="market",
+            quantity=Decimal("0.002"),
+            status="open",
+            mode="live",
+        )
+    )
+    db.flush()
+    t = FakeTransport(
+        posts={
+            "/api/v2/cancel_order/": {
+                "status": "error",
+                "reason": {"__all__": ["Order not found"]},
+            },
+            "/api/v2/order_status/": {
+                "status": "Open",
+                "amount_remaining": "0.002",
+                "transactions": [],
+            },
+        }
+    )
+    _live_executor(db, t).tick()
+    assert not any("/sell/market/" in c[0] for c in t.calls)
+    assert db.scalars(select(Event).where(Event.kind == "emergency_stop")).all() == []
+
+
+def test_time_rule_replaces_only_unfilled_remainder(db) -> None:
+    """A live limit past its deadline with a partial fill converts only the
+    unfilled remainder to market."""
+    plan = _approved_buy_plan(db)
+    plan.decided_at = NOW - timedelta(hours=2)
+    db.add(
+        Order(
+            plan_id=plan.id,
+            venue="bitstamp",
+            client_order_id=f"{plan.id}-1",
+            venue_order_id="1458532827766784",
+            symbol="BTC-USD",
+            side="buy",
+            type="limit",
+            price=Decimal("50000"),
+            quantity=Decimal("0.002"),
+            status="open",
+            mode="live",
+        )
+    )
+    db.add(Balance(time=NOW, mode="live", asset="USD", quantity=Decimal("1000")))
+    db.flush()
+    t = FakeTransport(
+        posts={
+            "/api/v2/order_status/": _fixture("order_status_partial.json"),
+            "/api/v2/cancel_order/": {"id": "1458532827766784"},
+            "/api/v2/buy/market/btcusd/": {"id": 88},
+        }
+    )
+    _live_executor(db, t).tick()
+    (market,) = [c for c in t.calls if c[0].endswith("/buy/market/btcusd/")]
+    assert market[1]["amount"] == "0.00100000"
+
+
+def test_live_tick_still_fills_shadow_orders(db) -> None:
+    """Shadow orders of denied plans keep their simulated fills in live mode."""
+    plan = _approved_buy_plan(db)
+    plan.status = "denied"
+    shadow = Order(
+        plan_id=plan.id,
+        venue="paper",
+        client_order_id=f"{plan.id}-shadow-1",
+        venue_order_id=f"paper-{plan.id}-shadow-1",
+        symbol="BTC-USD",
+        side="buy",
+        type="limit",
+        price=Decimal("49000"),
+        quantity=Decimal("0.002"),
+        status="open",
+        mode="live",
+        shadow=True,
+        created_at=NOW - timedelta(minutes=20),
+    )
+    db.add(shadow)
+    db.add(
+        Candle(
+            symbol="BTC-USD",
+            interval="5m",
+            open_time=NOW - timedelta(minutes=10),
+            open=Decimal("49500"),
+            high=Decimal("49500"),
+            low=Decimal("48000"),
+            close=Decimal("49000"),
+            volume=Decimal("1"),
+            source="bitstamp",
+        )
+    )
+    db.flush()
+    _live_executor(db, FakeTransport()).tick()
+    db.refresh(shadow)
+    assert shadow.status == "filled"

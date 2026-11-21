@@ -248,3 +248,15 @@ def flatten_requested(session: Session, actor: str) -> None:
         _get(session, "risk.flatten_requested"),
     )
     session.flush()
+
+
+def flatten_done(session: Session, actor: str) -> None:
+    """Lower the flatten flag once the executor has sold everything."""
+    _set(
+        session,
+        "risk.flatten_requested",
+        False,
+        actor,
+        _get(session, "risk.flatten_requested"),
+    )
+    session.flush()

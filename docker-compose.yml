@@ -50,5 +50,16 @@ services:
         condition: service_healthy
     command: python -m trader.engine
 
+  executor:
+    build: .
+    environment:
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:trader@db:5432/trader
+      TRADER_MODE: paper
+      TRADER_LOG_LEVEL: INFO
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python -m trader.execution
+
 volumes:
   db-data:

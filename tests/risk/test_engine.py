@@ -240,6 +240,13 @@ def test_halt_and_audit_log(session: Session) -> None:
     session.commit()
     assert session.get(Setting, "risk.flatten_requested").value is True
 
+    risk.flatten_done(session, actor="executor")
+    session.commit()
+    assert session.get(Setting, "risk.flatten_requested").value is False
+    assert session.scalars(
+        select(AuditLog.actor).where(AuditLog.action == "set risk.flatten_requested")
+    ).all() == ["owner", "executor"]
+
 
 @NEEDS_DB
 def test_state_reads_candle_age(session: Session) -> None:

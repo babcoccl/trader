@@ -221,7 +221,7 @@ Each spec lists: Goal, Depends on, Files, Interfaces, Steps, Tests, Done when, O
   - `engine.state(session) -> RiskState` with `halted: bool`, `halt_reason: str | None`, `high_water_mark`, `drawdown`.
   - `engine.check_plan(plan, portfolio, limits, state) -> RiskVerdict(ok: bool, reasons: list[str])`: reject if halted; if the plan would raise gross above `max_gross` or an asset above its cap; if `worst_case_loss / equity > max_plan_loss_fraction`; if the side is sell-short; if price data is stale. Sells that reduce exposure are always allowed, including while halted.
   - `engine.update_equity(session, equity_usd, clock)`: writes `equity_snapshots`; sets `halted=True` with reason when `drawdown >= drawdown_halt`.
-  - `engine.halt(session, actor, reason)`, `engine.resume(session, actor)` (resume resets the high-water mark to current equity and writes `audit_log`), `engine.flatten_requested(session, actor)`.
+  - `engine.halt(session, actor, reason)`, `engine.resume(session, actor)` (resume resets the high-water mark to current equity and writes `audit_log`), `engine.flatten_requested(session, actor)`, `engine.flatten_done(session, actor)` (the executor lowers the flag after selling).
 - **Tests:** property test: for random portfolios and plans, an approved plan never results in gross above 1.0 or a short position; halt blocks buys and allows sells; drawdown of exactly 35% halts; resume resets the mark.
 - **Done when:** tests pass; no code path outside `risk/` writes the halted flag.
 - **Out of scope:** UI buttons (3.5).

@@ -7,8 +7,9 @@
 # Required environment (in .env next to this file):
 #   TRADER_DASHBOARD_PASSWORD  dashboard login password
 #   TRADER_LAN_ADDRESS         this box's LAN IP, e.g. 192.168.1.50
-# Optional:
-#   TRADER_POSTGRES_PASSWORD   defaults to "trader" (db is not exposed)
+# The db service publishes no port, so its credentials stay fixed at
+# trader/trader — a configurable password would land unencoded inside
+# TRADER_DATABASE_URL and break it on characters like '@'.
 #
 # The dashboard binds to ${TRADER_LAN_ADDRESS} only: reachable from the
 # LAN, never on localhost or other interfaces. The api and db services
@@ -20,7 +21,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: trader
-      POSTGRES_PASSWORD: ${TRADER_POSTGRES_PASSWORD:-trader}
+      POSTGRES_PASSWORD: trader
       POSTGRES_DB: trader
     volumes:
       - db-data:/var/lib/postgresql/data
@@ -34,7 +35,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      TRADER_DATABASE_URL: postgresql+psycopg://trader:${TRADER_POSTGRES_PASSWORD:-trader}@db:5432/trader
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:trader@db:5432/trader
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
@@ -48,7 +49,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      TRADER_DATABASE_URL: postgresql+psycopg://trader:${TRADER_POSTGRES_PASSWORD:-trader}@db:5432/trader
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:trader@db:5432/trader
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
@@ -61,7 +62,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      TRADER_DATABASE_URL: postgresql+psycopg://trader:${TRADER_POSTGRES_PASSWORD:-trader}@db:5432/trader
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:trader@db:5432/trader
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
@@ -74,7 +75,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      TRADER_DATABASE_URL: postgresql+psycopg://trader:${TRADER_POSTGRES_PASSWORD:-trader}@db:5432/trader
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:trader@db:5432/trader
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
@@ -87,7 +88,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      TRADER_DATABASE_URL: postgresql+psycopg://trader:${TRADER_POSTGRES_PASSWORD:-trader}@db:5432/trader
+      TRADER_DATABASE_URL: postgresql+psycopg://trader:trader@db:5432/trader
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}

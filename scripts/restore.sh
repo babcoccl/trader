@@ -18,7 +18,9 @@ if [[ $# -lt 1 ]]; then
     exit 2
 fi
 
-DUMP="$1"
+# Resolve to an absolute path before cd, so relative paths still point
+# at the file the caller meant.
+DUMP="$(realpath "$1")"
 TARGET="${2:-trader_restore}"
 
 REPO_DIR="${TRADER_REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -32,6 +34,12 @@ if [[ ! -r "$DUMP" ]]; then
 fi
 
 db() { docker compose -f "$COMPOSE_FILE" exec -T db psql -U trader -d postgres -qc "$1"; }
+
+# Reject an invalid dump before any database is dropped.
+if ! docker compose -f "$COMPOSE_FILE" exec -T db pg_restore -l < "$DUMP" > /dev/null 2>&1; then
+    echo "not a valid pg_dump file: $DUMP" >&2
+    exit 1
+fi
 
 if [[ "$TARGET" == "trader" ]]; then
     echo "Restoring into the LIVE database 'trader' in 5 seconds. Ctrl-C to abort." >&2

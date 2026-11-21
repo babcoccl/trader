@@ -18,7 +18,11 @@ router = APIRouter(dependencies=[AuthRequired])
 @router.get("/api/funding", response_model=FundingOut)
 def funding(session: Session = SessionDep) -> FundingOut:
     latest = (
-        select(FundingRate.symbol, FundingRate.venue, func.max(FundingRate.time).label("t"))
+        select(
+            FundingRate.symbol,
+            FundingRate.venue,
+            func.max(FundingRate.time).label("t"),
+        )
         .group_by(FundingRate.symbol, FundingRate.venue)
         .subquery()
     )

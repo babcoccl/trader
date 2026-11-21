@@ -227,7 +227,9 @@ def replay(session: Session, mode: str) -> dict[str, Decimal]:
     return {a: _q(q) for a, q in _replay(session, mode)[0].items()}
 
 
-def _replay(session: Session, mode: str) -> tuple[dict[str, Decimal], datetime | None]:
+def _replay(
+    session: Session, mode: str, before: datetime | None = None
+) -> tuple[dict[str, Decimal], datetime | None]:
     events = (
         session.execute(
             select(Event).where(Event.kind == "deposit").order_by(Event.time, Event.id)
@@ -235,16 +237,21 @@ def _replay(session: Session, mode: str) -> tuple[dict[str, Decimal], datetime |
         .scalars()
         .all()
     )
-    rows = session.execute(
+    fill_query = (
         select(Fill, Order)
         .join(Order, Fill.order_id == Order.id)
         .where(Order.mode == mode, Order.shadow.is_(False))
         .order_by(Fill.time, Fill.id)
-    ).all()
+    )
+    if before is not None:
+        fill_query = fill_query.where(Fill.time < before)
+    rows = session.execute(fill_query).all()
     # Replay deposits and fills in time order; a deposit sorts before a fill
     # at the same instant.
     steps: list[tuple[datetime, int, Event | None, tuple[Fill, Order] | None]] = [
-        (e.time, 0, e, None) for e in events if e.details.get("mode") == mode
+        (e.time, 0, e, None)
+        for e in events
+        if e.details.get("mode") == mode and (before is None or e.time < before)
     ]
     steps += [(f.time, 1, None, (f, o)) for f, o in rows]
     steps.sort(key=lambda step: (step[0], step[1]))

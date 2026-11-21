@@ -22,6 +22,7 @@ Every transition writes an ``audit_log`` row.
 """
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -35,6 +36,26 @@ from trader.ledger import accounting
 from trader.ledger.models import AuditLog, Candle, Order, Plan
 from trader.risk import engine as risk
 from trader.risk.limits import Limits
+
+
+@dataclass
+class _ScaledPlan:
+    """PlanView for ``risk.check_plan`` on the would-be scaled plan, so a
+    refused approval never mutates the real row."""
+
+    symbol: str
+    side: str
+    target_weight: Decimal
+    worst_case_loss: Decimal
+
+
+def _locked_plan(session: Session, plan_id: int) -> Plan | None:
+    """Fetch the plan under a row lock so a concurrent approve/deny/sweep
+    either waits for this decision or loses to it."""
+    return session.scalars(
+        select(Plan).where(Plan.id == plan_id).with_for_update()
+    ).first()
+
 
 ALLOWED_FRACTIONS = (Decimal("1.0"), Decimal("0.5"), Decimal("0.25"))
 
@@ -138,7 +159,7 @@ def approve(
     expiry, the fraction is not one of ``{1.0, 0.5, 0.25}``, or the scaled
     plan no longer passes ``risk.check_plan``.
     """
-    plan = session.get(Plan, plan_id)
+    plan = _locked_plan(session, plan_id)
     if plan is None:
         raise ApprovalError(f"plan {plan_id} not found")
     fraction = Decimal(str(size_fraction))
@@ -153,23 +174,33 @@ def approve(
     if clock.now() > plan.expires_at:
         raise ApprovalError(f"plan {plan_id} expired at {plan.expires_at}")
 
-    if fraction != 1:
-        for spec in plan.entry_orders:
-            spec["quantity"] = str(Decimal(str(spec["quantity"])) * fraction)
-        plan.worst_case_loss *= fraction
-        plan.est_fees *= fraction
-    plan.size_fraction = fraction
-
+    # Risk-check the scaled values before touching the row: a refused
+    # approval must leave the pending plan untouched.
+    scaled = _ScaledPlan(
+        symbol=plan.symbol,
+        side=plan.side,
+        target_weight=plan.target_weight,
+        worst_case_loss=plan.worst_case_loss * fraction,
+    )
     mode = get_settings().mode
     prices = _latest_prices(session)
     portfolio = accounting.portfolio_view(session, mode, prices)
     verdict = risk.check_plan(
-        plan, portfolio, Limits.load(session), risk.state(session, clock)
+        scaled, portfolio, Limits.load(session), risk.state(session, clock)
     )
     if not verdict.ok:
         raise ApprovalError(
             f"plan {plan_id} failed risk checks: {'; '.join(verdict.reasons)}"
         )
+
+    if fraction != 1:
+        plan.entry_orders = [
+            {**spec, "quantity": str(Decimal(str(spec["quantity"])) * fraction)}
+            for spec in plan.entry_orders
+        ]
+        plan.worst_case_loss *= fraction
+        plan.est_fees *= fraction
+    plan.size_fraction = fraction
 
     before = {"plan_id": plan.id, "status": "pending"}
     plan.status = "approved"
@@ -181,7 +212,7 @@ def approve(
 
 def deny(session: Session, plan_id: int, actor: str, clock: Clock) -> Plan:
     """Deny a pending plan. Refuses any other state."""
-    plan = session.get(Plan, plan_id)
+    plan = _locked_plan(session, plan_id)
     if plan is None:
         raise ApprovalError(f"plan {plan_id} not found")
     if plan.status != "pending":
@@ -203,7 +234,7 @@ def sweep(
     now = clock.now()
     changed: list[Plan] = []
     pending = session.scalars(
-        select(Plan).where(Plan.status == "pending").order_by(Plan.id)
+        select(Plan).where(Plan.status == "pending").order_by(Plan.id).with_for_update()
     ).all()
     for plan in pending:
         if now > plan.expires_at:

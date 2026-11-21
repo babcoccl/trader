@@ -208,6 +208,13 @@ def test_approve_half_size_scales_orders_and_loss(session: Session) -> None:
     assert Decimal(plan.entry_orders[0]["quantity"]) == Decimal("0.05")
     assert plan.worst_case_loss == Decimal("500")
     assert plan.est_fees == Decimal("24")
+    # The JSONB change must persist, not just sit in the session.
+    session.commit()
+    session.expire_all()
+    persisted = session.get(Plan, plan.id)
+    assert persisted is not None
+    assert Decimal(persisted.entry_orders[0]["quantity"]) == Decimal("0.05")
+    assert persisted.worst_case_loss == Decimal("500")
 
 
 def test_approve_quarter_size(session: Session) -> None:
@@ -359,3 +366,27 @@ def test_shadow_fills_never_touch_balances(session: Session) -> None:
 
     assert accounting.cash(session, "paper") == cash_before
     assert accounting.positions(session, "paper") == {}
+
+
+def test_shadow_limit_has_no_market_deadline(session: Session) -> None:
+    """A shadow limit still fills on a candle more than an hour after the
+    plan died: shadow orders track the would-have-been result, so they
+    must not convert to market (and their plan is never approved, so the
+    executor's time rules never touch them)."""
+    _funded(session)
+    plan = _plan(session)
+    approval.deny(session, plan.id, "owner", _clock())
+    order = _orders(session, plan)[0]
+    # 13 candles later (> 1h, past LIMIT_TTL): the trade-through finally prints.
+    _candle(
+        session,
+        open_time=order.created_at + timedelta(minutes=70),
+        o="60100",
+        h="60100",
+        low="59900",
+        c="59950",
+    )
+    adapter = PaperAdapter(session, BITSTAMP)
+    fills = adapter.poll_fills(order.created_at - timedelta(seconds=1))
+    assert len(fills) == 1
+    assert fills[0].price == Decimal("60000")

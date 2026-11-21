@@ -22,7 +22,7 @@ from trader.core.config import get_settings
 from trader.core.db import session_scope
 from trader.core.logging import setup as setup_logging
 from trader.engine import daily_cycle
-from trader.ledger.models import Heartbeat
+from trader.ledger.models import Decision, Heartbeat
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +66,16 @@ class Engine:
             except Exception as exc:
                 log.exception("daily cycle failed")
                 session.rollback()
+                # Convention: every scheduled cycle leaves a decisions row.
+                session.add(
+                    Decision(
+                        cycle="daily",
+                        ran_at=self._clock.now(),
+                        action="error",
+                        reason=f"Daily cycle failed: {exc}",
+                        details={},
+                    )
+                )
                 session.add(
                     Heartbeat(
                         service=SERVICE,

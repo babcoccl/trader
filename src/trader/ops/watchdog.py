@@ -159,7 +159,16 @@ def _conditions(session: Session, clock: Clock) -> list[Alarm]:
     if adapter is not None:
         # Ledger side is replayed from deposits and fills, so it is
         # independent of the stored balances the paper adapter reports.
-        ledger = accounting.replay(session, get_settings().mode)
+        try:
+            ledger = accounting.replay(session, get_settings().mode)
+        except ValueError as exc:  # fill history that cannot apply in order
+            alarms.append(
+                Alarm(
+                    key="balances_mismatch",
+                    message=f"Ledger cannot be replayed from fills: {exc}",
+                )
+            )
+            return alarms  # last condition
         venue = adapter.balances()
         diffs = {
             asset: (ledger.get(asset, Decimal(0)), venue.get(asset, Decimal(0)))

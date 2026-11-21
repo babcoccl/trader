@@ -351,3 +351,20 @@ def test_beat_uses_the_given_clock(session: Session) -> None:
     session.commit()
     row = session.scalars(select(Heartbeat).where(Heartbeat.service == "engine")).one()
     assert row.time == NOW
+
+
+def test_unreplayable_ledger_alarms_without_breaking_check(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(session: Session, mode: str) -> dict[str, Decimal]:
+        raise ValueError("cannot sell 1 BTC: only 0 held")
+
+    monkeypatch.setattr(accounting, "replay", broken)
+    _healthy(session)
+    session.execute(delete(Heartbeat).where(Heartbeat.service == "api"))
+    session.commit()
+    alarms = watchdog.check(session, _clock())
+    session.commit()
+    keys = {a.key for a in alarms}
+    assert keys == {"balances_mismatch", "service_silent:api"}
+    assert len(_events(session, "heartbeat_summary")) == 1

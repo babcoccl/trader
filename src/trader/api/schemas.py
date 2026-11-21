@@ -115,6 +115,18 @@ class ActivityItem(BaseModel):
     details: dict[str, Any]
 
 
+class FundingRateOut(BaseModel):
+    symbol: str
+    venue: str
+    time: datetime
+    rate: Decimal
+
+
+class FundingOut(BaseModel):
+    rates: list[FundingRateOut]
+    t_bill_rate: float
+
+
 class EquityPoint(BaseModel):
     time: datetime
     account: Decimal

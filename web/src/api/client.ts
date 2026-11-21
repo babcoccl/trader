@@ -101,6 +101,18 @@ export interface ActivityItem {
   details: Record<string, unknown>;
 }
 
+export interface FundingRateOut {
+  symbol: string;
+  venue: string;
+  time: string;
+  rate: string;
+}
+
+export interface FundingOut {
+  rates: FundingRateOut[];
+  t_bill_rate: number;
+}
+
 export interface EquityPoint {
   time: string;
   account: string;
@@ -182,11 +194,22 @@ export const api = {
   denyPlan: (id: number) =>
     request<PlanOut>(`/api/plans/${id}/deny`, { method: "POST" }),
   positions: () => request<PositionOut[]>("/api/positions"),
-  activity: (params?: { kind?: string; q?: string; limit?: number }) => {
+  funding: () => request<FundingOut>("/api/funding"),
+  activity: (params?: {
+    kind?: string;
+    q?: string;
+    limit?: number;
+    before?: ActivityItem;
+  }) => {
     const q = new URLSearchParams();
     if (params?.kind) q.set("kind", params.kind);
     if (params?.q) q.set("q", params.q);
     if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.before) {
+      q.set("before", params.before.time);
+      q.set("before_kind", params.before.kind);
+      q.set("before_id", String(params.before.ref_id));
+    }
     const qs = q.toString();
     return request<ActivityItem[]>(`/api/activity${qs ? `?${qs}` : ""}`);
   },

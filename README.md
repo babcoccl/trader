@@ -20,6 +20,22 @@ Nothing is built yet. This repo currently holds the agreed design, the implement
 
 Each session implements one spec from `docs/SPECS.md` and opens one pull request. Start with spec 0.1. The order and dependencies are in `docs/PLAN.md`.
 
+## Development
+
+Requires Python 3.12, Docker and Docker Compose. Every command is given for a Unix shell and for Windows PowerShell.
+
+| Purpose | Linux / macOS | Windows PowerShell |
+|---|---|---|
+| Start stack | `docker compose up -d` | `docker compose up -d` |
+| Stop stack | `docker compose down` | `docker compose down` |
+| Install | `python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"` | `python -m venv .venv; .venv\Scripts\Activate.ps1; pip install -e ".[dev]"` |
+| Checks | `ruff check . && ruff format --check . && mypy src/trader && pytest` | `ruff check .; ruff format --check .; mypy src/trader; pytest` |
+| Migrate | `alembic upgrade head` | `alembic upgrade head` |
+| Health check | `curl http://localhost:8000/health` | `Invoke-RestMethod http://localhost:8000/health` |
+| Pre-commit hooks | `pre-commit install` | `pre-commit install` |
+
+Configuration comes from `TRADER_*` environment variables (see `.env.example`). `mode` defaults to `paper`; live order placement additionally requires `TRADER_LIVE_ENABLED=true`.
+
 ## Expected result, and its limits
 
 On 2018-2026 daily data the chosen rules returned about 12% a year over 2022-2026 at Bitstamp's fees, with a worst loss near 24% in that period and 31% over the whole period. That is a backtest on one exchange's prices, sensitive by a few points to the trading band and the time of day, and it is not a forecast. The paper-trading gate in phase 5 exists to test it before real money is used.

@@ -139,34 +139,33 @@ def _last_day_collected(session: Session, end: datetime) -> bool:
 
 def _window_equity(
     session: Session, mode: str, start: datetime, end: datetime
-) -> tuple[Decimal | None, Decimal | None]:
+) -> tuple[Decimal | None, Decimal | None, datetime]:
     """Paper equity at the edges of the window: last snapshot at or
-    before each edge, the window's first snapshot as the opening
-    fallback."""
-    snaps = (
-        session.execute(
-            select(EquitySnapshot.equity_usd)
-            .where(
-                EquitySnapshot.mode == mode,
-                EquitySnapshot.time >= start,
-                EquitySnapshot.time < end,
-            )
-            .order_by(EquitySnapshot.time, EquitySnapshot.id)
+    before each edge, the window's first funded snapshot as the opening
+    fallback. The third value is when the opening figure applies."""
+    snaps = session.execute(
+        select(EquitySnapshot.time, EquitySnapshot.equity_usd)
+        .where(
+            EquitySnapshot.mode == mode,
+            EquitySnapshot.time >= start,
+            EquitySnapshot.time < end,
         )
-        .scalars()
-        .all()
-    )
+        .order_by(EquitySnapshot.time, EquitySnapshot.id)
+    ).all()
+    opened = start
     end_prices = digest._end_prices(session, end)
     eq_start = digest._equity_at(session, mode, start, end_prices)
     # The replay fallback reports an unfunded account as 0. When the
     # account was funded during the window (e.g. the seed week), the
     # first positive snapshot is the meaningful opening figure.
     if eq_start is None or eq_start <= 0:
-        eq_start = next((v for v in snaps if v > 0), eq_start)
+        funded = next((s for s in snaps if s.equity_usd > 0), None)
+        if funded is not None:
+            eq_start, opened = funded.equity_usd, funded.time
     eq_end = digest._equity_at(session, mode, end, end_prices)
     if eq_end is None and snaps:
-        eq_end = snaps[-1]
-    return eq_start, eq_end
+        eq_end = snaps[-1].equity_usd
+    return eq_start, eq_end, opened
 
 
 def _candle_frames(
@@ -198,7 +197,8 @@ def tracking_gap(
     """Paper return minus backtest return over the window, in points.
 
     The backtest runs ``backtest.engine.run`` on stored daily candles with
-    the Bitstamp cost preset over ``start.date()`` to the last day before
+    the Bitstamp cost preset over ``start.date()`` (or the funding day,
+    when the account was funded mid-window) to the last day before
     ``end``. Values are None when snapshots or candles cannot cover the
     window.
     """
@@ -207,9 +207,11 @@ def tracking_gap(
         "backtest_return": None,
         "gap_points": None,
     }
-    eq_start, eq_end = _window_equity(session, mode, start, end)
+    eq_start, eq_end, opened = _window_equity(session, mode, start, end)
     if eq_start is not None and eq_end is not None and eq_start > 0:
         out["paper_return"] = float(eq_end / eq_start - 1)
+    # Funded mid-window (the seed week): benchmark from the funding day.
+    start = opened.replace(hour=0, minute=0, second=0, microsecond=0)
     frames = _candle_frames(session, end)
     if frames is not None:
         opens, closes = frames
@@ -292,7 +294,7 @@ def build(session: Session, start: datetime, end: datetime) -> Event:
     mode = "paper"
     gap = tracking_gap(session, mode, start, end)
     up = _uptime(session, start, end)
-    eq_start, eq_end = _window_equity(session, mode, start, end)
+    eq_start, eq_end, opened = _window_equity(session, mode, start, end)
 
     alarms = session.scalars(
         select(Event)
@@ -314,7 +316,9 @@ def build(session: Session, start: datetime, end: datetime) -> Event:
         "",
     ]
     acct = f"**Account:** {digest._money(eq_end)}"
-    if eq_start is not None:
+    if eq_start is not None and opened > start:
+        acct += f" (funded {opened:%Y-%m-%d} with {digest._money(eq_start)})"
+    elif eq_start is not None:
         acct += f" (opened the week at {digest._money(eq_start)})"
     lines.append(acct + ".")
     if gap["paper_return"] is not None:

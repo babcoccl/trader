@@ -215,6 +215,37 @@ def test_tracking_gap_points(session: Session) -> None:
     assert gap["gap_points"] == pytest.approx(10.0)
 
 
+def test_seed_week_benchmark_starts_on_funding_day(
+    session: Session, monkeypatch
+) -> None:
+    _daily_candles(session)
+    _snapshots(session, Decimal("0"), Decimal("5500"))
+    funded = WEEK_START + timedelta(days=2, hours=14)
+    session.add(
+        EquitySnapshot(
+            time=funded,
+            mode="paper",
+            equity_usd=Decimal("5000"),
+            high_water_mark=Decimal("5000"),
+            drawdown=Decimal("0"),
+        )
+    )
+    session.commit()
+    seen: dict[str, object] = {}
+    real_run = paper_report.bt_engine.run
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(paper_report.bt_engine, "run", spy)
+    gap = paper_report.tracking_gap(session, "paper", WEEK_START, WEEK_END)
+    assert gap["paper_return"] == pytest.approx(0.10)
+    assert seen["start"] == "2026-11-18"
+    assert seen["end"] == "2026-11-22"
+    assert gap["gap_points"] == pytest.approx(10.0)
+
+
 def test_gap_none_when_a_day_lacks_candles(session: Session) -> None:
     _daily_candles(session)
     _snapshots(session, Decimal("5000"), Decimal("5500"))

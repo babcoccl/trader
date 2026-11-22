@@ -152,6 +152,12 @@ def test_due_week_waits_for_digest_time(session: Session) -> None:
     )
 
 
+def test_due_week_catches_up_before_a_later_days_cutoff(session: Session) -> None:
+    # Tuesday 00:10 is before that day's 00:30, but Monday's report is due.
+    tuesday = FrozenClock(datetime(2026, 11, 24, 0, 10, tzinfo=UTC))
+    assert paper_report.due_week(session, tuesday) == (WEEK_START, WEEK_END)
+
+
 def test_due_week_marks_done_and_midweek_build_dedupes(session: Session) -> None:
     paper_report.build(session, WEEK_START, WEEK_END)
     session.commit()

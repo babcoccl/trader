@@ -110,9 +110,10 @@ def due_week(session: Session, clock: Clock) -> tuple[datetime, datetime] | None
     now = clock.now()
     hour, minute = digest._digest_time(session)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if now < today + timedelta(hours=hour, minutes=minute):
-        return None
     end = today - timedelta(days=today.weekday())  # Monday 00:00
+    # Cutoff is Monday's digest time, so a later-weekday restart catches up.
+    if now < end + timedelta(hours=hour, minutes=minute):
+        return None
     start = end - timedelta(days=7)
     if _report_exists(session, start, end):
         return None

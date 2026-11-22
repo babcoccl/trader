@@ -74,21 +74,15 @@ TRADER_DASHBOARD_PASSWORD=choose-something
 Login is refused (HTTP 503) while this is empty. `.env` is ignored by
 Git; never commit it.
 
-### 3.2 Build, create the tables, start
-
-The tables are **not** created automatically (review finding 3, fixed by
-spec R3). Until R3 is merged, run these three commands in this order on
-a new database:
+### 3.2 Build and start
 
 ```
 docker compose up -d --build
-docker compose exec api alembic upgrade head
-docker compose up -d
 ```
 
-The first command starts everything, but `collector`, `engine` and
-`executor` exit because the tables do not exist yet. The second creates
-the tables. The third starts the services that exited.
+A `migrate` service creates the tables (`alembic upgrade head`) before
+the other services start, then exits. In `docker compose ps -a` it
+shows `exited (0)`, which is expected.
 
 ### 3.3 Check it is up
 
@@ -104,10 +98,11 @@ Invoke-RestMethod http://localhost:8000/health
 docker compose ps
 ```
 
-Expected: `{"status":"ok","mode":"paper"}` and seven services with state
-`running`. `/health` only says the API process is alive; it stays `ok`
-even when the tables are missing, so always look at `docker compose ps`
-as well.
+Expected: `{"status":"ok","mode":"paper"}` and the seven services
+running (`docker compose ps -a` also shows `migrate` as `exited (0)`,
+which is expected). `/health` only says the API process is alive; it
+stays `ok` even when the tables are missing, so always look at
+`docker compose ps` as well.
 
 Open the dashboard at <http://localhost:3000> and log in with the
 password from `.env`.
@@ -288,7 +283,7 @@ from the command line").
 | Start again | `docker compose up -d` | Kept. The collector refills missed candles; the executor checks stops at once. |
 | Restart one service | `docker compose restart engine` | Kept. |
 | Follow logs | `docker compose logs -f --tail 50 executor` | None. |
-| Upgrade | `git pull`, then `docker compose up -d --build`, then `docker compose exec api alembic upgrade head`, then `docker compose up -d` | Kept. |
+| Upgrade | `git pull`, then `docker compose up -d --build` | Kept. The `migrate` service applies new migrations during `up`. |
 | Start over with an empty paper account | `docker compose down -v`, then section 3.2 | **Deleted.** |
 
 While the stack is stopped nothing is checked: no decisions, no fills
@@ -334,15 +329,13 @@ upgrade, restore, alarms). In short:
 git clone https://github.com/babcoccl/trader.git /opt/trader && cd /opt/trader
 printf 'TRADER_DASHBOARD_PASSWORD=<password>\nTRADER_LAN_ADDRESS=<LAN IP of the box>\n' > .env
 docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml exec api alembic upgrade head
 ```
 
 ```powershell
-# Windows PowerShell, run from the desktop over ssh (the same four steps)
+# Windows PowerShell, run from the desktop over ssh (the same three steps)
 ssh trader-box "git clone https://github.com/babcoccl/trader.git /opt/trader"
 ssh trader-box "cd /opt/trader && printf 'TRADER_DASHBOARD_PASSWORD=%s\nTRADER_LAN_ADDRESS=%s\n' '<password>' '<LAN IP of the box>' > .env"
 ssh trader-box "cd /opt/trader && docker compose -f docker-compose.prod.yml up -d --build"
-ssh trader-box "cd /opt/trader && docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head"
 ```
 
 Differences from the desktop stack: services restart by themselves
@@ -402,7 +395,7 @@ expiry, 2% price-move void) are fixed in code on purpose.
 
 | Symptom | Cause | What to do |
 |---|---|---|
-| `docker compose ps` shows `collector`, `engine` or `executor` as exited; logs say `relation "..." does not exist` | Tables were not created. | `docker compose exec api alembic upgrade head`, then `docker compose up -d`. |
+| `docker compose up -d` ends with `service "migrate" didn't complete successfully: exit 1`; `docker compose ps -a` shows `migrate` as `Exited (1)` and `api`, `collector`, `engine`, `executor`, `watchdog`, `web` as `Created` (never started) | Applying the migrations failed, so nothing that needs the tables was started. | `docker compose logs migrate`; fix the reported error, then `docker compose up -d`. |
 | Login returns 503 "dashboard password is not configured" | `TRADER_DASHBOARD_PASSWORD` is empty. | Set it in `.env`, then `docker compose up -d`. |
 | Every API call returns 401 after a restart | Logins are kept in memory. | Log in again. |
 | Status strip red, `candle_stale` or `intraday_stale` right after a start | Initial download still running. | Wait 5 minutes. If it stays, read `docker compose logs collector`. |

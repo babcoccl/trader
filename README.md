@@ -30,7 +30,6 @@ Requires Python 3.12, Docker and Docker Compose. Every command is given for a Un
 | Purpose | Linux / macOS | Windows PowerShell |
 |---|---|---|
 | Start stack | `docker compose up -d` | `docker compose up -d` |
-| Create tables (new database, after the first start) | `docker compose exec api alembic upgrade head && docker compose up -d` | `docker compose exec api alembic upgrade head; docker compose up -d` |
 | Stop stack | `docker compose down` | `docker compose down` |
 | Install | `python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"` | `python -m venv .venv; .venv\Scripts\Activate.ps1; pip install -e ".[dev]"` |
 | Test database | `docker compose exec db psql -U trader -c "create database trader_test" && export TEST_DATABASE_URL=postgresql+psycopg://trader:trader@localhost:5432/trader_test` | `docker compose exec db psql -U trader -c "create database trader_test"; $env:TEST_DATABASE_URL = "postgresql+psycopg://trader:trader@localhost:5432/trader_test"` |
@@ -38,6 +37,8 @@ Requires Python 3.12, Docker and Docker Compose. Every command is given for a Un
 | Migrate | `alembic upgrade head` | `alembic upgrade head` |
 | Health check | `curl http://localhost:8000/health` | `Invoke-RestMethod http://localhost:8000/health` |
 | Pre-commit hooks | `pre-commit install` | `pre-commit install` |
+
+The Compose files run `alembic upgrade head` themselves through a `migrate` service before the other services start; the Migrate row is for a Python environment outside Compose.
 
 Configuration comes from `TRADER_*` environment variables (see `.env.example`). `mode` defaults to `paper`; live order placement additionally requires `TRADER_LIVE_ENABLED=true`.
 

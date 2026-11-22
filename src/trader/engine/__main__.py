@@ -87,6 +87,18 @@ class Engine:
                 )
                 beat(session, SERVICE, "error", str(exc), clock=self._clock)
 
+    def retry_daily(self) -> None:
+        """Re-run the daily cycle while the day has only blocked rows.
+
+        Called every five minutes: a day blocked at 00:05 (missing candle,
+        short data outage) gets its decision minutes later instead of
+        waiting for the next day's run (spec R4).
+        """
+        with self._session() as session:
+            retry = daily_cycle.needs_retry(session, self._clock)
+        if retry:
+            self.run_daily()
+
     def run_intraday(self) -> None:
         with self._session() as session:
             try:
@@ -114,6 +126,14 @@ class Engine:
             "cron",
             hour=0,
             minute=5,
+            coalesce=True,
+            max_instances=1,
+        )
+        scheduler.add_job(
+            self.retry_daily,
+            "cron",
+            minute="*/5",
+            second=40,
             coalesce=True,
             max_instances=1,
         )

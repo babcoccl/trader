@@ -34,6 +34,9 @@ log = logging.getLogger(__name__)
 
 BAND = 0.20
 VOL_TARGET = 0.40
+# How many daily runs one UTC day may make before waiting for the next
+# day's 00:05 job (spec R4): a blocked day retries every 5 minutes.
+MAX_ATTEMPTS = 12
 # Bitstamp market rules until the executor reads them from ``/markets/``
 # (spec 2.4): counter_decimals=2, base_decimals=8 for btcusd and ethusd.
 VENUE_TICK = Decimal("0.01")
@@ -82,6 +85,34 @@ def _existing_today(session: Session, today: datetime) -> list[Decision]:
     if any(r.action not in ("blocked", "error") for r in rows):
         return rows
     return []
+
+
+def needs_retry(session: Session, clock: Clock) -> bool:
+    """Today's daily cycle still owes a decision, so it should run again.
+
+    True only when ``clock.now()`` is at or after 00:05 UTC, today has at
+    least one daily decision row, every one of today's daily rows is
+    ``blocked`` or ``error``, the rows span fewer than ``MAX_ATTEMPTS``
+    distinct runs, and trading is not halted.
+    """
+    now = clock.now()
+    today = _day_start(now)
+    if now < today + timedelta(minutes=5):
+        return False
+    rows = session.execute(
+        select(Decision.action, Decision.ran_at).where(
+            Decision.cycle == "daily",
+            Decision.ran_at >= today,
+            Decision.ran_at < today + timedelta(days=1),
+        )
+    ).all()
+    if not rows:
+        return False
+    if any(action not in ("blocked", "error") for action, _ in rows):
+        return False
+    if len({ran_at for _, ran_at in rows}) >= MAX_ATTEMPTS:
+        return False
+    return not risk_engine.state(session, clock).halted
 
 
 def _finite(x: float) -> float | None:

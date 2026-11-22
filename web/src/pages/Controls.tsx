@@ -13,20 +13,6 @@ interface EditableSpec {
 
 const EDITABLE: EditableSpec[] = [
   {
-    key: "autonomy",
-    label: "Autonomy level",
-    input: "select",
-    options: [{ value: "approve_every_plan", label: "Approve every plan" }],
-    format: (v) => (v === "approve_every_plan" ? "Approve every plan" : String(v)),
-  },
-  {
-    key: "approval_expiry_hours",
-    label: "Approval expiry",
-    input: "number",
-    parse: (raw) => Number(raw),
-    format: (v) => `${v} hours`,
-  },
-  {
     key: "silence_alarm_minutes",
     label: "Silence alarm",
     input: "number",
@@ -163,6 +149,8 @@ export function Controls() {
 
   const settingsByKey = new Map((settings.data ?? []).map((r) => [r.key, r.value]));
   const readOnly: [string, string][] = [
+    ["Autonomy level", "Approve every plan (other levels are not built yet)"],
+    ["Approval expiry", "6 hours (fixed)"],
     ["Drawdown halt", `${(s.halt_at * 100).toFixed(0)}% from peak`],
     ["Sizing", "Volatility target 40%, BTC and ETH only, long only, no leverage"],
     ["Venue and keys", "Bitstamp. API key without withdrawal permission."],

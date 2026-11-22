@@ -386,3 +386,421 @@ At 0.15% / 0.25% fees this idea returned -1.5% to 0.4% a year over 2022-2026, an
 ### 6.1 to 6.4 Local LLM overlay
 
 Written in detail when phase 3 is merged, because they depend on the model benchmark. Fixed constraints now: the LLM service has no database write access outside `llm_events` and `llm_views` tables it owns; article text is untrusted input and is never executed or used as instructions; output is validated against a JSON schema and discarded if invalid; nothing in `strategy/`, `risk/`, `plans/` or `execution/` imports from `llm/` (enforced by an import-linter test); the trading loop runs unchanged when the LLM service is down.
+
+## C. Review fixes after 5.2
+
+These specs close the findings of `docs/REVIEW-5.2.md`. Section A applies
+to every one of them. Use the same template in `docs/KICKOFF.md`, with
+"section C" in place of "section B". Branch `devin/<ID>-<slug>`, for
+example `devin/R1-price-age-from-close`. One spec, one session, one pull
+request. No spec here needs a real API key except R5, and R5 gives the
+key to the owner's own machine, not to the session. No spec places an
+order on any exchange.
+
+Order: R1 first. R3, R4, R6 and R7 are independent (merge one at a
+time). R8 after R1 and R4. R10 and R11 at any time. R2, then R5 and R9,
+before spec 5.4.
+
+### R1 Price age is measured from the candle's close
+
+- **Goal:** a buy plan proposed at 00:05 UTC, or approved at any time
+  while the collector is healthy, passes the staleness check. Today it
+  is always vetoed at 00:05 (review finding 1).
+- **Depends on:** nothing.
+- **Files:** `src/trader/risk/engine.py`, `tests/risk/test_engine.py`,
+  `tests/engine/test_daily_cycle.py`, `tests/plans/test_approval.py`.
+- **Background:** the collector stores only closed 5-minute candles.
+  `risk.state` sets `price_age_seconds[symbol] = now - newest open_time`.
+  At 00:05:00 the newest stored candle opened at 23:55, so the age is
+  600 s plus scheduler delay, and `check_plan` rejects when
+  `age > limits.stale_candle_seconds` (600). `ops/watchdog.py`
+  (`open_time + CANDLE_PERIOD < now - CANDLE_STALE`) and
+  `engine/intraday_cycle.py` (`now - (open + CANDLE_PERIOD)`) already
+  measure from the close.
+- **Steps:**
+  1. In `risk/engine.py` add `CANDLE_PERIOD = timedelta(minutes=5)`.
+  2. In `state`, compute
+     `price_age[symbol] = max(0.0, (now - (newest + CANDLE_PERIOD)).total_seconds())`.
+     Update the docstring of `RiskState.price_age_seconds` to say
+     "seconds since the newest stored 5m candle closed".
+  3. Change nothing else in `risk/`. `Limits.stale_candle_seconds`
+     stays 600. Do not change `check_plan`, `watchdog.py` or
+     `intraday_cycle.py`.
+- **Tests (frozen clock, Postgres test database):**
+  1. Newest 5m candle opened 23:55:00; clock 00:05:00.050: age is
+     300.05 and `check_plan` accepts a buy plan that passes the other
+     checks.
+  2. Same candle; clock 00:15:00.050 (two candles missing): age is
+     900.05 and the buy is rejected with the existing "stale" reason.
+  3. Same candle; clock 00:10:00.000: age is exactly 600 and the buy is
+     accepted (the comparison is `>`).
+  4. No 5m candle for the symbol: rejected (unchanged behaviour).
+  5. Update the existing assertion that expects `120.0` in
+     `tests/risk/test_engine.py` to the new definition.
+  6. `tests/engine/test_daily_cycle.py`: with daily candles through
+     yesterday, 5m candles whose newest opened at 23:55 yesterday, an
+     all-cash portfolio and a target outside the trading band, running
+     the cycle at 00:05:00.050 writes a `plan_proposed` decision and one
+     `pending` plan. This test must fail on the code before step 2.
+  7. `tests/plans/test_approval.py`: newest 5m candle opened at 11:55;
+     approving a pending plan at 12:05:30 succeeds.
+- **Done when:** tests pass, CI is green, and the PR states that test 6
+  was seen failing before the change and passing after.
+- **Out of scope:** changing any limit value, the collector, the
+  watchdog, the schedule.
+- **Note:** this is a correction to how one risk input is measured, made
+  on the owner's instruction through this spec. It is the only change to
+  `risk/` allowed here.
+
+### R2 Bitstamp credentials: documented, passed to two services, never printed
+
+- **Goal:** a key placed in `.env` on the box reaches exactly the
+  services that need it (review finding 2).
+- **Depends on:** nothing. Must be merged before R5 and 5.4.
+- **Files:** `.env.example`, `docker-compose.prod.yml`,
+  `src/trader/core/config.py`, `src/trader/execution/bitstamp.py`,
+  `tests/core/test_config.py` (extend, or create if absent),
+  `tests/execution/test_bitstamp.py`, `docs/VENUE.md`,
+  `docs/RUNBOOK.md`, `docs/SETUP.md`.
+- **Steps:**
+  1. `.env.example`: add, commented out, with one line of explanation
+     each: `# TRADER_BITSTAMP_KEY=`, `# TRADER_BITSTAMP_SECRET=`,
+     `# TRADER_BITSTAMP_BASE_URL=https://www.bitstamp.net/api/v2`. State
+     that paper mode needs none of them and that the key must not have
+     withdrawal permission.
+  2. `docker-compose.prod.yml`: add to the `environment` of `executor`
+     and `watchdog` only:
+     `TRADER_BITSTAMP_KEY: ${TRADER_BITSTAMP_KEY:-}`,
+     `TRADER_BITSTAMP_SECRET: ${TRADER_BITSTAMP_SECRET:-}`,
+     `TRADER_BITSTAMP_BASE_URL: ${TRADER_BITSTAMP_BASE_URL:-https://www.bitstamp.net/api/v2}`.
+     Do not add them to `api`, `collector`, `engine`, `web` or `db`.
+     (`executor` places orders; `watchdog` runs `execution.reconcile` in
+     live mode.) Do not touch `docker-compose.yml`; it is fixed to paper.
+  3. `core/config.py`: change `bitstamp_key` and `bitstamp_secret` to
+     `pydantic.SecretStr` with default `SecretStr("")`.
+  4. `execution/bitstamp.py`, `from_env`: read both with
+     `.get_secret_value()`; keep the existing error when either is empty.
+     No other behaviour change.
+  5. Docs: in `docs/RUNBOOK.md` add a section "Bitstamp API key" (where
+     the two lines go in `.env`, `chmod 600 .env`, restart command, how
+     to confirm with R5's command once it exists, how to remove the key).
+     Update `docs/SETUP.md` section 10 and `docs/VENUE.md` to match.
+     Give PowerShell forms for commands run from the desktop.
+- **Tests:** `Settings(bitstamp_key="k", bitstamp_secret="s")`: neither
+  `repr(settings)` nor `str(settings)` nor `settings.model_dump_json()`
+  contains `"s"` as the secret value (use a distinctive value such as
+  `"sekret-value-123"`); `from_env` passes the real values to the
+  adapter; `from_env` raises `BitstampError` when either is empty.
+- **Done when:** tests pass; CI green; the PR shows the output of
+  `TRADER_DASHBOARD_PASSWORD=x TRADER_LAN_ADDRESS=127.0.0.1 TRADER_BITSTAMP_KEY=dummy-key TRADER_BITSTAMP_SECRET=dummy-secret docker compose -f docker-compose.prod.yml config`
+  (PowerShell: set the four with `$env:NAME = "value"` first) proving
+  the two variables appear under `executor` and `watchdog` and under no
+  other service.
+- **Out of scope:** using a real key; enabling live mode; Docker
+  secrets; any change to how orders are placed.
+
+### R3 Migrations run by themselves
+
+- **Goal:** `docker compose up -d` on an empty database gives a working
+  stack with no manual step (review finding 3).
+- **Depends on:** nothing.
+- **Files:** `docker-compose.yml`, `docker-compose.prod.yml`,
+  `README.md`, `docs/RUNBOOK.md`, `docs/SETUP.md`.
+- **Steps:**
+  1. In both Compose files add a service `migrate`: `build: .`,
+     `environment: TRADER_DATABASE_URL` as the other services,
+     `command: alembic upgrade head`, `depends_on: db: condition:
+     service_healthy`, `restart: "no"`.
+  2. In both files, for `api`, `collector`, `engine`, `executor` and
+     `watchdog`, add to `depends_on`:
+     `migrate: condition: service_completed_successfully`.
+  3. In `docker-compose.yml` only, publish the API and dashboard on the
+     loopback address: `"127.0.0.1:8000:8000"` and `"127.0.0.1:3000:80"`.
+     Leave `docker-compose.prod.yml`'s ports as they are.
+  4. Docs: remove the manual `alembic upgrade head` step from
+     `README.md`, `docs/RUNBOOK.md` (install and upgrade) and
+     `docs/SETUP.md` (sections 3.2, 7, 9 and the troubleshooting row);
+     say that `migrate` exits with code 0 and that this is expected in
+     `docker compose ps -a`.
+- **Tests:** none in pytest. Verification is the "Done when" run.
+- **Done when:** the PR shows, from a clean state
+  (`docker compose down -v`), `docker compose up -d --build` followed
+  two minutes later by `docker compose ps -a`: `migrate` exited (0), the
+  other seven running, and `docker compose logs collector engine
+  executor watchdog` containing no `does not exist`. A second
+  `docker compose up -d` changes nothing. `curl
+  http://localhost:8000/health` (PowerShell: `Invoke-RestMethod
+  http://localhost:8000/health`) returns `{"status":"ok","mode":"paper"}`.
+- **Out of scope:** changing `/health`; changing the Dockerfile;
+  restart policies.
+
+### R4 The daily cycle retries until the day has a decision
+
+- **Goal:** a day whose first daily run was blocked (missing candle on a
+  first start, short data outage at 00:05) gets its decision minutes
+  later, not the next day (review finding 4).
+- **Depends on:** nothing.
+- **Files:** `src/trader/engine/daily_cycle.py`,
+  `src/trader/engine/__main__.py`, `tests/engine/test_daily_cycle.py`,
+  `tests/engine/test_engine_service.py` (create if no engine service
+  test exists; otherwise extend the existing one).
+- **Interfaces:**
+  - `daily_cycle.MAX_ATTEMPTS = 12`.
+  - `daily_cycle.needs_retry(session, clock) -> bool`: `True` only when
+    all hold: `clock.now()` is at or after 00:05 UTC today; today has at least
+    one daily decision row; every one of today's daily rows has action
+    `blocked` or `error`; the number of distinct `ran_at` values among
+    today's daily rows is below `MAX_ATTEMPTS`; trading is not halted
+    (`risk.engine.state(session, clock).halted` is false; pass the clock
+    in, so the signature is `needs_retry(session, clock)`).
+  - `Engine.retry_daily()`: opens a session, and if `needs_retry` is
+    true calls `run_daily()`.
+- **Steps:** add a scheduler job in `Engine.serve`: `self.retry_daily`,
+  `"cron"`, `minute="*/5"`, `second=40`, `coalesce=True`,
+  `max_instances=1`. Do not change `daily_cycle.run`, the 00:05 job or
+  the start-up call.
+- **Tests (frozen clock):** `needs_retry` is false with no rows, false
+  before 00:05, true with only `blocked` rows, false once any row is
+  `none` or `plan_proposed`, false after 12 attempts, false while
+  halted. Service test: first
+  `run_daily` with no candles writes a `blocked` row; candles are then
+  stored; `retry_daily` five minutes later writes normal decisions for
+  both symbols; a further `retry_daily` writes nothing.
+- **Done when:** tests pass; CI green.
+- **Out of scope:** retrying a day in which one asset decided and the
+  other was vetoed; changing reasons or the decision schema.
+
+### R5 Read-only venue check, run by the owner (finishes spec 5.2)
+
+- **Goal:** read the account's balances and actual trading fee with the
+  owner's key, without the key leaving the owner's machine and without
+  any order endpoint being called (review finding 5).
+- **Depends on:** R2. **Needs the owner** for the last step.
+- **Files:** `src/trader/execution/venue_check.py`,
+  `tests/execution/test_venue_check.py`, `docs/VENUE.md`,
+  `docs/SETUP.md`.
+- **Interfaces:** `python -m trader.execution.venue_check [--show-amounts]`.
+  It builds `BitstampAdapter.from_env` and calls only `balances()`,
+  `trading_fee("BTC-USD")`, `trading_fee("ETH-USD")`,
+  `symbol_rules(...)` for both symbols and `venue_open_orders()`. Output,
+  one line each: base URL host; for each of USD, BTC, ETH "present" or
+  "zero" (the amount only with `--show-amounts`); maker and taker fee in
+  percent for each market, followed by "matches the assumed 0.30% /
+  0.40%" or "DIFFERS from the assumed 0.30% / 0.40%" (compare with
+  `backtest.costs.BITSTAMP`); tick, lot and minimum order per market;
+  number of open orders. Exit code 0 on success; 1 with one plain
+  sentence when the key is missing, rejected, or lacks a permission. It
+  never prints the key, the secret, a signature or a nonce.
+- **Steps:** implement and test against recorded fixtures the same way
+  `tests/execution/test_bitstamp.py` does. The session does **not** ask
+  for or receive the key. When CI is green, ask the owner to run, on the
+  box:
+  `docker compose -f docker-compose.prod.yml run --rm executor python -m trader.execution.venue_check`
+  (from the Windows desktop: the same command through `ssh trader-box
+  "cd /opt/trader && ..."`) and to paste the output into the PR. Record
+  the fee read, and the date, in `docs/VENUE.md`.
+- **Tests:** the fake transport records every request; assert that no
+  path containing `buy`, `sell`, `cancel` or `replace` is requested;
+  amounts are absent without `--show-amounts`; a 403 response gives exit
+  code 1 and the sentence; the fee comparison prints "DIFFERS" for a
+  fixture with other rates.
+- **Done when:** tests pass; CI green; the owner's pasted output is in
+  the PR; `docs/VENUE.md` states the account's fee. If the fee differs
+  from 0.30% / 0.40%, stop and tell the owner; do not change any cost
+  constant in this spec.
+- **Out of scope:** placing or cancelling orders; the sandbox test;
+  changing fees in code.
+
+### R6 Tests refuse to run against a working database
+
+- **Goal:** `pytest` cannot erase the paper account (review finding 6).
+- **Depends on:** nothing.
+- **Files:** `tests/conftest.py` (new), `tests/core/test_db_guard.py`
+  (new), `.github/workflows/ci.yml`, `README.md`, `docs/SETUP.md`.
+- **Interfaces:** in `tests/conftest.py`,
+  `check_test_database_url(url: str | None) -> None`: returns when `url`
+  is empty; otherwise parses it with `sqlalchemy.engine.make_url` and
+  raises `ValueError("TEST_DATABASE_URL must name a database ending in
+  _test; got '<name>'")` unless the database name ends with `_test`.
+  `pytest_configure(config)` calls it with
+  `os.environ.get("TEST_DATABASE_URL")` and on `ValueError` calls
+  `pytest.exit(str(error), returncode=2)`.
+- **Steps:** in `ci.yml` rename the service database to `trader_test`
+  and update `TEST_DATABASE_URL` to match. Update the README's
+  Development section and `docs/SETUP.md` section 8 to create and use
+  `trader_test` (both shells).
+- **Tests:** the function accepts `.../trader_test`, accepts `None` and
+  `""`, rejects `.../trader` and `.../postgres`.
+- **Done when:** tests pass; CI green on the renamed database; the PR
+  shows `TEST_DATABASE_URL=postgresql+psycopg://trader:trader@localhost:5432/trader pytest`
+  exiting with code 2 and the message before any test runs.
+- **Out of scope:** moving the per-file fixtures into `conftest.py`.
+
+### R7 Controls that do nothing become read-only
+
+- **Goal:** the Controls screen and the settings API offer only settings
+  that take effect (review finding 7).
+- **Depends on:** nothing.
+- **Files:** `src/trader/api/routes/settings.py`, `tests/api/test_api.py`,
+  `web/src/pages/Controls.tsx`, `web/src/__tests__/Controls.test.tsx`,
+  `docs/API.md`.
+- **Steps:**
+  1. `routes/settings.py`: remove `approval_expiry_hours`, `mode` and
+     `autonomy` from `EDITABLE` and delete their validators. `GET
+     /api/settings` must still return the three keys, with fixed values:
+     `approval_expiry_hours` = 6.0 (import
+     `plans.builder.APPROVAL_EXPIRY` and convert), `mode` =
+     `get_settings().mode`, `autonomy` = `"approve_every_plan"`. A stored
+     row for one of these keys is ignored. `PUT` on them returns the
+     existing 404 "not editable".
+  2. `Controls.tsx`: remove "Autonomy level" and "Approval expiry" from
+     the editable list and show them in the read-only list with the
+     texts "Approve every plan (other levels are not built yet)" and
+     "6 hours (fixed)". "Silence alarm" and "Daily digest" stay editable.
+  3. `docs/API.md`: update the settings section.
+- **Tests:** API: `PUT /api/settings/approval_expiry_hours`, `/mode` and
+  `/autonomy` return 404; `GET` returns the fixed values even when a
+  `settings` row with another value exists. Web: the two rows have no
+  edit button; the two remaining rows still save.
+- **Done when:** tests pass (`pytest`, and `npm test` in `web/`); CI
+  green; a screenshot of Controls is in the PR.
+- **Out of scope:** making expiry configurable (section A fixes it at 6
+  hours); building other autonomy levels; `t_bill_rate`.
+
+### R8 Integration test of the paper pipeline with production timing
+
+- **Goal:** one test that would have caught finding 1: candles stored
+  the way the collector stores them, then daily cycle, approval,
+  executor, fill and stop in sequence (review finding 8).
+- **Depends on:** R1, R4.
+- **Files:** `tests/integration/__init__.py`,
+  `tests/integration/test_paper_pipeline.py`. No change under `src/`.
+  If the test exposes a defect, stop and report it to the owner; do not
+  fix it in this spec.
+- **Steps (one test function per numbered block, shared helpers; frozen
+  clock; Postgres test database; no network):**
+  1. Fixture `market(day)`: daily candles for both symbols from
+     `research/fixtures/` up to and including the day before `day`;
+     5-minute candles for the last two hours before `day` 00:00, the
+     newest opening at 23:55, all `source="bitstamp"`, flat at the last
+     daily close. Choose `day` from the fixture data so that the BTC
+     target weight is above zero (find it in the test by calling the
+     strategy functions; do not hard-code a weight). Seed the paper
+     account with $5,000 through `ops.paper_report.ensure_seeded`.
+  2. Proposal: at `day` 00:05:00.050 call `Engine.run_daily()`. Expect a
+     daily decision `plan_proposed` for BTC-USD and one `pending` plan
+     with `expires_at` six hours later.
+  3. Approval and placement: at 00:06:00 approve at `0.5`. Run
+     `Executor.tick()` at 00:06:30. Expect one open non-shadow limit buy
+     at the price in the plan's `entry_orders`, with half the plan's
+     original quantity.
+  4. Maker fill: store the 00:05 candle (low above the limit: no fill
+     after a tick at 00:10:30), then the 00:10 candle with a low 1%
+     under the order's current limit price (read it from the `orders`
+     row, because the executor re-prices every 5 minutes); tick at
+     00:15:30. Expect one fill with
+     `liquidity="maker"`, fee equal to 0.30% of notional, BTC balance
+     equal to the order quantity, USD reduced by notional plus fee, a
+     new equity snapshot, plan `completed`.
+  5. Market conversion: repeat blocks 2 and 3 in a fresh database, store
+     candles that never trade through for 65 minutes, tick after each.
+     Expect the limit cancelled and a taker fill at a candle open plus
+     slippage, fee 0.40%.
+  6. Emergency stop: after block 4, store a candle whose close is under
+     the plan's `stop_price`; tick. Expect a market sell of the whole
+     position at the taker fee and BTC balance zero.
+  7. Expiry: repeat block 2, advance six hours and one minute, run the
+     approval sweep. Expect the plan `expired` and shadow orders written.
+- **Done when:** the tests pass in CI; the PR states that block 2 was
+  run against the commit before R1 and failed there.
+- **Out of scope:** the live adapter; the web UI; fixing defects found.
+
+### R9 Live emergency stop uses the public ticker
+
+- **Goal:** in live mode the stop compares against a price seconds old,
+  not a stored candle up to six minutes old (review finding 9).
+- **Depends on:** nothing. Must be merged before spec 5.4.
+- **Files:** `src/trader/execution/base.py`,
+  `src/trader/execution/paper.py`, `src/trader/execution/bitstamp.py`,
+  `src/trader/execution/__main__.py`, `tests/execution/test_paper.py`,
+  `tests/execution/test_bitstamp.py` (the executor's own tests are in
+  `tests/execution/test_paper.py`).
+- **Interfaces:** add to `ExecutionAdapter`:
+  `last_price(self, symbol: str) -> Decimal | None`, "a current price for
+  stop checks, or None to use the stored candle". `PaperAdapter` returns
+  `None`. `BitstampAdapter` returns `self.ticker(symbol)["bid"]`, and
+  `None` if that call raises (log a warning; do not raise).
+- **Steps:** in `Executor._emergency_stop`, for each held symbol use
+  `adapter.last_price(symbol)`; when it is `None` fall back to the
+  stored 5-minute close as today. The comparison `price <= stop_price`,
+  the cancel-then-sell sequence and everything else stay as they are.
+  The ticker is a public endpoint and needs no key.
+- **Tests:** a fake adapter whose `last_price` is under the stop while
+  the stored close is above it: the stop fires. `last_price` above the
+  stop while the stored close is under it: the stop does not fire.
+  `last_price` returns `None`: behaviour equals today's (existing tests
+  unchanged). `BitstampAdapter.last_price` returns the bid from a
+  recorded ticker fixture and `None` on a transport error.
+- **Done when:** tests pass; CI green.
+- **Out of scope:** paper mode behaviour; websocket prices; changing
+  the stop distance or the 30-second loop.
+
+### R10 Open orders are visible on Positions
+
+- **Goal:** between approval and first fill the owner can see the
+  resting order (review finding 10).
+- **Depends on:** nothing.
+- **Files:** `src/trader/api/routes/positions.py`,
+  `src/trader/api/schemas.py`, `tests/api/test_api.py`,
+  `web/src/api/client.ts`, `web/src/pages/Positions.tsx`,
+  `web/src/__tests__/Positions.test.tsx`, `web/src/__tests__/fixtures.ts`,
+  `docs/API.md`.
+- **Interfaces:** `GET /api/orders/open` → list of `OpenOrderOut`
+  (`OrderOut` fields plus `symbol: str` and `plan_id: int | None`):
+  every non-shadow order of the current mode whose status is in
+  `RESTING`, oldest first. Authentication as the other routes.
+- **Steps:** on Positions add a card "Open orders" above "Funding
+  watch" with columns Symbol, Side, Type, Price, Quantity, Placed, Plan.
+  Empty state: "No open orders." It is shown whether or not there are
+  positions. Refresh with the same interval as the positions query.
+- **Tests:** API: an open buy for an asset with no holding is returned;
+  a shadow order and a filled order are not. Web: the card renders the
+  fixture row and the empty state.
+- **Done when:** tests pass (`pytest`, `npm test`); CI green; a
+  screenshot is in the PR.
+- **Out of scope:** cancelling orders from the dashboard.
+
+### R11 Weekly reports on the Reports screen
+
+- **Goal:** the weekly paper report is readable where the owner looks
+  for reports, and no report is written for a week before the account
+  existed (review finding 11).
+- **Depends on:** nothing.
+- **Files:** `src/trader/ops/paper_report.py`,
+  `tests/ops/test_paper_report.py`, `src/trader/api/routes/reports.py`,
+  `src/trader/api/schemas.py`, `tests/api/test_api.py`,
+  `web/src/api/client.ts`, `web/src/pages/Reports.tsx`,
+  `web/src/__tests__/Reports.test.tsx`, `web/src/__tests__/fixtures.ts`,
+  `docs/API.md`, `docs/PAPER.md`.
+- **Interfaces:** `GET /api/reports/weekly?limit=12` → list, newest
+  first, of `{week_start, week_end, message, body_md,
+  tracking_gap_points, paper_return, backtest_return, mean_uptime}`
+  read from `events` rows with `kind="weekly_report"` (fields come from
+  the event's `details`).
+- **Steps:**
+  1. `paper_report.due_week`: return `None` when the window's end is at
+     or before the time of the first paper `deposit` event (no account
+     existed during that week), and when no paper deposit exists.
+  2. Reports screen: a card "Weekly paper reports" above "Daily
+     digests", each entry a heading "Week of <start> to <end>" and the
+     `body_md` in the same `<pre>` style as digests. Empty state: "No
+     weekly report yet; the first is written on the first Monday after
+     the account was created."
+- **Tests:** `due_week` returns `None` for a week that ended before the
+  deposit and the window for the first week that contains it; the route
+  returns stored reports newest first and honours `limit`; the web card
+  renders a fixture report and the empty state.
+- **Done when:** tests pass (`pytest`, `npm test`); CI green; a
+  screenshot is in the PR.
+- **Out of scope:** changing what the report computes; the `report`
+  command (it must still write any window asked for).

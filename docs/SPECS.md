@@ -632,8 +632,11 @@ before spec 5.4.
 - **Tests:** the function accepts `.../trader_test`, accepts `None` and
   `""`, rejects `.../trader` and `.../postgres`.
 - **Done when:** tests pass; CI green on the renamed database; the PR
-  shows `TEST_DATABASE_URL=postgresql+psycopg://trader:trader@localhost:5432/trader pytest`
-  exiting with code 2 and the message before any test runs.
+  shows `pytest` exiting with code 2 and the message before any test
+  runs when `TEST_DATABASE_URL` is
+  `postgresql+psycopg://trader:trader@localhost:5432/trader`
+  (Unix: `export TEST_DATABASE_URL=<url>` then `pytest`; PowerShell:
+  `$env:TEST_DATABASE_URL = "<url>"` then `pytest`).
 - **Out of scope:** moving the per-file fixtures into `conftest.py`.
 
 ### R7 Controls that do nothing become read-only

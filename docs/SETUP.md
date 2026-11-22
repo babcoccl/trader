@@ -338,8 +338,11 @@ docker compose -f docker-compose.prod.yml exec api alembic upgrade head
 ```
 
 ```powershell
-# Windows PowerShell, run from the desktop over ssh
-ssh trader-box 'cd /opt/trader && docker compose -f docker-compose.prod.yml up -d --build && docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head'
+# Windows PowerShell, run from the desktop over ssh (the same four steps)
+ssh trader-box "git clone https://github.com/babcoccl/trader.git /opt/trader"
+ssh trader-box "cd /opt/trader && printf 'TRADER_DASHBOARD_PASSWORD=%s\nTRADER_LAN_ADDRESS=%s\n' '<password>' '<LAN IP of the box>' > .env"
+ssh trader-box "cd /opt/trader && docker compose -f docker-compose.prod.yml up -d --build"
+ssh trader-box "cd /opt/trader && docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head"
 ```
 
 Differences from the desktop stack: services restart by themselves

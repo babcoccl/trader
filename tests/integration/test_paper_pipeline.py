@@ -20,12 +20,12 @@ import pytest
 from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
-from trader.backtest.costs import BITSTAMP
 from trader.core.clock import FrozenClock
 from trader.data import candles as candles_mod
 from trader.data.sources.base import SYMBOLS, Candle
 from trader.engine.__main__ import Engine
 from trader.execution.__main__ import Executor
+from trader.execution.base import LIMIT_TTL
 from trader.ledger import accounting
 from trader.ledger.models import (
     AuditLog,
@@ -65,6 +65,11 @@ BTC = "BTC-USD"
 USD_SEED = Decimal("5000")
 FRACTION = Decimal("0.5")
 VOL_TARGET = 0.40
+# Spec section A, written out so a change to the shared cost preset fails here.
+MAKER_FEE = Decimal("0.003")
+TAKER_FEE = Decimal("0.004")
+SLIPPAGE = Decimal("0.0001")
+TICK = Decimal("0.01")
 
 _engine = None
 
@@ -135,14 +140,17 @@ def _flat(
     low: Decimal | None = None,
     close: Decimal | None = None,
 ) -> Candle:
+    """5m candle opening at ``price``; high and low cover open and close."""
+    close = close if close is not None else price
+    low = low if low is not None else min(price, close)
     return Candle(
         symbol=symbol,
         interval="5m",
         open_time=open_time,
         open=price,
-        high=price,
-        low=low if low is not None else price,
-        close=close if close is not None else price,
+        high=max(price, close, low),
+        low=min(low, price, close),
+        close=close,
         volume=Decimal("1"),
         source="bitstamp",
     )
@@ -190,19 +198,13 @@ def _candle_then_tick(
     _tick_at(session, clock, tick_at)
 
 
-def _daily_closes(session: Session, symbol: str) -> pd.Series:
-    df = candles_mod.load(
-        session, symbol, "1d", EPOCH, datetime.max.replace(tzinfo=UTC)
-    )
-    return df["close"]
-
-
-def _pick_day(session: Session) -> datetime:
+def _pick_day(df: pd.DataFrame) -> datetime:
     """Latest fixture decision day where BTC's target is above zero and
     ETH's is zero, so the day proposes exactly one plan. Weights come from
-    the strategy functions on the stored candles — nothing hard-coded."""
-    signals = {s: ensemble.signal(_daily_closes(session, s)) for s in SYMBOLS}
-    vols = {s: sizing.annual_vol(_daily_closes(session, s)) for s in SYMBOLS}
+    the strategy functions on the fixture closes; nothing hard-coded."""
+    closes = {s: df.set_index("date")[f"{s}_close"] for s in SYMBOLS}
+    signals = {s: ensemble.signal(closes[s]) for s in SYMBOLS}
+    vols = {s: sizing.annual_vol(closes[s]) for s in SYMBOLS}
     days = signals[BTC].index
     for i in range(len(days) - 1, 0, -1):
         weights = sizing.target_weights(
@@ -211,7 +213,8 @@ def _pick_day(session: Session) -> datetime:
             vol_target=VOL_TARGET,
         )
         if weights[BTC] > 0 and weights["ETH-USD"] == 0:
-            return (days[i] + timedelta(days=1)).to_pydatetime()
+            day = days[i] + timedelta(days=1)
+            return day.to_pydatetime().replace(tzinfo=UTC)
     raise AssertionError("no fixture day gives BTC a positive target weight")
 
 
@@ -223,8 +226,10 @@ def market(session: Session) -> datetime:
 
     Returns the chosen ``day`` (00:00 UTC)."""
     df = pd.read_csv(FIXTURE, parse_dates=["date"])
+    day = _pick_day(df)
+    history = df[df["date"] < pd.Timestamp(day).tz_localize(None)]
     candles: list[Candle] = []
-    for _, row in df.iterrows():
+    for _, row in history.iterrows():
         open_time = row["date"].to_pydatetime().replace(tzinfo=UTC)
         for symbol in SYMBOLS:
             o = Decimal(str(row[f"{symbol}_open"]))
@@ -242,25 +247,20 @@ def market(session: Session) -> datetime:
                     source="bitstamp",
                 )
             )
-    candles_mod.upsert(session, candles)
-    session.commit()
-
-    day = _pick_day(session)
-    yesterday = pd.Timestamp(day - timedelta(days=1)).tz_localize(None)
-    flat = {
-        symbol: Decimal(str(df.loc[df["date"] == yesterday, f"{symbol}_close"].iloc[0]))
-        for symbol in SYMBOLS
-    }
+    last = history.iloc[-1]
+    assert last["date"] == pd.Timestamp(day - timedelta(days=1)).tz_localize(None)
     # The collector stores only closed candles: at 00:05 the newest 5m
     # candle opened at 23:55 (finding 1).
-    candles_mod.upsert(
-        session,
-        [
-            _flat(symbol, day - timedelta(minutes=5 * (i + 1)), flat[symbol])
-            for symbol in SYMBOLS
-            for i in range(24)
-        ],
-    )
+    candles += [
+        _flat(
+            symbol,
+            day - timedelta(minutes=5 * (i + 1)),
+            Decimal(str(last[f"{symbol}_close"])),
+        )
+        for symbol in SYMBOLS
+        for i in range(24)
+    ]
+    candles_mod.upsert(session, candles, now=day)
     session.commit()
     return day
 
@@ -327,23 +327,39 @@ def _approve_and_place(session: Session, clock: FrozenClock, plan: Plan) -> Orde
     return order
 
 
+def _open_buy(session: Session, plan_id: int) -> Order:
+    """The plan's one working non-shadow buy, as the ``orders`` table has it."""
+    return session.scalars(
+        select(Order).where(
+            Order.plan_id == plan_id,
+            Order.side == "buy",
+            Order.shadow.is_(False),
+            Order.status == "open",
+        )
+    ).one()
+
+
 def _fill_maker(
     session: Session, clock: FrozenClock, day: datetime, order: Order
 ) -> Fill:
     """Spec block 4: a candle that trades through fills the limit as maker."""
     assert order.price is not None
-    # 00:05 candle, low above the limit: no fill.
+    # 00:05 candle wholly above the limit: no fill. It opened before the
+    # order was placed (00:06:30), so the paper adapter also skips it.
     _candle_then_tick(
         session,
         clock,
         day + timedelta(minutes=10, seconds=30),
         day + timedelta(minutes=5),
-        order.price,
-        low=order.price + Decimal("1"),
+        order.price + TICK,
     )
-    assert session.get(Order, order.id).status == "open"
+    assert session.scalar(select(func.count()).select_from(Fill)) == 0
 
-    # 00:10 candle, low 1% under the order's current limit: fills at limit.
+    # 00:10 candle, low 1% under the order's current limit (read from the
+    # orders row: the executor re-prices every 5 minutes): fills at limit.
+    order = _open_buy(session, order.plan_id)
+    assert order.price is not None
+    snapshots_before = session.scalar(select(func.count()).select_from(EquitySnapshot))
     _candle_then_tick(
         session,
         clock,
@@ -357,10 +373,20 @@ def _fill_maker(
     assert fill.liquidity == "maker"
     assert fill.price == order.price
     notional = fill.price * fill.quantity
-    assert fill.fee == notional * Decimal(str(BITSTAMP.maker_fee))
+    assert fill.fee == notional * MAKER_FEE
     assert accounting.positions(session, "paper")["BTC"] == order.quantity
     assert accounting.cash(session, "paper") == USD_SEED - notional - fill.fee
-    assert session.scalar(select(func.count()).select_from(EquitySnapshot)) >= 1
+    # The fill tick wrote a snapshot that includes the fill: BTC marked at
+    # the fill price, so equity is the seed less the fee.
+    assert (
+        session.scalar(select(func.count()).select_from(EquitySnapshot))
+        == (snapshots_before or 0) + 1
+    )
+    snapshot = session.scalars(
+        select(EquitySnapshot).order_by(EquitySnapshot.id.desc()).limit(1)
+    ).one()
+    assert snapshot.time == clock.now()
+    assert abs(snapshot.equity_usd - (USD_SEED - fill.fee)) < Decimal("1e-12")
     plan = session.get(Plan, order.plan_id)
     assert plan is not None and plan.status == "completed"
     return fill
@@ -388,64 +414,113 @@ def test_maker_fill(session: Session, market: datetime) -> None:
 
 def test_market_conversion(session: Session, market: datetime) -> None:
     """Block 5: nothing trades through for 65 minutes; the limit converts
-    to a market order and fills at a candle open plus slippage."""
+    to a market order at the one-hour limit and fills at a candle open plus
+    slippage."""
     clock, plan = _propose(session, market)
     order = _approve_and_place(session, clock, plan)
     price = order.price
     assert price is not None
+    assert plan.decided_at is not None
+    deadline = plan.decided_at + LIMIT_TTL
 
-    # Candles flat at the limit price for 70 minutes: never trade
-    # through. Ticks carry the clock past the one-hour limit TTL, which
-    # cancels the limit and places the market order; the fill needs a
-    # candle opened after the market order was placed.
+    def market_buys() -> list[Order]:
+        return list(
+            session.scalars(
+                select(Order).where(
+                    Order.plan_id == plan.id,
+                    Order.type == "market",
+                    Order.shadow.is_(False),
+                )
+            )
+        )
+
+    # Candles open above the limit and close at it (no re-price), low at
+    # the limit (no trade-through). Open differs from close so the market
+    # fill price shows which one it used.
+    open_price = price + 10 * TICK
     t = market + timedelta(minutes=10)
-    while t <= market + timedelta(minutes=75):
+    while not market_buys():
+        assert t <= market + timedelta(minutes=80), "limit never converted"
         _candle_then_tick(
-            session, clock, t + timedelta(seconds=30), t - timedelta(minutes=5), price
+            session,
+            clock,
+            t + timedelta(seconds=30),
+            t - timedelta(minutes=5),
+            open_price,
+            close=price,
+        )
+        limit = session.get(Order, order.id)
+        assert limit is not None
+        if clock.now() <= deadline:
+            assert limit.status == "open"
+            assert not market_buys()
+        t += timedelta(minutes=5)
+    # Converted on the first tick past the deadline, not earlier or later.
+    assert clock.now() > deadline
+    assert clock.now() - timedelta(minutes=5) <= deadline
+    assert session.get(Order, order.id).status == "cancelled"
+    (market_buy,) = market_buys()
+    assert market_buy.quantity == order.quantity
+    assert session.scalar(select(func.count()).select_from(Fill)) == 0
+
+    # A fill needs a candle opened after the market order was placed: the
+    # next stored candle opened before it, the one after that fills.
+    for _ in range(2):
+        _candle_then_tick(
+            session,
+            clock,
+            t + timedelta(seconds=30),
+            t - timedelta(minutes=5),
+            open_price,
+            close=price,
         )
         t += timedelta(minutes=5)
-    # One more candle: the market order placed at conversion needs a
-    # candle opened after it to fill.
-    _candle_then_tick(
-        session, clock, t + timedelta(seconds=30), t - timedelta(minutes=5), price
-    )
-
-    limit = session.get(Order, order.id)
-    assert limit is not None and limit.status == "cancelled"
-    fill = session.scalars(
-        select(Fill)
-        .join(Order, Fill.order_id == Order.id)
-        .where(Order.plan_id == plan.id, Order.side == "buy")
-    ).one()
+        if t - timedelta(minutes=10) < market_buy.created_at:
+            assert session.scalar(select(func.count()).select_from(Fill)) == 0
+    fill = session.scalars(select(Fill).where(Fill.order_id == market_buy.id)).one()
+    assert session.scalar(select(func.count()).select_from(Fill)) == 1
     assert fill.liquidity == "taker"
-    candle = session.scalars(
-        select(CandleRow).where(
-            CandleRow.symbol == BTC,
-            CandleRow.interval == "5m",
-            CandleRow.open_time == fill.time,
-        )
-    ).one()
-    # Filled at the candle open plus taker slippage.
-    assert fill.price == candle.open * (1 + Decimal(str(BITSTAMP.slippage)))
-    assert fill.fee == fill.price * fill.quantity * Decimal(str(BITSTAMP.taker_fee))
+    assert fill.time == t - timedelta(minutes=10)
+    assert fill.time >= market_buy.created_at
+    assert fill.price == open_price * (1 + SLIPPAGE)
+    assert fill.fee == fill.price * fill.quantity * TAKER_FEE
 
 
 def test_emergency_stop(session: Session, market: datetime) -> None:
-    """Block 6: a stored close under the stop sells the whole position."""
+    """Block 6: a stored close under the stop sells the whole position;
+    a low under the stop with the close above it does not."""
     clock, plan = _propose(session, market)
     order = _approve_and_place(session, clock, plan)
     _fill_maker(session, clock, market, order)
     session.refresh(plan)
-    assert plan.stop_price is not None
+    stop = plan.stop_price
+    assert stop is not None
+    held = accounting.positions(session, "paper")["BTC"]
 
-    crashed = plan.stop_price * Decimal("0.9")
+    # Wick through the stop, close above it: the stop reads the close.
+    _candle_then_tick(
+        session,
+        clock,
+        market + timedelta(minutes=20, seconds=30),
+        market + timedelta(minutes=15),
+        stop + TICK,
+        low=stop * Decimal("0.9"),
+        close=stop + TICK,
+    )
+    assert accounting.positions(session, "paper")["BTC"] == held
+    assert (
+        session.scalars(select(Event).where(Event.kind == "emergency_stop")).first()
+        is None
+    )
+
+    # Opens above the stop, closes under it: sell everything at the close.
+    crashed = stop * Decimal("0.9")
     _candle_then_tick(
         session,
         clock,
         market + timedelta(minutes=25, seconds=30),
         market + timedelta(minutes=20),
-        crashed,
-        low=crashed,
+        stop + TICK,
         close=crashed,
     )
 
@@ -455,8 +530,10 @@ def test_emergency_stop(session: Session, market: datetime) -> None:
         .join(Order, Fill.order_id == Order.id)
         .where(Order.side == "sell", Order.type == "market", Order.shadow.is_(False))
     ).one()
+    assert sell.quantity == held
     assert sell.liquidity == "taker"
-    assert sell.fee == sell.price * sell.quantity * Decimal(str(BITSTAMP.taker_fee))
+    assert sell.price == crashed * (1 - SLIPPAGE)
+    assert sell.fee == sell.price * sell.quantity * TAKER_FEE
     assert (
         session.scalars(select(Event).where(Event.kind == "emergency_stop")).first()
         is not None

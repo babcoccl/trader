@@ -143,6 +143,16 @@ def test_seed_skips_in_live_mode(session: Session, monkeypatch) -> None:
         get_settings.cache_clear()
 
 
+def test_due_week_skips_in_live_mode(session: Session, monkeypatch) -> None:
+    _daily_candles(session)
+    monkeypatch.setenv("TRADER_MODE", "live")
+    get_settings.cache_clear()
+    try:
+        assert paper_report.due_week(session, FrozenClock(MONDAY_30)) is None
+    finally:
+        get_settings.cache_clear()
+
+
 def test_due_week_waits_for_digest_time(session: Session) -> None:
     _daily_candles(session)
     early = FrozenClock(datetime(2026, 11, 23, 0, 29, tzinfo=UTC))

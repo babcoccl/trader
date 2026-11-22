@@ -22,9 +22,11 @@ made yourself) means it does nothing.
 
 ## The weekly report
 
-The watchdog writes one `weekly_report` event every week, on Monday at
-`digest_time_utc` (default 00:30 UTC), covering the Monday–Sunday week
-just ended. To write one on demand for an arbitrary window:
+In paper mode the watchdog writes one `weekly_report` event every week,
+on Monday at `digest_time_utc` (default 00:30 UTC), covering the
+Monday–Sunday week just ended. It waits for Sunday's daily candle, for at
+most a day, and catches up after a restart on any later weekday. The
+report always reads the paper account. To write one on demand for an arbitrary window:
 
 ```
 # Linux / macOS

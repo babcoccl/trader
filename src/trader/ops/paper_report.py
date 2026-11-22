@@ -108,6 +108,8 @@ def due_week(session: Session, clock: Clock) -> tuple[datetime, datetime] | None
     closed; a ``weekly_report`` event carrying that week's start and end
     dates marks it done.
     """
+    if get_settings().mode != "paper":
+        return None
     now = clock.now()
     hour, minute = digest._digest_time(session)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -287,7 +289,7 @@ def _approval_times(
 
 def build(session: Session, start: datetime, end: datetime) -> Event:
     """Write the ``weekly_report`` event covering [start, end)."""
-    mode = get_settings().mode
+    mode = "paper"
     gap = tracking_gap(session, mode, start, end)
     up = _uptime(session, start, end)
     eq_start, eq_end = _window_equity(session, mode, start, end)

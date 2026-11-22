@@ -6,6 +6,7 @@ Equity history lives in ``equity_snapshots``.
 """
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from decimal import Decimal
 from typing import Protocol
 
@@ -25,6 +26,7 @@ from trader.ledger.models import (
 from trader.risk.limits import Limits
 
 EPS = 1e-9
+CANDLE_PERIOD = timedelta(minutes=5)
 
 
 class PortfolioView(Protocol):
@@ -56,7 +58,7 @@ class RiskState:
     halt_reason: str | None
     high_water_mark: Decimal | None
     drawdown: float
-    # Seconds since the newest closed 5m candle opened, per symbol.
+    # Seconds since the newest stored 5m candle closed, per symbol.
     price_age_seconds: dict[str, float]
 
 
@@ -118,7 +120,9 @@ def state(session: Session, clock: Clock | None = None) -> RiskState:
             )
         ).one()
         if newest is not None:
-            price_age[symbol] = (now - newest).total_seconds()
+            price_age[symbol] = max(
+                0.0, (now - (newest + CANDLE_PERIOD)).total_seconds()
+            )
     return RiskState(
         halted=halted,
         halt_reason=str(halt_reason) if halt_reason is not None else None,

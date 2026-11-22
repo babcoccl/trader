@@ -371,6 +371,53 @@ def test_blocked_day_reruns_once_data_arrives(session: Session) -> None:
     assert all(r.action != "blocked" for r in rows)
 
 
+def _add_daily_row(
+    session: Session,
+    ran_at: datetime,
+    action: str = "blocked",
+) -> None:
+    session.add(
+        Decision(
+            cycle="daily",
+            ran_at=ran_at,
+            symbol="BTC-USD",
+            action=action,
+            reason="test row",
+            details={},
+        )
+    )
+    session.flush()
+
+
+def test_needs_retry(session: Session) -> None:
+    """Spec R4: retry only while the day is all blocked, under 12 runs,
+    at or after 00:05, and not halted."""
+    day = datetime(2026, 11, 20, tzinfo=UTC)
+    clock = FrozenClock(day + timedelta(minutes=5))
+    # No rows yet: the 00:05 job has not run, nothing to retry.
+    assert not daily_cycle.needs_retry(session, clock)
+    # Before 00:05 even a blocked row does not trigger a retry.
+    _add_daily_row(session, day + timedelta(minutes=3))
+    early = FrozenClock(day + timedelta(minutes=4))
+    assert not daily_cycle.needs_retry(session, early)
+    # Only blocked rows at 00:05: retry.
+    assert daily_cycle.needs_retry(session, clock)
+    # A real decision ends the retries.
+    _add_daily_row(session, day + timedelta(minutes=10), action="none")
+    assert not daily_cycle.needs_retry(session, clock)
+    session.execute(delete(Decision))
+    # Twelve distinct runs exhaust the day's attempts.
+    for i in range(daily_cycle.MAX_ATTEMPTS):
+        _add_daily_row(session, day + timedelta(minutes=5 + 5 * i))
+    assert not daily_cycle.needs_retry(session, clock)
+    session.execute(delete(Decision))
+    # Halted trading suppresses retries too.
+    _add_daily_row(session, day + timedelta(minutes=5))
+    session.add(Setting(key="risk.halted", value=True, updated_at=func.now()))
+    session.flush()
+    assert not daily_cycle.needs_retry(session, clock)
+
+
 def test_reason_templates(session: Session) -> None:
     """One day with holdings that force a sell decision exercises all shapes."""
     clock = FrozenClock(datetime(2026, 11, 20, 0, 5, tzinfo=UTC))

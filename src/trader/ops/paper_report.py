@@ -181,7 +181,11 @@ def _candle_frames(
         if df.empty:
             return None
         if df["source"].nunique() > 1:
-            df = df[df["source"] == df["source"].value_counts().idxmax()]
+            # Prefer the main feed per day; keep fallback-only days.
+            primary = df["source"].value_counts().idxmax()
+            df = df.assign(alt=df["source"] != primary).sort_values(
+                "alt", kind="stable"
+            )
         df = df[~df.index.duplicated(keep="first")].sort_index()
         frames[symbol] = df
     opens = pd.DataFrame({s: f["open"] for s, f in frames.items()}).dropna()

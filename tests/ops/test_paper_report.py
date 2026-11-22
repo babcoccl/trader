@@ -262,6 +262,33 @@ def test_gap_none_when_a_day_lacks_candles(session: Session) -> None:
     assert gap["gap_points"] is None
 
 
+def test_gap_uses_fallback_only_days(session: Session) -> None:
+    _daily_candles(session)
+    _snapshots(session, Decimal("5000"), Decimal("5500"))
+    day = WEEK_START + timedelta(days=3)
+    session.execute(
+        delete(Candle).where(
+            Candle.symbol == "BTC-USD", Candle.interval == "1d", Candle.open_time == day
+        )
+    )
+    session.add(
+        Candle(
+            symbol="BTC-USD",
+            interval="1d",
+            open_time=day,
+            open=Decimal("60000"),
+            high=Decimal("60000"),
+            low=Decimal("60000"),
+            close=Decimal("60000"),
+            volume=Decimal("1"),
+            source="fallback",
+        )
+    )
+    session.commit()
+    gap = paper_report.tracking_gap(session, "paper", WEEK_START, WEEK_END)
+    assert gap["gap_points"] == pytest.approx(10.0)
+
+
 def test_gap_none_without_coverage(session: Session) -> None:
     gap = paper_report.tracking_gap(session, "paper", WEEK_START, WEEK_END)
     assert gap["gap_points"] is None

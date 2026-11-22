@@ -1,5 +1,6 @@
-"""Watchdog service (specs 4.1 and 4.2): one ``watchdog.check`` pass per
-minute, a heartbeat of its own, and the daily digest once it comes due.
+"""Watchdog service (specs 4.1, 4.2 and 5.1): one ``watchdog.check`` pass
+per minute, a heartbeat of its own, the daily digest once it comes due,
+the paper-account seed, and the weekly paper report on Mondays.
 
 Run: ``python -m trader.ops`` (Compose service ``watchdog``).
 """
@@ -19,7 +20,7 @@ from trader.core.config import get_settings
 from trader.core.db import session_scope
 from trader.core.logging import setup as setup_logging
 from trader.ledger.models import Event
-from trader.ops import digest, watchdog
+from trader.ops import digest, paper_report, watchdog
 from trader.ops.heartbeat import beat
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,10 @@ class Watchdog:
             day = digest.due_day(session, self._clock)
             if day is not None:
                 digest.build(session, day)
+            paper_report.ensure_seeded(session, self._clock)
+            week = paper_report.due_week(session, self._clock)
+            if week is not None:
+                paper_report.build(session, *week)
             beat(
                 session,
                 SERVICE,

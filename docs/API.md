@@ -174,12 +174,15 @@ are not editable here.
 
 | Key | Validation | Default |
 |---|---|---|
-| `autonomy` | only `"approve_every_plan"` | `"approve_every_plan"` |
-| `approval_expiry_hours` | 0.5–72 | `6.0` |
 | `silence_alarm_minutes` | 1–1440 | `5` |
 | `digest_time_utc` | `HH:MM` (24h) | `"00:30"` |
 | `t_bill_rate` | 0–1 | `0.0` |
-| `mode` | `paper`/`live`; `live` only when `TRADER_LIVE_ENABLED=true` | `"paper"` |
+
+`GET` also returns three fixed read-only keys — `autonomy`
+(`"approve_every_plan"`), `approval_expiry_hours` (`6.0`, the constant in
+`plans/builder.py`) and `mode` (the `TRADER_MODE` environment value).
+Stored rows for them are ignored and `PUT` on them is `404`: writing them
+never took effect, so they are reported only.
 
 ```json
 // PUT /api/settings/silence_alarm_minutes {"value": 10} -> 200

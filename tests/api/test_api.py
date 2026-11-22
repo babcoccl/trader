@@ -441,7 +441,12 @@ def test_settings(seeded) -> None:
     _login(client)
     rows = client.get("/api/settings").json()
     keys = {r["key"] for r in rows}
-    assert {"autonomy", "silence_alarm_minutes", "mode"} <= keys
+    assert {
+        "autonomy",
+        "silence_alarm_minutes",
+        "mode",
+        "approval_expiry_hours",
+    } <= keys
 
     r = client.put("/api/settings/silence_alarm_minutes", json={"value": 10})
     assert r.status_code == 200
@@ -460,13 +465,28 @@ def test_settings(seeded) -> None:
     assert client.put("/api/settings/bogus", json={"value": 1}).status_code == 404
 
 
-def test_mode_live_rejected_without_flag(seeded) -> None:
-    client, _, _ = seeded
+def test_fixed_settings_not_editable(seeded) -> None:
+    client, _, engine = seeded
     _login(client)
-    r = client.put("/api/settings/mode", json={"value": "live"})
-    assert r.status_code == 422
-    r = client.put("/api/settings/mode", json={"value": "paper"})
-    assert r.status_code == 200
+    for key, value in [
+        ("mode", "paper"),
+        ("autonomy", "approve_every_plan"),
+        ("approval_expiry_hours", 12),
+    ]:
+        r = client.put(f"/api/settings/{key}", json={"value": value})
+        assert r.status_code == 404
+
+    # Stored rows for the fixed keys are ignored: GET reports the code-fixed
+    # values, not whatever was saved before they became read-only.
+    with Session(engine) as s:
+        s.merge(Setting(key="mode", value="live", updated_at=NOW))
+        s.merge(Setting(key="autonomy", value="fully_autonomous", updated_at=NOW))
+        s.merge(Setting(key="approval_expiry_hours", value=24, updated_at=NOW))
+        s.commit()
+    rows = {r["key"]: r["value"] for r in client.get("/api/settings").json()}
+    assert rows["mode"] == "paper"
+    assert rows["autonomy"] == "approve_every_plan"
+    assert rows["approval_expiry_hours"] == 6.0
 
 
 def test_controls(seeded) -> None:

@@ -123,9 +123,33 @@ describe("Controls", () => {
 
     expect(putSettingMock).toHaveBeenCalledWith("silence_alarm_minutes", 10);
     expect(await screen.findByText(/10 minutes/)).toBeInTheDocument();
+
+    // Daily digest, the other editable row, saves the same way.
+    putSettingMock.mockResolvedValue({
+      key: "digest_time_utc",
+      value: "06:15",
+      updated_at: "2026-11-21T12:05:00Z",
+    });
+    const digestRow = screen.getByText("Daily digest").closest("tr")!;
+    await userEvent.click(
+      Array.from(digestRow.querySelectorAll("button")).find(
+        (b) => b.textContent === "Edit",
+      )!,
+    );
+    const digestInput = screen.getByLabelText("Daily digest value");
+    await userEvent.clear(digestInput);
+    await userEvent.type(digestInput, "06:15");
+    settingsMock.mockResolvedValue(
+      defaultSettings().map((s) =>
+        s.key === "digest_time_utc" ? { ...s, value: "06:15" } : s,
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(putSettingMock).toHaveBeenCalledWith("digest_time_utc", "06:15");
+    expect(await screen.findByText(/06:15 UTC/)).toBeInTheDocument();
   });
 
-  it("shows read-only limits and the autonomy select has only approve-every-plan", async () => {
+  it("shows read-only limits; autonomy and approval expiry have no edit button", async () => {
     statusMock.mockResolvedValue(makeStatus());
     settingsMock.mockResolvedValue(defaultSettings());
     renderControls();
@@ -136,10 +160,14 @@ describe("Controls", () => {
     expect(screen.getByText(/Bitstamp/)).toBeInTheDocument();
     expect(screen.getByText("paper")).toBeInTheDocument();
 
-    const row = screen.getByText("Autonomy level").closest("tr")!;
-    await userEvent.click(row.querySelector("button")!);
-    const select = screen.getByLabelText("Autonomy level value");
-    expect(select.querySelectorAll("option")).toHaveLength(1);
-    expect(select).toHaveValue("approve_every_plan");
+    const autonomyRow = screen.getByText("Autonomy level").closest("tr")!;
+    expect(autonomyRow).toHaveTextContent(
+      "Approve every plan (other levels are not built yet)",
+    );
+    expect(autonomyRow.querySelector("button")).toBeNull();
+
+    const expiryRow = screen.getByText("Approval expiry").closest("tr")!;
+    expect(expiryRow).toHaveTextContent("6 hours (fixed)");
+    expect(expiryRow.querySelector("button")).toBeNull();
   });
 });

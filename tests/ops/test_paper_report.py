@@ -144,12 +144,22 @@ def test_seed_skips_in_live_mode(session: Session, monkeypatch) -> None:
 
 
 def test_due_week_waits_for_digest_time(session: Session) -> None:
+    _daily_candles(session)
     early = FrozenClock(datetime(2026, 11, 23, 0, 29, tzinfo=UTC))
     assert paper_report.due_week(session, early) is None
     assert paper_report.due_week(session, FrozenClock(MONDAY_30)) == (
         WEEK_START,
         WEEK_END,
     )
+
+
+def test_due_week_waits_for_sundays_candle(session: Session) -> None:
+    session.add(Setting(key="digest_time_utc", value="00:00", updated_at=WEEK_START))
+    session.commit()
+    midnight = FrozenClock(WEEK_END)
+    assert paper_report.due_week(session, midnight) is None
+    _daily_candles(session)
+    assert paper_report.due_week(session, midnight) == (WEEK_START, WEEK_END)
 
 
 def test_due_week_catches_up_before_a_later_days_cutoff(session: Session) -> None:
@@ -164,7 +174,8 @@ def test_due_week_marks_done_and_midweek_build_dedupes(session: Session) -> None
     clock = FrozenClock(MONDAY_30)
     assert paper_report.due_week(session, clock) is None
     # A week later the next window is due.
-    later = FrozenClock(MONDAY_30 + timedelta(days=7))
+    # Next Tuesday: due even though that Sunday's candle never arrived.
+    later = FrozenClock(MONDAY_30 + timedelta(days=8))
     assert paper_report.due_week(session, later) == (
         WEEK_END,
         WEEK_END + timedelta(days=7),
@@ -174,6 +185,7 @@ def test_due_week_marks_done_and_midweek_build_dedupes(session: Session) -> None
 def test_partial_report_does_not_settle_week(session: Session) -> None:
     # An on-demand report covering only part of the week must not stop
     # the watchdog writing the full Monday-to-Monday one.
+    _daily_candles(session)
     paper_report.build(session, WEEK_START, WEEK_START + timedelta(days=3))
     session.commit()
     assert paper_report.due_week(session, FrozenClock(MONDAY_30)) == (

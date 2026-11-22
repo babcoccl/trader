@@ -37,6 +37,7 @@ from trader.data import candles as candles_mod
 from trader.data.sources.base import SYMBOLS
 from trader.ledger import accounting
 from trader.ledger.models import (
+    Candle,
     EquitySnapshot,
     Event,
     Heartbeat,
@@ -117,7 +118,21 @@ def due_week(session: Session, clock: Clock) -> tuple[datetime, datetime] | None
     start = end - timedelta(days=7)
     if _report_exists(session, start, end):
         return None
+    # The collector stores Sunday's candle just after midnight; wait for it
+    # (at most a day) so an early digest time does not lock in a report
+    # without a tracking gap.
+    if now < end + timedelta(days=1) and not _last_day_collected(session, end):
+        return None
     return start, end
+
+
+def _last_day_collected(session: Session, end: datetime) -> bool:
+    symbols = session.scalar(
+        select(func.count(func.distinct(Candle.symbol))).where(
+            Candle.interval == "1d", Candle.open_time == end - timedelta(days=1)
+        )
+    )
+    return (symbols or 0) >= len(SYMBOLS)
 
 
 def _window_equity(

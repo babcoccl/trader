@@ -30,6 +30,61 @@ function FundingWatch() {
   );
 }
 
+function OpenOrders({ onPlan }: { onPlan: (id: number) => void }) {
+  const orders = useQuery({ queryKey: ["openOrders"], queryFn: api.openOrders });
+  if (orders.isLoading) return <p className="muted">Loading open orders…</p>;
+  if (orders.isError || !orders.data)
+    return <p className="muted">Could not load open orders.</p>;
+  return (
+    <div className="card">
+      <div className="card__title">Open orders</div>
+      {orders.data.length === 0 ? (
+        <p className="muted">No open orders.</p>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Type</th>
+                <th>Price</th>
+                <th>Quantity</th>
+                <th>Placed</th>
+                <th>Plan</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.data.map((o) => (
+                <tr key={o.id}>
+                  <td>{o.symbol}</td>
+                  <td>{o.side}</td>
+                  <td>{o.type}</td>
+                  <td>{o.price ? usd(o.price) : "market"}</td>
+                  <td>{o.quantity}</td>
+                  <td>{o.created_at.slice(0, 16).replace("T", " ")}Z</td>
+                  <td>
+                    {o.plan_id === null ? (
+                      "—"
+                    ) : (
+                      <button
+                        className="link-button"
+                        onClick={() => onPlan(o.plan_id as number)}
+                      >
+                        plan {o.plan_id}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PlanPanel({ id, onClose }: { id: number; onClose: () => void }) {
   const plan = useQuery({ queryKey: ["plan", id], queryFn: () => api.plan(id) });
   if (plan.isLoading) return <p className="muted">Loading plan…</p>;
@@ -146,6 +201,9 @@ export function Positions() {
             </table>
           </div>
         )}
+      </div>
+      <OpenOrders onPlan={setPlanId} />
+      <div className="card">
         <FundingWatch />
       </div>
       {planId !== null ? <PlanPanel id={planId} onClose={() => setPlanId(null)} /> : null}

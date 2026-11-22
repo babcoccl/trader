@@ -270,10 +270,12 @@ def test_routes_require_login(seeded) -> None:
         "/api/plans",
         "/api/plans/1",
         "/api/positions",
+        "/api/orders/open",
         "/api/activity",
         "/api/funding",
         "/api/reports/equity",
         "/api/reports/summary",
+        "/api/reports/weekly",
         "/api/digests",
         "/api/settings",
         "/api/stream",
@@ -420,6 +422,99 @@ def test_activity(seeded) -> None:
     assert [r["kind"] for r in client.get("/api/activity?kind=fill").json()] == ["fill"]
     hit = client.get("/api/activity?q=nothing%20to%20do").json()
     assert len(hit) == 1 and hit[0]["kind"] == "decision"
+
+
+def test_open_orders(seeded) -> None:
+    client, ids, engine = seeded
+    _login(client)
+    with Session(engine) as s:
+        # A resting buy for an asset with no holding: invisible on
+        # /api/positions until the first fill, listed here (spec R10).
+        s.add(
+            Order(
+                plan_id=ids["pending_plan_id"],
+                venue="paper",
+                client_order_id=f"{ids['pending_plan_id']}-1",
+                symbol="ETH-USD",
+                side="buy",
+                type="limit",
+                price=Decimal("2900"),
+                quantity=Decimal("0.1"),
+                status="open",
+                mode="paper",
+                shadow=False,
+            )
+        )
+        # Shadow and non-resting orders are excluded; the filled BTC
+        # order from the seed covers "filled".
+        s.add(
+            Order(
+                plan_id=ids["pending_plan_id"],
+                venue="paper",
+                client_order_id="shadow-1",
+                symbol="ETH-USD",
+                side="buy",
+                type="limit",
+                price=Decimal("2900"),
+                quantity=Decimal("0.1"),
+                status="open",
+                mode="paper",
+                shadow=True,
+            )
+        )
+        s.commit()
+    rows = client.get("/api/orders/open").json()
+    assert [r["client_order_id"] for r in rows] == [f"{ids['pending_plan_id']}-1"]
+    assert rows[0]["symbol"] == "ETH-USD"
+    assert rows[0]["plan_id"] == ids["pending_plan_id"]
+    assert rows[0]["status"] == "open"
+
+
+def test_weekly_reports(seeded) -> None:
+    client, _, engine = seeded
+    _login(client)
+    details = {
+        "week_start": "2026-11-09",
+        "week_end": "2026-11-15",
+        "body_md": "# Weekly paper report\n",
+        "tracking_gap_points": 1.5,
+        "paper_return": 0.02,
+        "backtest_return": 0.005,
+        "mean_uptime": 0.99,
+    }
+    with Session(engine) as s:
+        s.add(
+            Event(
+                time=NOW - timedelta(days=14),
+                kind="weekly_report",
+                severity="info",
+                message="report A",
+                details=details,
+            )
+        )
+        s.add(
+            Event(
+                time=NOW - timedelta(days=7),
+                kind="weekly_report",
+                severity="info",
+                message="report B",
+                details={
+                    **details,
+                    "week_start": "2026-11-16",
+                    "week_end": "2026-11-22",
+                },
+            )
+        )
+        s.commit()
+    rows = client.get("/api/reports/weekly").json()
+    assert [r["message"] for r in rows] == ["report B", "report A"]
+    assert rows[0]["week_start"] == "2026-11-16"
+    assert rows[0]["tracking_gap_points"] == 1.5
+    assert rows[0]["paper_return"] == 0.02
+    assert rows[0]["backtest_return"] == 0.005
+    assert rows[0]["mean_uptime"] == 0.99
+    only = client.get("/api/reports/weekly?limit=1").json()
+    assert [r["week_start"] for r in only] == ["2026-11-16"]
 
 
 def test_reports(seeded) -> None:

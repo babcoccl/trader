@@ -12,13 +12,26 @@ from sqlalchemy.orm import Session
 
 from trader.api.auth import AuthRequired
 from trader.api.routes import SessionDep, latest_prices
-from trader.api.schemas import DigestOut, EquityPoint, SummaryOut, VetoScorecard
+from trader.api.schemas import (
+    DigestOut,
+    EquityPoint,
+    SummaryOut,
+    VetoScorecard,
+    WeeklyReportOut,
+)
 from trader.backtest import engine as bt_engine
 from trader.backtest.costs import BITSTAMP
 from trader.core.config import get_settings
 from trader.data import candles as candles_mod
 from trader.data.sources.base import SYMBOLS
-from trader.ledger.models import Digest, EquitySnapshot, Fill, Order, Plan
+from trader.ledger.models import (
+    Digest,
+    EquitySnapshot,
+    Event,
+    Fill,
+    Order,
+    Plan,
+)
 
 router = APIRouter(dependencies=[AuthRequired])
 
@@ -213,6 +226,34 @@ def summary(session: Session = SessionDep) -> SummaryOut:
         vetoes=_veto_scorecard(session, mode),
         paper_vs_backtest_gap_pp=_backtest_gap(session, snaps),
     )
+
+
+@router.get("/api/reports/weekly", response_model=list[WeeklyReportOut])
+def weekly_reports(
+    limit: Annotated[int, Query(ge=1, le=104)] = 12,
+    session: Session = SessionDep,
+) -> list[WeeklyReportOut]:
+    """Weekly paper reports, newest first (spec R11). Fields come from
+    the ``weekly_report`` event's ``details``."""
+    rows = session.scalars(
+        select(Event)
+        .where(Event.kind == "weekly_report")
+        .order_by(Event.time.desc(), Event.id.desc())
+        .limit(limit)
+    ).all()
+    return [
+        WeeklyReportOut(
+            week_start=e.details["week_start"],
+            week_end=e.details["week_end"],
+            message=e.message,
+            body_md=e.details.get("body_md", ""),
+            tracking_gap_points=e.details.get("tracking_gap_points"),
+            paper_return=e.details.get("paper_return"),
+            backtest_return=e.details.get("backtest_return"),
+            mean_uptime=e.details.get("mean_uptime"),
+        )
+        for e in rows
+    ]
 
 
 @router.get("/api/digests", response_model=list[DigestOut])

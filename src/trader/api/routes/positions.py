@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from trader.api.auth import AuthRequired
 from trader.api.routes import SessionDep, latest_prices, order_out
-from trader.api.schemas import PositionOut
+from trader.api.schemas import OpenOrderOut, PositionOut
 from trader.core.config import get_settings
 from trader.ledger import accounting
 from trader.ledger.models import Order, Plan
@@ -15,6 +15,32 @@ router = APIRouter(dependencies=[AuthRequired])
 
 RESTING = ("new", "open", "partially_filled")
 LIVE_STOP_STATUSES = ("pending", "approved", "completed")
+
+
+@router.get("/api/orders/open", response_model=list[OpenOrderOut])
+def open_orders(session: Session = SessionDep) -> list[OpenOrderOut]:
+    """Resting orders of the current mode, oldest first (spec R10).
+
+    Unlike ``/api/positions`` this does not require a holding, so an
+    approved-but-unfilled buy is visible between approval and first fill.
+    """
+    rows = session.scalars(
+        select(Order)
+        .where(
+            Order.mode == get_settings().mode,
+            Order.status.in_(RESTING),
+            Order.shadow.is_(False),
+        )
+        .order_by(Order.id)
+    ).all()
+    return [
+        OpenOrderOut(
+            **order_out(o).model_dump(),
+            symbol=o.symbol,
+            plan_id=o.plan_id,
+        )
+        for o in rows
+    ]
 
 
 @router.get("/api/positions", response_model=list[PositionOut])

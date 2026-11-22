@@ -37,8 +37,11 @@ python -m trader.ops.paper_report report 2026-11-16 2026-11-23
 
 (`end` is exclusive — the example covers Monday 16th through Sunday
 22nd.) The report lives in the `events` table, so it shows on the
-dashboard's Activity screen and in the log; the Markdown body and all
-numbers are in the event's `details`.
+dashboard's Reports screen ("Weekly paper reports"), on the Activity
+screen and in the log; the Markdown body and all numbers are in the
+event's `details`. No report is written for a week that ended at or
+before the account's first deposit — the account did not exist during
+it, so the first report after a fresh start covers the seed week.
 
 Each report contains:
 

@@ -79,6 +79,11 @@ export interface PlanOut {
   created_at: string;
 }
 
+export interface OpenOrderOut extends OrderOut {
+  symbol: string;
+  plan_id: number | null;
+}
+
 export interface PositionOut {
   asset: string;
   symbol: string;
@@ -131,6 +136,17 @@ export interface SummaryOut {
   fees_usd: string;
   vetoes: { plans: number; shadow_fills: number; result_usd: string | null };
   paper_vs_backtest_gap_pp: number | null;
+}
+
+export interface WeeklyReportOut {
+  week_start: string;
+  week_end: string;
+  message: string;
+  body_md: string;
+  tracking_gap_points: number | null;
+  paper_return: number | null;
+  backtest_return: number | null;
+  mean_uptime: number | null;
 }
 
 export interface DigestOut {
@@ -196,6 +212,7 @@ export const api = {
   denyPlan: (id: number) =>
     request<PlanOut>(`/api/plans/${id}/deny`, { method: "POST" }),
   positions: () => request<PositionOut[]>("/api/positions"),
+  openOrders: () => request<OpenOrderOut[]>("/api/orders/open"),
   funding: () => request<FundingOut>("/api/funding"),
   activity: (params?: {
     kind?: string;
@@ -223,6 +240,10 @@ export const api = {
     return request<EquityPoint[]>(`/api/reports/equity${qs ? `?${qs}` : ""}`);
   },
   summary: () => request<SummaryOut>("/api/reports/summary"),
+  weeklyReports: (limit?: number) =>
+    request<WeeklyReportOut[]>(
+      `/api/reports/weekly${limit ? `?limit=${limit}` : ""}`,
+    ),
   digests: (limit?: number) =>
     request<DigestOut[]>(`/api/digests${limit ? `?limit=${limit}` : ""}`),
   settings: () => request<SettingOut[]>("/api/settings"),

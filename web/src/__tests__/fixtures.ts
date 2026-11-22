@@ -1,4 +1,9 @@
-import type { DecisionOut, StatusOut } from "../api/client";
+import type {
+  DecisionOut,
+  OpenOrderOut,
+  StatusOut,
+  WeeklyReportOut,
+} from "../api/client";
 
 function iso(msAgo: number): string {
   return new Date(Date.now() - msAgo).toISOString();
@@ -38,6 +43,39 @@ export function makeDecision(overrides: Partial<DecisionOut> = {}): DecisionOut 
     action: "none",
     reason: "Checked prices. Nothing to do.",
     details: {},
+    ...overrides,
+  };
+}
+
+export function makeOpenOrder(overrides: Partial<OpenOrderOut> = {}): OpenOrderOut {
+  return {
+    id: 9,
+    client_order_id: "5-1",
+    symbol: "ETH-USD",
+    side: "buy",
+    type: "limit",
+    price: "2900",
+    stop_price: null,
+    quantity: "0.1",
+    status: "open",
+    plan_id: 5,
+    created_at: iso(3600_000),
+    ...overrides,
+  };
+}
+
+export function makeWeeklyReport(
+  overrides: Partial<WeeklyReportOut> = {},
+): WeeklyReportOut {
+  return {
+    week_start: "2026-11-09",
+    week_end: "2026-11-15",
+    message: "Weekly paper report 2026-11-09 to 2026-11-15",
+    body_md: "# Weekly paper report — 2026-11-09 to 2026-11-15\n",
+    tracking_gap_points: 1.5,
+    paper_return: 0.02,
+    backtest_return: 0.005,
+    mean_uptime: 0.99,
     ...overrides,
   };
 }

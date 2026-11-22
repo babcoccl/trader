@@ -265,6 +265,17 @@ def test_approve_failing_risk_stays_pending(session: Session) -> None:
     assert plan.status == "pending"
 
 
+def test_approve_minutes_after_candle_mark(session: Session) -> None:
+    """Spec R1: the newest 5m candle opened at 11:55 and closed at 12:00, so
+    approving at 12:05:30 sees fresh price data (age 330s, not 630s)."""
+    _funded(session)  # seeds a 5m candle opened at NOW - 5m
+    plan = _plan(session)
+    approval.approve(
+        session, plan.id, 1.0, "owner", _clock(NOW + timedelta(minutes=5, seconds=30))
+    )
+    assert plan.status == "approved"
+
+
 def test_approve_missing_plan(session: Session) -> None:
     with pytest.raises(approval.ApprovalError):
         approval.approve(session, 999, 1.0, "owner", _clock())

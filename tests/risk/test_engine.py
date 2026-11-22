@@ -250,11 +250,12 @@ def test_halt_and_audit_log(session: Session) -> None:
 
 @NEEDS_DB
 def test_state_reads_candle_age(session: Session) -> None:
+    # The candle closed 120s ago: opened 7 minutes ago, closed 2 minutes ago.
     session.add(
         Candle(
             symbol="BTC-USD",
             interval="5m",
-            open_time=NOW - timedelta(minutes=2),
+            open_time=NOW - timedelta(minutes=7),
             open=Decimal("1"),
             high=Decimal("1"),
             low=Decimal("1"),
@@ -267,6 +268,52 @@ def test_state_reads_candle_age(session: Session) -> None:
     s = risk.state(session, clock=FrozenClock(NOW))
     assert s.price_age_seconds["BTC-USD"] == pytest.approx(120.0)
     assert "ETH-USD" not in s.price_age_seconds
+
+
+@NEEDS_DB
+def test_price_age_from_candle_close(session: Session) -> None:
+    """Spec R1: the collector stores only closed 5m candles, so price age is
+    measured from the newest candle's close, not its open."""
+    session.add(
+        Candle(
+            symbol="BTC-USD",
+            interval="5m",
+            open_time=datetime(2026, 11, 19, 23, 55, tzinfo=UTC),
+            open=Decimal("60000"),
+            high=Decimal("60000"),
+            low=Decimal("60000"),
+            close=Decimal("60000"),
+            volume=Decimal("1"),
+            source="bitstamp",
+        )
+    )
+    session.commit()
+    portfolio = FakePortfolio(Decimal("10000"), {"BTC-USD": 0.0, "ETH-USD": 0.0})
+    buy = FakePlan("BTC-USD", "buy", Decimal("0.5"), Decimal("100"))
+
+    # At the 00:05 scheduler tick the newest stored candle closed at 00:00.
+    s = risk.state(
+        session, clock=FrozenClock(datetime(2026, 11, 20, 0, 5, 0, 50000, tzinfo=UTC))
+    )
+    assert s.price_age_seconds["BTC-USD"] == pytest.approx(300.05)
+    assert risk.check_plan(buy, portfolio, Limits(), s).ok
+
+    # Two candles missing: age is over the 600s limit and the buy is vetoed.
+    s = risk.state(
+        session,
+        clock=FrozenClock(datetime(2026, 11, 20, 0, 15, 0, 50000, tzinfo=UTC)),
+    )
+    assert s.price_age_seconds["BTC-USD"] == pytest.approx(900.05)
+    verdict = risk.check_plan(buy, portfolio, Limits(), s)
+    assert not verdict.ok
+    assert any("stale" in r for r in verdict.reasons)
+
+    # Exactly 600s passes: the comparison is strictly `>`.
+    s = risk.state(
+        session, clock=FrozenClock(datetime(2026, 11, 20, 0, 10, 0, tzinfo=UTC))
+    )
+    assert s.price_age_seconds["BTC-USD"] == pytest.approx(600.0)
+    assert risk.check_plan(buy, portfolio, Limits(), s).ok
 
 
 @NEEDS_DB

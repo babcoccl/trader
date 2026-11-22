@@ -151,6 +151,63 @@ def test_replay_thirty_days(session: Session) -> None:
     assert len(signal_days) == 30
 
 
+def _ramp_daily_closes(session: Session, symbol: str, days: int = 30) -> None:
+    """Force an uptrend so the ensemble target is outside the trading band."""
+    rows = (
+        session.execute(
+            select(CandleRow)
+            .where(CandleRow.symbol == symbol, CandleRow.interval == "1d")
+            .order_by(CandleRow.open_time.desc())
+            .limit(days)
+        )
+        .scalars()
+        .all()
+    )
+    price = rows[-1].close
+    for row in reversed(rows):
+        price = price * Decimal("1.05")
+        row.open = price
+        row.high = price
+        row.low = price
+        row.close = price
+    session.flush()
+
+
+def test_scheduled_run_proposes_pending_plan(session: Session) -> None:
+    """Spec R1: at the 00:05 run the newest stored 5m candle opened at 23:55
+    (the collector stores only closed candles), and the proposed plan must
+    pass the staleness check and land as pending."""
+    _ramp_daily_closes(session, "BTC-USD")
+    candles_mod.upsert(
+        session,
+        [
+            Candle(
+                symbol=symbol,
+                interval="5m",
+                open_time=datetime(2026, 11, 19, 23, 55, tzinfo=UTC),
+                open=Decimal("60000"),
+                high=Decimal("60000"),
+                low=Decimal("60000"),
+                close=Decimal("60000"),
+                volume=Decimal("1"),
+                source="fixture",
+            )
+            for symbol in SYMBOLS
+        ],
+    )
+    session.commit()
+    clock = FrozenClock(datetime(2026, 11, 20, 0, 5, 0, 50000, tzinfo=UTC))
+    rows = daily_cycle.run(
+        session, clock, daily_cycle.CashOnlyPortfolio(Decimal("10000"))
+    )
+    session.commit()
+    btc = next(r for r in rows if r.symbol == "BTC-USD")
+    assert btc.action == "plan_proposed"
+    plans = list(session.scalars(select(Plan).where(Plan.symbol == "BTC-USD")))
+    assert len(plans) == 1
+    assert plans[0].status == "pending"
+
+
 def test_missing_yesterday_candle_blocks(session: Session) -> None:
     yesterday = datetime(2026, 11, 19, tzinfo=UTC)
     session.execute(

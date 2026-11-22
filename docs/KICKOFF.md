@@ -78,3 +78,39 @@ Finish: when every "Done when" line of the spec is true and CI is green, open th
 | 14 | 5.3 after four weeks of paper trading, then 5.4 | no |
 
 Spec 0.2 is optional and can run at any time. Specs 6.1 to 6.4 are not yet written in detail.
+
+## Review fixes after 5.2 (section C)
+
+Use the template above with "section C" in place of "section B" in step 3, and a branch such as `devin/R1-price-age-from-close`. The findings behind each spec are in `docs/REVIEW-5.2.md`.
+
+| Step | Specs | Can run at the same time |
+|---|---|---|
+| 1 | R1 | no. Deploy it before counting the four paper weeks of spec 5.3 |
+| 2 | R3, R4, R6, R7 | yes, but merge them one at a time |
+| 3 | R8 (needs R1, R4) | no |
+| 4 | R10, R11 | yes |
+| 5 | R2, then R5 (needs the owner) and R9 | R5 and R9 yes. All three before spec 5.4 |
+
+### Kickoff prompt for R1
+
+```
+Repository: babcoccl/trader, branch main.
+
+Task: implement spec R1 "Price age is measured from the candle's close" from docs/SPECS.md section C. Implement this spec only.
+
+Before writing any code:
+1. Read AGENTS.md.
+2. Read docs/SPECS.md section A in full.
+3. Read spec R1 in docs/SPECS.md section C, and finding 1 in docs/REVIEW-5.2.md.
+4. Read src/trader/risk/engine.py and the three test files the spec names.
+
+Rules:
+- Work on a branch named devin/R1-price-age-from-close and open one pull request to main.
+- Change only the files the spec lists. In src/trader/risk/ change only how price_age_seconds is computed; do not change any limit value or check_plan.
+- Write test 6 of the spec first and confirm it fails on the current code.
+- Tests need a Postgres database whose name ends in _test, passed as TEST_DATABASE_URL. Never point it at the database named trader.
+- Never use real API keys and never place a real order.
+- If anything in the spec is ambiguous or contradicts the code, stop and ask me before guessing.
+
+Finish: when every "Done when" line of the spec is true and CI is green, open the pull request and stop. In the PR description state what was built, how each "Done when" line was checked, and anything not done. Do not start another spec.
+```

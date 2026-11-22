@@ -2,10 +2,13 @@
 
 A single-user application that trades BTC and ETH spot on a trend-following rule set, asks its owner to approve each plan in a web dashboard, and reports continuously on what it is doing. It runs on the owner's home Ubuntu box.
 
-Nothing is built yet. This repo currently holds the agreed design, the implementation specs, and the research behind them.
+Specs 0.1 to 5.2 are built: the application runs in paper mode on Bitstamp's public prices and needs no exchange account or API key for that. Live trading is not enabled. To install and use it, read `docs/SETUP.md`. Known gaps and the specs that close them are in `docs/REVIEW-5.2.md`.
 
 | Path | What it is |
 |---|---|
+| `docs/SETUP.md` | Setup and usage guide: first start, dashboard, checks, halt and flatten, troubleshooting |
+| `docs/REVIEW-5.2.md` | Review of the application after spec 5.2, with findings |
+| `docs/RUNBOOK.md` | Operating the Ubuntu box: install, backup, restore, alarms |
 | `docs/SPECS.md` | Per-session implementation specs. Section A is the shared conventions |
 | `docs/PLAN.md` | Phases, order of sessions, risks |
 | `docs/DECISIONS.md` | The owner's decisions. Authoritative, with `SPECS.md` |
@@ -18,7 +21,7 @@ Nothing is built yet. This repo currently holds the agreed design, the implement
 
 ## How development proceeds
 
-Each session implements one spec from `docs/SPECS.md` and opens one pull request. Start with spec 0.1. The order and dependencies are in `docs/PLAN.md`.
+Each session implements one spec from `docs/SPECS.md` and opens one pull request. The order and dependencies are in `docs/PLAN.md` and `docs/KICKOFF.md`. Next are the review fixes in `docs/SPECS.md` section C, starting with R1.
 
 ## Development
 
@@ -27,6 +30,7 @@ Requires Python 3.12, Docker and Docker Compose. Every command is given for a Un
 | Purpose | Linux / macOS | Windows PowerShell |
 |---|---|---|
 | Start stack | `docker compose up -d` | `docker compose up -d` |
+| Create tables (new database, after the first start) | `docker compose exec api alembic upgrade head && docker compose up -d` | `docker compose exec api alembic upgrade head; docker compose up -d` |
 | Stop stack | `docker compose down` | `docker compose down` |
 | Install | `python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"` | `python -m venv .venv; .venv\Scripts\Activate.ps1; pip install -e ".[dev]"` |
 | Checks | `ruff check . && ruff format --check . && mypy src/trader && pytest` | `ruff check .; ruff format --check .; mypy src/trader; pytest` |

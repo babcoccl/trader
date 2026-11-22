@@ -24,6 +24,7 @@ from trader.ledger.models import (
     Heartbeat,
     Order,
     Plan,
+    Setting,
 )
 from trader.ops import paper_report
 
@@ -66,6 +67,7 @@ def session():
             Event,
             EquitySnapshot,
             Digest,
+            Setting,
         ):
             s.execute(delete(table))
         s.commit()

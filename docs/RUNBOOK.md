@@ -36,15 +36,14 @@ ssh trader-box "cd /opt/trader && docker compose -f docker-compose.prod.yml ps"
    docker compose -f docker-compose.prod.yml up -d --build
    ```
 
-6. Apply the schema:
+   A `migrate` service applies the schema (`alembic upgrade head`) before
+   the other services start, then exits with code 0. Seeing it as
+   `exited (0)` in `docker compose -f docker-compose.prod.yml ps -a` is
+   expected.
 
-   ```bash
-   docker compose -f docker-compose.prod.yml exec api alembic upgrade head
-   ```
-
-7. Open `http://<LAN-IP>:3000` from the Windows desktop and log in with
+6. Open `http://<LAN-IP>:3000` from the Windows desktop and log in with
    the password from step 4.
-8. Install the nightly backup (see below).
+7. Install the nightly backup (see below).
 
 ## Nightly backup
 
@@ -78,18 +77,20 @@ directory — `/var/log` is not writable by a non-root account:
 cd /opt/trader
 git pull
 docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml exec api alembic upgrade head
-docker compose -f docker-compose.prod.yml ps   # all "running"
+docker compose -f docker-compose.prod.yml ps   # all "running" except migrate, "exited (0)"
 ```
 
 ```powershell
 # Windows PowerShell equivalent
-ssh trader-box "cd /opt/trader && git pull && docker compose -f docker-compose.prod.yml up -d --build && docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head && docker compose -f docker-compose.prod.yml ps"
+ssh trader-box "cd /opt/trader && git pull && docker compose -f docker-compose.prod.yml up -d --build && docker compose -f docker-compose.prod.yml ps"
 ```
+
+The `migrate` service applies any new migrations during `up` and exits
+with code 0 before the other services start.
 
 ## Reboot behaviour
 
-`restart: unless-stopped` on every service plus Docker's autostart bring
+`restart: unless-stopped` on every long-running service plus Docker's autostart bring
 the whole stack back after a reboot or power cut with no manual steps.
 Verify with `$PROD ps` and the status strip on the dashboard — all
 heartbeats should go green within a couple of minutes. A service that

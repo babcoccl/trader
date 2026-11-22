@@ -1,0 +1,11 @@
+{
+  "id": 1458532827766784,
+  "datetime": "2026-11-21 10:00:00",
+  "type": "0",
+  "subtype": "LIMIT",
+  "status": "Open",
+  "market": "BTC/USD",
+  "amount_remaining": "0.00200000",
+  "client_order_id": "1-1",
+  "transactions": []
+}

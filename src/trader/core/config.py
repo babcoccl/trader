@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     live_enabled: bool = False
     log_level: str = "INFO"
     dashboard_password: str = ""
+    # Live venue credentials (spec 5.2); read-only until live_enabled.
+    bitstamp_key: str = ""
+    bitstamp_secret: str = ""
+    bitstamp_base_url: str = "https://www.bitstamp.net/api/v2"
 
 
 @lru_cache

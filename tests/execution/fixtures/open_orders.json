@@ -1,0 +1,13 @@
+[
+  {
+    "id": "1458532827766784",
+    "datetime": "2026-11-21 10:00:00",
+    "type": "0",
+    "subtype": "LIMIT",
+    "price": "49000.00",
+    "amount": "0.00200000",
+    "amount_at_create": "0.00200000",
+    "market": "BTC/USD",
+    "client_order_id": "1-1"
+  }
+]

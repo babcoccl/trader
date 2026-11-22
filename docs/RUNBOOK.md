@@ -77,12 +77,12 @@ directory — `/var/log` is not writable by a non-root account:
 cd /opt/trader
 git pull
 docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml ps   # all "running" except migrate, "exited (0)"
+docker compose -f docker-compose.prod.yml ps -a   # all "running" except migrate, "exited (0)"
 ```
 
 ```powershell
 # Windows PowerShell equivalent
-ssh trader-box "cd /opt/trader && git pull && docker compose -f docker-compose.prod.yml up -d --build && docker compose -f docker-compose.prod.yml ps"
+ssh trader-box "cd /opt/trader && git pull && docker compose -f docker-compose.prod.yml up -d --build && docker compose -f docker-compose.prod.yml ps -a"
 ```
 
 The `migrate` service applies any new migrations during `up` and exits

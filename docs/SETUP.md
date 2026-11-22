@@ -395,7 +395,7 @@ expiry, 2% price-move void) are fixed in code on purpose.
 
 | Symptom | Cause | What to do |
 |---|---|---|
-| `docker compose ps -a` shows `collector`, `engine` or `executor` as exited; logs say `relation "..." does not exist` | The `migrate` service failed before they started. | `docker compose logs migrate`; fix the reported error, then `docker compose up -d`. |
+| `docker compose up -d` ends with `service "migrate" didn't complete successfully: exit 1`; `docker compose ps -a` shows `migrate` as `Exited (1)` and `api`, `collector`, `engine`, `executor`, `watchdog`, `web` as `Created` (never started) | Applying the migrations failed, so nothing that needs the tables was started. | `docker compose logs migrate`; fix the reported error, then `docker compose up -d`. |
 | Login returns 503 "dashboard password is not configured" | `TRADER_DASHBOARD_PASSWORD` is empty. | Set it in `.env`, then `docker compose up -d`. |
 | Every API call returns 401 after a restart | Logins are kept in memory. | Log in again. |
 | Status strip red, `candle_stale` or `intraday_stale` right after a start | Initial download still running. | Wait 5 minutes. If it stays, read `docker compose logs collector`. |

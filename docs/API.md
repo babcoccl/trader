@@ -99,6 +99,20 @@ would-have-been result. Refused when not `pending` (`409`).
 }]
 ```
 
+### `GET /api/orders/open` → `OpenOrderOut[]`
+
+Every non-shadow order of the current mode whose status is `new`,
+`open` or `partially_filled`, oldest first — so an approved buy is
+visible between approval and the first fill, unlike `resting_orders`
+which appears only for assets already held. `OpenOrderOut` is `OrderOut`
+plus `symbol` and `plan_id`.
+
+```json
+[{"id": 12, "client_order_id": "7-1", "symbol": "ETH-USD", "side": "buy",
+  "type": "limit", "price": "2900", "stop_price": null, "quantity": "0.1",
+  "status": "open", "plan_id": 7, "created_at": "2026-11-21T18:00:00Z"}]
+```
+
 ### `GET /api/activity?kind=&q=&limit=&before=&before_kind=&before_id=` → `ActivityItem[]`
 
 Newest-first union of `events` (kind = the event kind, e.g. `deposit`,
@@ -157,6 +171,23 @@ expired or voided: `plans` counts them, `shadow_fills` the fills, and
 `result_usd` the would-have-been cash plus marked value of units still
 held. `paper_vs_backtest_gap_pp` is `null` until daily candles cover the
 equity window.
+
+### `GET /api/reports/weekly?limit=` → `WeeklyReportOut[]`
+
+Weekly paper reports (newest first, `limit` default 12) read from
+`events` rows with `kind="weekly_report"`; the fields come from the
+event's `details`. `tracking_gap_points`, `paper_return`,
+`backtest_return` and `mean_uptime` are `null` when the week could not
+be computed. No row exists for a week that ended before the account's
+first deposit.
+
+```json
+[{"week_start": "2026-11-09", "week_end": "2026-11-15",
+  "message": "Weekly paper report 2026-11-09 to 2026-11-15: ...",
+  "body_md": "# Weekly paper report — 2026-11-09 to 2026-11-15\n...",
+  "tracking_gap_points": 1.5, "paper_return": 0.02,
+  "backtest_return": 0.005, "mean_uptime": 0.99}]
+```
 
 ### `GET /api/digests?limit=` → `DigestOut[]`
 

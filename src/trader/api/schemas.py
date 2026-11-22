@@ -93,6 +93,11 @@ class ApproveRequest(BaseModel):
         return v
 
 
+class OpenOrderOut(OrderOut):
+    symbol: str
+    plan_id: int | None
+
+
 class PositionOut(BaseModel):
     asset: str
     symbol: str
@@ -151,6 +156,17 @@ class SummaryOut(BaseModel):
     fees_usd: Decimal
     vetoes: VetoScorecard
     paper_vs_backtest_gap_pp: float | None
+
+
+class WeeklyReportOut(BaseModel):
+    week_start: str
+    week_end: str
+    message: str
+    body_md: str
+    tracking_gap_points: float | None
+    paper_return: float | None
+    backtest_return: float | None
+    mean_uptime: float | None
 
 
 class DigestOut(BaseModel):

@@ -7,13 +7,17 @@ import { Positions } from "../pages/Positions";
 vi.mock("../api/client", () => ({
   api: {
     positions: vi.fn(),
+    openOrders: vi.fn(),
     funding: vi.fn(),
     plan: vi.fn(),
   },
 }));
 
 const { api } = await import("../api/client");
+import { makeOpenOrder } from "./fixtures";
+
 const positionsMock = vi.mocked(api.positions);
+const openOrdersMock = vi.mocked(api.openOrders);
 const fundingMock = vi.mocked(api.funding);
 const planMock = vi.mocked(api.plan);
 
@@ -57,6 +61,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("Positions", () => {
   it("renders the positions table and funding watch line", async () => {
     positionsMock.mockResolvedValue([POSITION]);
+    openOrdersMock.mockResolvedValue([]);
     fundingMock.mockResolvedValue({
       rates: [
         {
@@ -85,15 +90,33 @@ describe("Positions", () => {
 
   it("shows the empty state and no funding rows", async () => {
     positionsMock.mockResolvedValue([]);
+    openOrdersMock.mockResolvedValue([]);
     fundingMock.mockResolvedValue({ rates: [], t_bill_rate: 0 });
     renderPositions();
 
     expect(await screen.findByText(/All cash/)).toBeInTheDocument();
+    expect(await screen.findByText("No open orders.")).toBeInTheDocument();
     expect(await screen.findByText(/no funding rates recorded yet/)).toBeInTheDocument();
+  });
+
+  it("renders the open orders card even with no positions", async () => {
+    positionsMock.mockResolvedValue([]);
+    openOrdersMock.mockResolvedValue([makeOpenOrder()]);
+    fundingMock.mockResolvedValue({ rates: [], t_bill_rate: 0 });
+    renderPositions();
+
+    expect(await screen.findByText("Open orders")).toBeInTheDocument();
+    expect(screen.getByText("ETH-USD")).toBeInTheDocument();
+    expect(screen.getByText("buy")).toBeInTheDocument();
+    expect(screen.getByText("limit")).toBeInTheDocument();
+    expect(screen.getByText("$2,900")).toBeInTheDocument();
+    expect(screen.getByText("0.1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "plan 5" })).toBeInTheDocument();
   });
 
   it("plan link opens the plan", async () => {
     positionsMock.mockResolvedValue([POSITION]);
+    openOrdersMock.mockResolvedValue([]);
     fundingMock.mockResolvedValue({ rates: [], t_bill_rate: 0 });
     planMock.mockResolvedValue({
       id: 5,

@@ -20,6 +20,10 @@ function signedPct(value: number | null | undefined): string {
 
 export function Reports() {
   const summary = useQuery({ queryKey: ["summary"], queryFn: api.summary });
+  const weekly = useQuery({
+    queryKey: ["weeklyReports"],
+    queryFn: () => api.weeklyReports(12),
+  });
   const digests = useQuery({ queryKey: ["digests"], queryFn: () => api.digests(30) });
 
   if (summary.isLoading) return <p>Loading…</p>;
@@ -91,6 +95,31 @@ export function Reports() {
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <div className="card">
+        <div className="card__title">Weekly paper reports</div>
+        {weekly.isError ? (
+          <p className="muted">Could not load weekly reports.</p>
+        ) : (weekly.data ?? []).length === 0 ? (
+          <p className="muted">
+            No weekly report yet; the first is written on the first Monday
+            after the account was created.
+          </p>
+        ) : (
+          <ul className="digest-list">
+            {(weekly.data ?? []).map((r) => (
+              <li key={`${r.week_start}-${r.week_end}`}>
+                <details>
+                  <summary>
+                    Week of {r.week_start} to {r.week_end}
+                  </summary>
+                  <pre className="digest-body">{r.body_md}</pre>
+                </details>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <div className="card">

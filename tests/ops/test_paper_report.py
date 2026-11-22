@@ -155,6 +155,9 @@ def test_due_week_skips_in_live_mode(session: Session, monkeypatch) -> None:
 
 def test_due_week_waits_for_digest_time(session: Session) -> None:
     _daily_candles(session)
+    accounting.deposit(session, "paper", Decimal("5000"), FrozenClock(WEEK_START))
+    session.commit()
+
     early = FrozenClock(datetime(2026, 11, 23, 0, 29, tzinfo=UTC))
     assert paper_report.due_week(session, early) is None
     assert paper_report.due_week(session, FrozenClock(MONDAY_30)) == (
@@ -164,6 +167,8 @@ def test_due_week_waits_for_digest_time(session: Session) -> None:
 
 
 def test_due_week_waits_for_sundays_candle(session: Session) -> None:
+    accounting.deposit(session, "paper", Decimal("5000"), FrozenClock(WEEK_START))
+    session.commit()
     session.add(Setting(key="digest_time_utc", value="00:00", updated_at=WEEK_START))
     session.commit()
     midnight = FrozenClock(WEEK_END)
@@ -173,12 +178,16 @@ def test_due_week_waits_for_sundays_candle(session: Session) -> None:
 
 
 def test_due_week_catches_up_before_a_later_days_cutoff(session: Session) -> None:
+    accounting.deposit(session, "paper", Decimal("5000"), FrozenClock(WEEK_START))
+    session.commit()
     # Tuesday 00:10 is before that day's 00:30, but Monday's report is due.
     tuesday = FrozenClock(datetime(2026, 11, 24, 0, 10, tzinfo=UTC))
     assert paper_report.due_week(session, tuesday) == (WEEK_START, WEEK_END)
 
 
 def test_due_week_marks_done_and_midweek_build_dedupes(session: Session) -> None:
+    accounting.deposit(session, "paper", Decimal("5000"), FrozenClock(WEEK_START))
+    session.commit()
     paper_report.build(session, WEEK_START, WEEK_END)
     session.commit()
     clock = FrozenClock(MONDAY_30)
@@ -196,7 +205,44 @@ def test_partial_report_does_not_settle_week(session: Session) -> None:
     # An on-demand report covering only part of the week must not stop
     # the watchdog writing the full Monday-to-Monday one.
     _daily_candles(session)
+    accounting.deposit(session, "paper", Decimal("5000"), FrozenClock(WEEK_START))
+    session.commit()
+
     paper_report.build(session, WEEK_START, WEEK_START + timedelta(days=3))
+    session.commit()
+    assert paper_report.due_week(session, FrozenClock(MONDAY_30)) == (
+        WEEK_START,
+        WEEK_END,
+    )
+
+
+def test_due_week_none_without_a_deposit(session: Session) -> None:
+    # Spec R11: no paper deposit means no account, so no report is due.
+    _daily_candles(session)
+    assert paper_report.due_week(session, FrozenClock(MONDAY_30)) is None
+
+
+def test_due_week_skips_weeks_before_the_first_deposit(session: Session) -> None:
+    # A deposit after the week closed: that week had no account.
+    _daily_candles(session)
+    accounting.deposit(
+        session,
+        "paper",
+        Decimal("5000"),
+        FrozenClock(WEEK_END + timedelta(days=1)),
+    )
+    session.commit()
+    assert paper_report.due_week(session, FrozenClock(MONDAY_30)) is None
+
+
+def test_due_week_first_week_containing_the_deposit(session: Session) -> None:
+    _daily_candles(session)
+    accounting.deposit(
+        session,
+        "paper",
+        Decimal("5000"),
+        FrozenClock(WEEK_START + timedelta(days=3)),
+    )
     session.commit()
     assert paper_report.due_week(session, FrozenClock(MONDAY_30)) == (
         WEEK_START,

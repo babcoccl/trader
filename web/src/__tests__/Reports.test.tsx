@@ -6,12 +6,16 @@ import { Reports } from "../pages/Reports";
 vi.mock("../api/client", () => ({
   api: {
     summary: vi.fn(),
+    weeklyReports: vi.fn(),
     digests: vi.fn(),
   },
 }));
 
 const { api } = await import("../api/client");
+import { makeWeeklyReport } from "./fixtures";
+
 const summaryMock = vi.mocked(api.summary);
+const weeklyMock = vi.mocked(api.weeklyReports);
 const digestsMock = vi.mocked(api.digests);
 
 function renderReports() {
@@ -36,6 +40,10 @@ describe("Reports", () => {
       vetoes: { plans: 3, shadow_fills: 5, result_usd: "-45.0" },
       paper_vs_backtest_gap_pp: -0.3,
     });
+    weeklyMock.mockResolvedValue([
+      makeWeeklyReport(),
+      makeWeeklyReport({ week_start: "2026-11-02", week_end: "2026-11-08" }),
+    ]);
     digestsMock.mockResolvedValue([
       {
         id: 7,
@@ -60,6 +68,10 @@ describe("Reports", () => {
     expect(screen.getByText(/News view/)).toBeInTheDocument();
     expect(screen.getByText(/Promotion gate/)).toBeInTheDocument();
 
+    expect(screen.getByText("Weekly paper reports")).toBeInTheDocument();
+    expect(screen.getByText("Week of 2026-11-09 to 2026-11-15")).toBeInTheDocument();
+    expect(screen.getByText("Week of 2026-11-02 to 2026-11-08")).toBeInTheDocument();
+
     expect(screen.getByText("Daily digests")).toBeInTheDocument();
     expect(screen.getByText("2026-11-20")).toBeInTheDocument();
   });
@@ -74,11 +86,15 @@ describe("Reports", () => {
       vetoes: { plans: 0, shadow_fills: 0, result_usd: null },
       paper_vs_backtest_gap_pp: null,
     });
+    weeklyMock.mockResolvedValue([]);
     digestsMock.mockResolvedValue([]);
     renderReports();
 
     expect(await screen.findByText("No denied, expired or voided plans yet."))
       .toBeInTheDocument();
     expect(screen.getByText(/No digests yet/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/No weekly report yet; the first is written on the first Monday/),
+    ).toBeInTheDocument();
   });
 });

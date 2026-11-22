@@ -101,6 +101,17 @@ def _report_exists(session: Session, week_start: datetime, week_end: datetime) -
     ) > 0
 
 
+def _first_paper_deposit_time(session: Session) -> datetime | None:
+    """Time of the first deposit into the paper account, or None."""
+    rows = session.scalars(
+        select(Event).where(Event.kind == "deposit").order_by(Event.time, Event.id)
+    ).all()
+    for e in rows:
+        if e.details.get("mode") == "paper":
+            return e.time
+    return None
+
+
 def due_week(session: Session, clock: Clock) -> tuple[datetime, datetime] | None:
     """The [start, end) window whose report should exist now.
 
@@ -118,6 +129,11 @@ def due_week(session: Session, clock: Clock) -> tuple[datetime, datetime] | None
     if now < end + timedelta(hours=hour, minutes=minute):
         return None
     start = end - timedelta(days=7)
+    # No report for a week that ended at or before the account's first
+    # deposit — the account did not exist during it (spec R11).
+    deposit_at = _first_paper_deposit_time(session)
+    if deposit_at is None or end <= deposit_at:
+        return None
     if _report_exists(session, start, end):
         return None
     # The collector stores Sunday's candle just after midnight; wait for it

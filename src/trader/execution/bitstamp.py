@@ -56,6 +56,9 @@ CONTENT_TYPE = "application/x-www-form-urlencoded"
 _OPEN_STATUSES = ("new", "open", "partially_filled")
 _MOC_RETRIES = 3
 _MARKETS_TTL_SECONDS = 3600
+# Public market metadata, keyed by base URL and shared across adapters:
+# the executor builds a fresh adapter every pass.
+_markets_cache: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
 
 
 class BitstampError(Exception):
@@ -162,8 +165,6 @@ class BitstampAdapter:
         self._post = post or _default_post
         self._get = get or _default_get
         self._nonce_fn = nonce_fn
-        self._markets: dict[str, dict[str, Any]] | None = None
-        self._markets_at = 0.0
 
     @classmethod
     def from_env(
@@ -455,8 +456,9 @@ class BitstampAdapter:
 
     def _market_info(self, symbol: str) -> dict[str, Any]:
         now = self._clock.now().timestamp()
-        if self._markets is None or now - self._markets_at > _MARKETS_TTL_SECONDS:
+        cached = _markets_cache.get(self._base)
+        if cached is None or not 0 <= now - cached[0] <= _MARKETS_TTL_SECONDS:
             rows = self._get(f"{self._base}/markets/")
-            self._markets = {str(r["market_symbol"]): r for r in rows}
-            self._markets_at = now
-        return self._markets[MARKETS[symbol]]
+            cached = (now, {str(r["market_symbol"]): r for r in rows})
+            _markets_cache[self._base] = cached
+        return cached[1][MARKETS[symbol]]

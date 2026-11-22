@@ -25,6 +25,7 @@ from trader.execution.bitstamp import (
     BitstampAdapter,
     BitstampError,
     LiveTradingDisabledError,
+    _markets_cache,
     sign,
 )
 from trader.ledger import accounting
@@ -134,6 +135,13 @@ def _order(**kw: Any) -> Order:
     return Order(**fields)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_markets_cache():
+    _markets_cache.clear()
+    yield
+    _markets_cache.clear()
+
+
 @pytest.fixture()
 def live_env(monkeypatch):
     monkeypatch.setenv("TRADER_MODE", "live")
@@ -224,6 +232,24 @@ def test_symbol_rules_from_markets() -> None:
     assert rules.tick == Decimal("0.01")
     assert rules.lot == Decimal("0.00000001")
     assert rules.min_notional == Decimal("10.0")
+
+
+def test_markets_cache_shared_across_adapters_for_an_hour() -> None:
+    """The executor builds a fresh adapter every pass; /markets/ is still
+    fetched once per hour, not once per pass."""
+    t = FakeTransport()
+    _adapter(t).symbol_rules("BTC-USD")
+    _adapter(t).symbol_rules("ETH-USD")
+    assert sum(u.endswith("/markets/") for u in t.gets) == 1
+    later = BitstampAdapter(
+        _SessionStub(),
+        "key",
+        "secret",
+        clock=FrozenClock(NOW + timedelta(hours=1, seconds=1)),
+        get=t.get,
+    )
+    later.symbol_rules("BTC-USD")
+    assert sum(u.endswith("/markets/") for u in t.gets) == 2
 
 
 def test_trading_fee_parses() -> None:

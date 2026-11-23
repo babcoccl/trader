@@ -114,3 +114,59 @@ Rules:
 
 Finish: when every "Done when" line of the spec is true and CI is green, open the pull request and stop. In the PR description state what was built, how each "Done when" line was checked, and anything not done. Do not start another spec.
 ```
+
+## Enhancements after the first paper day (section D)
+
+Use the template above with "section D" in place of "section B" in step 3. The tests behind these specs are in `docs/studies/more-trades-study.md`.
+
+| Step | Specs | Can run at the same time |
+|---|---|---|
+| 1 | D1 (Rules screen), D2 (asset list with SOL and XRP for paper trading) | yes, but merge them one at a time |
+
+### Kickoff prompt for D1
+
+```
+Repository: babcoccl/trader, branch main.
+
+Task: implement spec D1 "Rules screen: what the system is checking and why it is not trading" from docs/SPECS.md section D. Implement this spec only.
+
+Before writing any code:
+1. Read AGENTS.md.
+2. Read docs/SPECS.md section A in full.
+3. Read spec D1 in docs/SPECS.md section D.
+4. Read src/trader/strategy/rules.py, src/trader/engine/daily_cycle.py, src/trader/engine/intraday_cycle.py, src/trader/api/routes/status.py, src/trader/api/routes/decisions.py and web/src/pages/Overview.tsx.
+
+Rules:
+- Work on a branch named devin/D1-rules-screen and open one pull request to main.
+- Change only the files the spec lists. Do not change how any rule, weight, plan or risk check is computed; the daily cycle only stores two more values in details.
+- The Rules page is read-only: no input, select, textarea or button.
+- Tests need a Postgres database whose name ends in _test, passed as TEST_DATABASE_URL. Never point it at the database named trader.
+- Never use real API keys and never place a real order.
+- If anything in the spec is ambiguous or contradicts the code, stop and ask me before guessing.
+
+Finish: when every "Done when" line of the spec is true and CI is green, open the pull request and stop. In the PR description state what was built, how each "Done when" line was checked, and anything not done. Do not start another spec.
+```
+
+### Kickoff prompt for D2
+
+```
+Repository: babcoccl/trader, branch main.
+
+Task: implement spec D2 "Asset list from configuration, with SOL and XRP available for paper trading" from docs/SPECS.md section D. Implement this spec only.
+
+Before writing any code:
+1. Read AGENTS.md.
+2. Read docs/SPECS.md section A in full.
+3. Read spec D2 in docs/SPECS.md section D.
+4. Read src/trader/core/config.py, src/trader/data/sources/, src/trader/data/collector.py, src/trader/engine/daily_cycle.py, src/trader/engine/intraday_cycle.py and src/trader/api/routes/reports.py.
+
+Rules:
+- Work on a branch named devin/D2-asset-list and open one pull request to main.
+- Change only the files the spec lists. The default asset list stays BTC-USD and ETH-USD, and every existing test must pass without being edited, except where the spec names a change.
+- Live mode must refuse to start with any asset other than BTC-USD and ETH-USD. Do not change a rule, the volatility target, the trading band or any risk limit.
+- Tests need a Postgres database whose name ends in _test, passed as TEST_DATABASE_URL. Never point it at the database named trader.
+- Never use real API keys and never place a real order.
+- If anything in the spec is ambiguous or contradicts the code, stop and ask me before guessing.
+
+Finish: when every "Done when" line of the spec is true and CI is green, open the pull request and stop. In the PR description state what was built, how each "Done when" line was checked, and anything not done. Do not start another spec.
+```

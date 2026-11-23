@@ -26,6 +26,9 @@ The owner's decisions, newest last. This file and `docs/SPECS.md` are authoritat
 | 2026-11-20 | Emergency stop | Run by the application every 30 seconds; no stop rests on the exchange. Positions are unprotected while the home box is offline (accepted) |
 | 2026-11-20 | Sleeve E (sudden-drop bids) | Parked: it does not survive the venue's fees |
 | 2026-11-21 | Robinhood Crypto | Reviewed and rejected: 0.95% per side by API at this volume, against 0.30% to 0.40% on Bitstamp directly |
+| 2026-11-23 | More trades | Tested and rejected: faster rules, a tighter trading band, and buying oversold bounces while the trend is off. Each adds trades and lowers the return (`docs/studies/more-trades-study.md`). The nine rules, the 20% band and the 40% volatility target stay |
+| 2026-11-23 | Rules screen | A read-only screen shows each rule, its level and the fixed settings (spec D1) |
+| 2026-11-23 | Extra assets | SOL and XRP may be paper traded through `TRADER_SYMBOLS` (spec D2). SHIB and BNB are rejected: too thinly traded on Bitstamp. Live mode stays BTC and ETH only |
 
 ## Open
 
@@ -34,4 +37,5 @@ The owner's decisions, newest last. This file and `docs/SPECS.md` are authoritat
 | Bitstamp account opened and verified by the owner | Spec 5.2 | Fallback venue: Alpaca crypto, then Crypto.com Exchange |
 | News sources for the LLM overlay | Phase 6 | A short allow-list of RSS feeds, chosen in that phase |
 | Local model server and models | Phase 6 | Chosen by the benchmark in spec 6.1 |
+| Asset list: whether SOL and XRP join BTC and ETH for live trading | Spec 5.4 | BTC and ETH only |
 | Where idle cash earns yield | Later | Leave as plain USD |

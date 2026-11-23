@@ -1015,12 +1015,13 @@ Order: D1 and D2 are independent; merge one at a time.
          symbol: str
          bitstamp_market: str
          coinbase_product: str
-         tick: Decimal          # price step
-         lot: Decimal           # quantity step
+         tick: Decimal  # price step
+         lot: Decimal  # quantity step
          daily_start: datetime  # first daily candle to backfill (UTC)
 
-     ASSETS: dict[str, Asset]   # the four rows below
-     SYMBOLS: tuple[str, ...]   # get_settings().symbol_list, each checked against ASSETS
+
+     ASSETS: dict[str, Asset]  # the four rows below
+     SYMBOLS: tuple[str, ...]  # get_settings().symbol_list, each checked against ASSETS
      ```
 
      | symbol | bitstamp_market | coinbase_product | tick | lot | daily_start |

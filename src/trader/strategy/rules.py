@@ -58,7 +58,9 @@ def levels(close: pd.Series) -> dict[str, float]:
         out[f"momentum{n}"] = float(close.shift(n).iloc[-1])
     for n in BREAKOUT_PERIODS:
         state = breakout(close, n).iloc[-1]
-        if state == 1.0:
+        if pd.isna(state):
+            level = np.nan
+        elif state == 1.0:
             level = close.rolling(n // 2, min_periods=n // 2).min().iloc[-1]
         else:
             level = close.rolling(n, min_periods=n).max().iloc[-1]

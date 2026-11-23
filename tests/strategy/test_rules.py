@@ -141,6 +141,14 @@ def test_levels_breakout_high_when_off_low_when_on() -> None:
     assert lv["breakout20"] == pytest.approx(up.iloc[-10:].min())
 
 
+def test_levels_breakout_nan_when_no_trigger_fired() -> None:
+    # Full window, but no close ever hit the high or the low: the rule is
+    # undefined, so its level is NaN too.
+    close = pd.Series(np.linspace(100.0, 118.0, 19).tolist() + [115.5])
+    assert np.isnan(rules.breakout(close, 20).iloc[-1])
+    assert np.isnan(rules.levels(close)["breakout20"])
+
+
 def test_levels_short_series_is_nan() -> None:
     close = pd.Series(range(1, 40), dtype=float)
     lv = rules.levels(close)

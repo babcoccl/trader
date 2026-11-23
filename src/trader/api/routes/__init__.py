@@ -1,6 +1,6 @@
 """Shared helpers for the ``/api`` routes (spec 3.1)."""
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from decimal import Decimal
 
 from fastapi import Depends
@@ -24,10 +24,13 @@ def get_session() -> Iterator[Session]:
 SessionDep = Depends(get_session)
 
 
-def latest_prices(session: Session) -> dict[str, Decimal]:
-    """Newest stored 5m close per symbol (primary source first)."""
+def latest_prices(
+    session: Session, symbols: Iterable[str] = SYMBOLS
+) -> dict[str, Decimal]:
+    """Newest stored 5m close per symbol (primary source first). Pass
+    ``symbols`` to mark a symbol no longer in ``TRADER_SYMBOLS``."""
     prices: dict[str, Decimal] = {}
-    for symbol in SYMBOLS:
+    for symbol in symbols:
         close = session.scalar(
             select(Candle.close)
             .where(Candle.symbol == symbol, Candle.interval == "5m")

@@ -409,12 +409,19 @@ docker compose -f docker-compose.prod.yml up -d
 
 Facts to know before changing the list:
 
-- Change the list only while the account holds no position.
+- Change the list only while the account holds no position, no open
+  orders and no approved plans. (A removed symbol keeps collecting
+  candles until its open orders and approved plans settle, so a pending
+  trade is never stranded — but the clean cut is still the safe one.)
 - History for a new asset is downloaded at the next collector start.
 - A new asset gets its first daily decision at the next 00:05 UTC.
 - Each asset's share of the account is at most one divided by the
   number of assets (25% with four).
-- Live mode starts only with BTC and ETH.
+- Live mode starts only with BTC and ETH: with `TRADER_MODE=live` and
+  any other symbol every service exits at startup with
+  "live mode supports only BTC-USD and ETH-USD". `TRADER_MODE` is read
+  from `.env` by both Compose files; the development file defaults to
+  paper just like production.
 
 ## 12. Troubleshooting
 

@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from apscheduler.schedulers.blocking import (  # type: ignore[import-untyped]
     BlockingScheduler,
 )
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from trader.core.clock import Clock, SystemClock
@@ -33,12 +34,14 @@ from trader.data.sources.base import (
 )
 from trader.data.sources.bitstamp import BitstampSource
 from trader.data.sources.coinbase import CoinbaseSource
-from trader.ledger.models import Event
+from trader.ledger.models import Event, Order, Plan
 from trader.ops.heartbeat import beat
 
 log = logging.getLogger(__name__)
 
 FIVEM_BACKFILL_DAYS = 30
+
+_OPEN_ORDER_STATUSES = ("new", "open", "partially_filled")
 
 
 def _floor(t: datetime, seconds: int) -> datetime:
@@ -116,14 +119,34 @@ class Collector:
     def _heartbeat(self, session: Session, status: str, detail: str) -> None:
         beat(session, "collector", status, detail, clock=self._clock)
 
+    def _feed_symbols(self, session: Session) -> list[str]:
+        """Symbols whose candles are still collected: ``SYMBOLS`` plus any
+        symbol removed from the list that still has an open order or an
+        approved plan — its fills need new candles until it settles."""
+        wanted = set(SYMBOLS)
+        wanted |= set(
+            session.scalars(
+                select(Order.symbol)
+                .where(Order.status.in_(_OPEN_ORDER_STATUSES))
+                .distinct()
+            )
+        )
+        wanted |= set(
+            session.scalars(
+                select(Plan.symbol).where(Plan.status == "approved").distinct()
+            )
+        )
+        return [s for s in ASSETS if s in wanted]
+
     def run_once(self, session: Session) -> int:
         """One loop: recent 5m candles, yesterday's 1d, heartbeat. Rows written."""
         now = self._clock.now()
         self._outage = False
         written = 0
+        symbols = self._feed_symbols(session)
         # Last two closed 5m candles.
         last_open = _floor(now, 300) - timedelta(seconds=300)
-        for symbol in SYMBOLS:
+        for symbol in symbols:
             written += self._store(
                 session,
                 symbol,
@@ -134,7 +157,7 @@ class Collector:
         # Yesterday's daily candle, once 00:01 UTC has passed.
         today = _floor(now, 86400)
         if now >= today + timedelta(minutes=1):
-            for symbol in SYMBOLS:
+            for symbol in symbols:
                 written += self._store(
                     session, symbol, "1d", today - timedelta(days=1), today
                 )
@@ -150,12 +173,13 @@ class Collector:
         now = self._clock.now()
         day_end = _floor(now, 86400)
         fivem_start = _floor(now - timedelta(days=FIVEM_BACKFILL_DAYS), 300)
-        for symbol in SYMBOLS:
+        symbols = self._feed_symbols(session)
+        for symbol in symbols:
             daily_start = ASSETS[symbol].daily_start
             self._store(session, symbol, "1d", daily_start, day_end)
             self._store(session, symbol, "5m", fivem_start, now)
             self._tick_heartbeat(f"backfilled {symbol}")
-        for symbol in SYMBOLS:
+        for symbol in symbols:
             for interval, start in (
                 ("1d", ASSETS[symbol].daily_start),
                 ("5m", fivem_start),

@@ -12,7 +12,14 @@ from sqlalchemy.orm import Session
 from trader.data.collector import Collector
 from trader.data.sources.base import Candle
 from trader.ledger.models import Candle as CandleRow
-from trader.ledger.models import Event, Heartbeat
+from trader.ledger.models import (
+    Decision,
+    Event,
+    Fill,
+    Heartbeat,
+    Order,
+    Plan,
+)
 
 TEST_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -77,11 +84,11 @@ def session():
     engine = create_engine(TEST_URL)
     _alembic("upgrade", "head")
     with Session(engine) as s:
-        for model in (CandleRow, Event, Heartbeat):
+        for model in (CandleRow, Event, Heartbeat, Fill, Order, Plan, Decision):
             s.execute(delete(model))
         s.commit()
         yield s
-        for model in (CandleRow, Event, Heartbeat):
+        for model in (CandleRow, Event, Heartbeat, Fill, Order, Plan, Decision):
             s.execute(delete(model))
         s.commit()
     engine.dispose()
@@ -200,3 +207,57 @@ def test_daily_backfill_starts_at_each_assets_daily_start(
             first_daily[symbol] = start
     assert first_daily["SOL-USD"] == datetime(2022, 8, 18, tzinfo=UTC)
     assert first_daily["BTC-USD"] == datetime(2019, 1, 1, tzinfo=UTC)
+
+
+def test_removed_symbol_with_open_order_still_collected(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review fix: a symbol dropped from TRADER_SYMBOLS keeps its candle
+    feed while an open order or approved plan still needs fills."""
+    import trader.data.collector as collector_mod
+
+    monkeypatch.setattr(collector_mod, "SYMBOLS", ("BTC-USD", "ETH-USD"))
+    decision = Decision(
+        cycle="daily", ran_at=NOW, action="none", reason="seed", details={}
+    )
+    session.add(decision)
+    session.flush()
+    plan = Plan(
+        sleeve="trend",
+        symbol="SOL-USD",
+        side="buy",
+        status="approved",
+        reference_price=Decimal("100"),
+        target_weight=Decimal("0.1"),
+        entry_orders=[],
+        worst_case_loss=Decimal("5"),
+        est_fees=Decimal("1"),
+        rationale="x",
+        expires_at=NOW,
+        decision_id=decision.id,
+    )
+    session.add(plan)
+    session.flush()
+    session.add(
+        Order(
+            plan_id=plan.id,
+            venue="paper",
+            client_order_id="o1",
+            symbol="SOL-USD",
+            side="buy",
+            type="market",
+            quantity=Decimal("1"),
+            status="open",
+            mode="paper",
+        )
+    )
+    session.commit()
+
+    collector = Collector(sources=[FakeSource()], clock=_Frozen())
+    written = collector.run_once(session)
+    session.commit()
+
+    symbols = {r.symbol for r in session.scalars(select(CandleRow))}
+    assert "SOL-USD" in symbols
+    # 2 symbols x (2 5m + 1 1d) + SOL's share = 9.
+    assert written == 9

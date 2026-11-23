@@ -417,3 +417,29 @@ def test_build_handles_empty_week(session: Session) -> None:
     assert "not computable" in row.details["body_md"]
     assert row.details["alarms_raised"] == 0
     assert row.details["approvals"] == []
+
+
+def test_build_marks_asset_list_change(session: Session) -> None:
+    """A week overlapping an asset-list change says so and restarts the
+    count: the tracking window opens at the change, not the week start."""
+    session.add(
+        Event(
+            time=WEEK_START + timedelta(days=3),
+            kind="asset_list_changed",
+            severity="info",
+            message="Asset list changed.",
+            details={
+                "from": ["BTC-USD", "ETH-USD"],
+                "to": ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD"],
+            },
+        )
+    )
+    session.commit()
+
+    row = paper_report.build(session, WEEK_START, WEEK_END)
+    session.commit()
+
+    assert row.details["asset_list_changed"] is True
+    body = row.details["body_md"]
+    assert "Asset list changed" in body
+    assert "restarts" in body

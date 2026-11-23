@@ -10,6 +10,7 @@ this endpoint, so the record starts when the collector first runs.
 """
 
 import json
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -58,7 +59,7 @@ class CoinbaseFundingSource:
     def __init__(self, get_json: GetJson = _get_json, base_url: str = BASE_URL) -> None:
         self._get = get_json
         self._base = base_url.rstrip("/")
-        self._seq = 0
+        self._seq = time.time_ns()  # vary across restarts too
 
     def fetch(self, symbol: str) -> FundingObservation:
         product = PRODUCTS[symbol]

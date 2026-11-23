@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -61,7 +61,12 @@ class CoinbaseFundingSource:
 
     def fetch(self, symbol: str) -> FundingObservation:
         product = PRODUCTS[symbol]
-        body = self._get(f"{self._base}/api/v3/brokerage/market/products/{product}", {})
+        body = self._get(
+            f"{self._base}/api/v3/brokerage/market/products/{product}",
+            # Unknown parameter, ignored by Coinbase: it varies the URL so a
+            # cached response cannot keep serving the same funding_time.
+            {"_": str(int(datetime.now(UTC).timestamp()))},
+        )
         details = body.get("future_product_details") or {}
         if not details.get("funding_rate"):
             raise ValueError(f"{product}: empty funding_rate")

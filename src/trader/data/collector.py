@@ -123,13 +123,15 @@ class Collector:
         got = self._fetch(session, symbol, interval, start, end)
         return candles_mod.upsert(session, got, now=self._clock.now())
 
-    def _funding_event(self, session: Session, kind: str, severity: str) -> None:
+    def _funding_event(
+        self, session: Session, kind: str, severity: str, message: str
+    ) -> None:
         session.add(
             Event(
                 time=self._clock.now(),
                 kind=kind,
                 severity=severity,
-                message=kind.replace("_", " "),
+                message=message,
                 details={},
             )
         )
@@ -148,29 +150,42 @@ class Collector:
             return
         self._funding_tried_at = now
         rows = []
-        try:
-            for symbol in PRODUCTS:
-                if symbol not in SYMBOLS:
-                    continue
+        failed: list[str] = []
+        for symbol in PRODUCTS:
+            if symbol not in SYMBOLS:
+                continue
+            try:
                 obs = self._funding.fetch(symbol)
-                rows.append(
-                    {
-                        "symbol": obs.symbol,
-                        "venue": obs.venue,
-                        "time": obs.time,
-                        "rate": obs.rate,
-                        "interval_hours": obs.interval_hours,
-                    }
-                )
-        except Exception as exc:
-            log.warning("funding source failed: %s", exc)
+            except Exception as exc:
+                log.warning("funding fetch failed for %s: %s", symbol, exc)
+                failed.append(f"{symbol}: {exc}")
+                continue
+            rows.append(
+                {
+                    "symbol": obs.symbol,
+                    "venue": obs.venue,
+                    "time": obs.time,
+                    "rate": obs.rate,
+                    "interval_hours": obs.interval_hours,
+                }
+            )
+        if failed:
             if not self._funding_failing:
                 self._funding_failing = True
-                self._funding_event(session, "funding_source_failed", "warning")
-        else:
-            if self._funding_failing:
-                self._funding_failing = False
-                self._funding_event(session, "funding_source_recovered", "info")
+                self._funding_event(
+                    session,
+                    "funding_source_failed",
+                    "warning",
+                    "; ".join(failed),
+                )
+        elif self._funding_failing:
+            self._funding_failing = False
+            self._funding_event(
+                session,
+                "funding_source_recovered",
+                "info",
+                "funding source recovered",
+            )
         if rows:
             session.execute(insert(FundingRate).values(rows).on_conflict_do_nothing())
 

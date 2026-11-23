@@ -28,10 +28,10 @@ BODY = json.load(open(FIXTURE))
 
 
 def _source(body: Any = BODY) -> CoinbaseFundingSource:
-    calls: list[str] = []
+    calls: list[tuple[str, dict[str, Any]]] = []
 
     def get_json(url: str, params: dict[str, Any]) -> Any:
-        calls.append(url)
+        calls.append((url, params))
         return body
 
     source = CoinbaseFundingSource(get_json=get_json)
@@ -55,9 +55,11 @@ def test_fetch_parses_fixture() -> None:
         rate=Decimal("0.000004"),
         interval_hours=1,
     )
-    assert source.calls == [
+    assert source.calls[0][0] == (
         "https://api.coinbase.com/api/v3/brokerage/market/products/BIP-20DEC30-CDE"
-    ]
+    )
+    # A cache-busting parameter keeps the funding readings fresh.
+    assert source.calls[0][1]
 
 
 def test_empty_rate_raises() -> None:

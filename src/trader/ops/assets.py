@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from trader.core.clock import Clock
 from trader.data.sources.base import SYMBOLS
-from trader.ledger.models import Event, Setting
+from trader.ledger.models import Candle, Event, Setting
 
 SETTING_KEY = "assets.symbols"
 KIND = "asset_list_changed"
@@ -31,6 +31,11 @@ def record_change(session: Session, clock: Clock) -> None:
     stored = list(row.value) if row is not None else _PRE_D2_LIST
     if row is None:
         session.add(Setting(key=SETTING_KEY, value=current, updated_at=clock.now()))
+        # A database with no candles has no collected history: this is a
+        # fresh deployment, not an upgrade from the fixed BTC+ETH list,
+        # so there is no prior portfolio to restart.
+        if session.scalar(select(Candle.id).limit(1)) is None:
+            stored = current
     elif stored != current:
         row.value = current
         row.updated_at = clock.now()

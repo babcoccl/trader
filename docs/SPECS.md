@@ -978,7 +978,7 @@ Order: D1 and D2 are independent; merge one at a time.
   and live mode refuses any asset other than BTC and ETH.
 - **Why these two:** on 2026-11-23 SOL/USD and XRP/USD each traded
   about $14 million a day on Bitstamp with over $250,000 resting within
-  0.1% of the price. SHIB/USD and BNB/USD traded under $0.2 million a
+  0.1% of the price. SHIB/USD and BNB/USD traded under $0.3 million a
   day there and are not usable. In the backtest (Binance prices,
   Bitstamp costs, 2022 to 2026) the four-asset version returned 9.6% a
   year against 11.4% for BTC and ETH, with a similar worst loss (-23%
@@ -1002,7 +1002,9 @@ Order: D1 and D2 are independent; merge one at a time.
   1. `Settings.symbols: str = "BTC-USD,ETH-USD"` (variable
      `TRADER_SYMBOLS`) and `Settings.symbol_list -> tuple[str, ...]`:
      split on commas, strip spaces, upper-case; an empty list or a
-     repeated symbol raises `ValueError`. A model validator raises
+     repeated symbol raises `ValueError`, and so does a list without
+     both `BTC-USD` and `ETH-USD` (they are the comparison baselines).
+     A model validator raises
      `ValueError("live mode supports only BTC-USD and ETH-USD")` when
      `mode == "live"` and `symbol_list` holds anything else.
   2. In `data/sources/base.py`:
@@ -1028,8 +1030,9 @@ Order: D1 and D2 are independent; merge one at a time.
      | SOL-USD | solusd | SOL-USD | 0.001 | 0.00001 | 2022-08-18 |
      | XRP-USD | xrpusd | XRP-USD | 0.00001 | 0.00000001 | 2019-01-01 |
 
-     BTC and ETH keep exactly today's values, so no existing test
-     changes. SOL and XRP steps are Bitstamp's `counter_decimals` and
+     BTC and ETH keep exactly today's values (`VENUE_TICK`,
+     `VENUE_LOT`), so no existing test changes. Bitstamp reports 6
+     quantity decimals for ETH, not 8; leave that for spec 5.4. SOL and XRP steps are Bitstamp's `counter_decimals` and
      `base_decimals` from `GET /api/v2/markets/` on 2026-11-23. A symbol
      in `TRADER_SYMBOLS` that is not in `ASSETS` raises `ValueError`
      naming it when `base.py` is imported, so every service refuses to
@@ -1054,8 +1057,9 @@ Order: D1 and D2 are independent; merge one at a time.
      above 1,000 the text is byte-for-byte what it is today.
   5. `reports.py`, equity baselines: "Buy and hold BTC" and "Buy and
      hold BTC+ETH" always use BTC-USD and ETH-USD, whatever `SYMBOLS`
-     is (today the second one averages over `SYMBOLS`). The comparison
-     with the backtest keeps using `SYMBOLS`.
+     is: load the closes for those two symbols and average over those
+     two (today both use `SYMBOLS`). The comparison with the backtest
+     keeps using `SYMBOLS`.
   6. Controls screen: the "Sizing" row text becomes "Volatility target
      40%, assets set by TRADER_SYMBOLS (default BTC and ETH), long
      only, no leverage".
@@ -1083,8 +1087,9 @@ Order: D1 and D2 are independent; merge one at a time.
      `docs/DECISIONS.md` leave the Open row "Asset list" as it is: the
      owner decides after the paper results.
 - **Tests:**
-  1. Config: default gives `("BTC-USD", "ETH-USD")`; `" btc-usd , sol-usd "`
-     gives `("BTC-USD", "SOL-USD")`; empty and repeated values raise;
+  1. Config: default gives `("BTC-USD", "ETH-USD")`; `"btc-usd,sol-usd"`
+     raises (no ETH); `" btc-usd , eth-usd,sol-usd "` gives
+     `("BTC-USD", "ETH-USD", "SOL-USD")`; empty and repeated values raise;
      `mode="live"` with SOL raises; `mode="live"` with the default does
      not.
   2. Sources: `MARKETS["SOL-USD"] == "solusd"`,

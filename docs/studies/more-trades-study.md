@@ -53,7 +53,7 @@ average), 28 settings in all.
 
 | Traded only while | Average result per trade after costs | Settings with a positive average | Sleeve alone, yearly | Added to the trend sleeve, yearly |
 |---|---|---|---|---|
-| Trend off (0 to 2 rules on), 2018 to 2021 | -9.3% to +0.4% (median -2.7%) | 3 of 28 | not run | not run |
+| Trend off (0 to 2 rules on), 2018 to 2021 | -9.3% to +0.4% (median -2.6%) | 3 of 28 | not run | not run |
 | Trend off, 2022 to 2026 | -4.7% to +0.7% (median -2.3%) | 3 of 28 | -20.7% to -1.5%, worst loss -30% to -69% | -11.9% to 9.9%; none beat 11.4% |
 | Trend on (7 to 9 rules on), 2022 to 2026 | -3.7% to +5.7% (median +1.0%) | 16 of 28 | -1.9% to 8.9% | 8.7% to 14.4% (median 11.8%) |
 
@@ -62,7 +62,7 @@ average), 28 settings in all.
   ones.
 - While the trend is on, the gain is about what any 5 to 10 days in an
   uptrend earned (0.9% to 1.7%, before the 0.9% round-trip cost), with
-  2 to 38 trades per setting. Only 1 of 28 settings is statistically
+  0 to 38 trades per setting. Only 1 of 28 settings is statistically
   distinguishable from zero. It also adds exposure on top of the trend
   sleeve, so it is partly the "larger positions" result above.
 
@@ -73,20 +73,23 @@ Rejected.
 Bitstamp listed about 110 USD spot pairs on 2026-11-23. Liquidity that
 day, one sample of each order book:
 
-| Pair | Traded in 24 hours | Spread | Resting within 0.1% of the price (smaller side) | First daily candle |
+| Pair | Traded in 24 hours | Median traded per day, 31 days | Spread | Resting within 0.1% of the price (smaller side) |
 |---|---|---|---|---|
-| BTC/USD | $87m | 0.003% | $1,356k | 2011 |
-| ETH/USD | $16m | 0.002% | $1,263k | 2017 |
-| SOL/USD | $11m | 0.001% | $277k | 2022-08-18 |
-| XRP/USD | $5m | 0.001% | $281k | 2016 |
-| DOGE/USD | $6m | 0.002% | $249k | 2022-12-21 |
-| ADA/USD | $1.4m | 0.014% | $36k | not checked |
-| LTC/USD | $0.3m | 0.022% | $71k | not checked |
-| LINK/USD | $0.2m | 0.046% | $22k | not checked |
-| SHIB/USD | $0.2m | 0.276% | $0 | not checked |
-| BNB/USD | $0.04m | 0.045% | $6k | not checked |
+| BTC/USD | $86m | $119m | under 0.001% | $1,347k |
+| ETH/USD | $16m | $22m | 0.001% | $1,298k |
+| SOL/USD | $11m | $14m | 0.001% | $310k |
+| XRP/USD | $5m | $15m | 0.001% | $396k |
+| DOGE/USD | $6m | $5m | 0.002% | $250k |
+| ADA/USD | $1.4m | $1.5m | 0.014% | $34k |
+| LTC/USD | $0.3m | $0.6m | 0.037% | $73k |
+| LINK/USD | $0.2m | $0.5m | 0.052% | $21k |
+| SHIB/USD | $0.2m | $0.2m | 0.276% | $0 |
+| BNB/USD | $0.04m | $0.08m | 0.045% | $12k |
 
-Median traded per day over 31 days: SOL $13.9m, XRP $14.6m, DOGE $5.3m.
+First daily candle on Bitstamp: SOL 2022-08-18, DOGE 2022-12-21, XRP
+2016-12-16. An earlier sample the same day gave similar figures; a
+$2,500 market buy then cost 0.41% beyond the mid price in SHIB and
+0.05% in BNB.
 
 Trend sleeve with more assets (equal shares, 40% volatility target, 20%
 band). SOL and DOGE are used only from 200 days after their first

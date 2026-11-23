@@ -133,7 +133,7 @@ without the 7-day limit; or never sold at a loss.
 - Best real detector, ADX(14) under 20 on daily bars, 5% spacing, sold
   at regime end: -0.4% a year in 2018-2021, +0.5% in 2022-2026, about 24
   round trips a year. With 7 days to sell the rest: -7.5% then +3.2%.
-  This is the setting spec G3 logs in shadow (5% spacing, 10 lots).
+  This is the setting spec G5 logs in shadow (5% spacing, 10 lots).
 - The versions never sold at a loss were in the market 80% of the time
   (median); they are holding coins through downtrends, not trading a
   range.
@@ -162,7 +162,7 @@ funding rates, 2022 to 2026-10-31, 0.45% per side.
 
 About 40 episodes, mostly 2022 and 2026, and nearly all of the gain is
 ETH. Seven-day returns after such days averaged +1.35% against -0.13%
-for all trend-off days, not statistically distinguishable. Spec G3 logs
+for all trend-off days, not statistically distinguishable. Spec G4 logs
 this rule in shadow on Coinbase's funding rate.
 
 ## Conclusions
@@ -172,9 +172,13 @@ this rule in shadow on Coinbase's funding rate.
 2. Put the selector in place so a sleeve can be switched on per regime
    (spec G2). Only the trend sleeve trades.
 3. Run the grid, the mixed-regime dip-buying and the funding rule as
-   shadow sleeves on Bitstamp's own prices, with no orders (spec G3).
-   A sleeve is considered for the paper account only after its shadow
-   record is positive after fees over at least 8 weeks and 20 trades.
+   shadow sleeves on Bitstamp's own prices, with no orders (specs G3,
+   G4, G5). A sleeve is considered for the paper account only by a new
+   owner decision, after the promotion review (spec 5.3) and at least 8
+   weeks of shadow record. At the rates above, 8 weeks gives about 4
+   grid round trips, 1 dip-buying trade and 1 or 2 funding episodes, so
+   the record can show that live behaviour matches the backtest, not
+   that a sleeve has an edge.
 4. No change to the trend sleeve's rules, sizing or limits.
 
 ## Limits

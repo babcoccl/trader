@@ -4,7 +4,7 @@ D=pd.read_csv("regime_mr.csv"); M=D[D.regime=="mixed (3-6 on)"]
 print(M[["trigger","exit","2018-2021 n","2018-2021 net","2018-2021 t","2022-2026 n","2022-2026 net","2022-2026 t","with trend 2022+","dd"]].round(2).to_string(index=False))
 rng=np.random.default_rng(7)
 def cagr(P): return bt.stats(bt.run(full((base+0.25*P).clip(upper=0.5)),fee=0.004,slip=0.0005),HO)["cagr"]*100
-for tn,en in (("1.5 sd under","back to 20d avg, max 10d"),("1 sd under","back to 20d avg, max 20d")):
+for tn,en in (("1.5 sd under","back to 20d avg, max 10d"),("1 sd under 20d avg","back to 20d avg, max 20d")):
     tg=TRIG[tn]; ex=EXIT[en]; P=positions(tg,mix,ex); T=trades(P).loc[HO:END]; real=(T.net.mean()*100,cagr(P))
     alone=bt.stats(bt.run(full(0.25*P),fee=0.004,slip=0.0005),HO)
     nets=[]; cs=[]

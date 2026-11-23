@@ -170,3 +170,136 @@ Rules:
 
 Finish: when every "Done when" line of the spec is true and CI is green, open the pull request and stop. In the PR description state what was built, how each "Done when" line was checked, and anything not done. Do not start another spec.
 ```
+
+## Regime awareness and shadow sleeves (section E)
+
+The tests behind these specs are in `docs/studies/regime-study.md`. Nothing in this section places an order or changes what the trend sleeve trades.
+
+| Step | Specs | Can run at the same time |
+|---|---|---|
+| 1 | G1 (regime label) | no |
+| 2 | G2 (sleeve selector) | no |
+| 3 | G3 (shadow ledger, Shadow screen, dip-buying shadow) | no |
+| 4 | G4 (funding rates and funding shadow), G5 (grid shadow) | yes, but merge them one at a time: both edit `sleeves.py` and `runner.py` |
+
+### Kickoff prompt for G1
+
+```
+Repository: babcoccl/trader, branch main.
+
+Task: implement spec G1 "Regime label on every daily decision" from docs/SPECS.md section E. Implement this spec only.
+
+Before writing any code:
+1. Read AGENTS.md.
+2. Read docs/SPECS.md section A in full.
+3. Read the start of section E (the rules for every spec in it) and spec G1.
+4. Read src/trader/strategy/rules.py, src/trader/strategy/sizing.py, src/trader/engine/daily_cycle.py, src/trader/api/routes/rules.py and web/src/pages/Rules.tsx.
+
+Rules:
+- Work on a branch named devin/G1-regime-label and open one pull request to main.
+- Change only the files the spec lists. The regime is recorded and shown; it must not change a target weight, a plan, a risk check or an approval.
+- The Rules page stays read-only: no input, select, textarea or button.
+- Tests need a Postgres database whose name ends in _test, passed as TEST_DATABASE_URL. Never point it at the database named trader.
+- Never use real API keys and never place a real order.
+- If anything in the spec is ambiguous or contradicts the code, stop and ask me before guessing.
+
+Finish: when every "Done when" line of the spec is true and CI is green, open the pull request and stop. In the PR description state what was built, how each "Done when" line was checked, and anything not done. Do not start another spec.
+```
+
+### Kickoff prompt for G2
+
+```
+Repository: babcoccl/trader, branch main.
+
+Task: implement spec G2 "Sleeve selector" from docs/SPECS.md section E. Implement this spec only.
+
+Before writing any code:
+1. Read AGENTS.md.
+2. Read docs/SPECS.md section A in full.
+3. Read the start of section E (the rules for every spec in it) and spec G2.
+4. Read src/trader/strategy/regime.py, src/trader/strategy/sizing.py, src/trader/engine/daily_cycle.py and src/trader/api/routes/rules.py.
+
+Rules:
+- Work on a branch named devin/G2-sleeve-selector and open one pull request to main.
+- Change only the files the spec lists. The registry holds exactly one sleeve that trades, the trend sleeve, allowed in every regime. Do not add a second sleeve or any setting that changes the registry.
+- Every target weight must be the same number as before, and every existing daily-cycle test must pass without being edited.
+- Tests need a Postgres database whose name ends in _test, passed as TEST_DATABASE_URL. Never point it at the database named trader.
+- Never use real API keys and never place a real order.
+- If anything in the spec is ambiguous or contradicts the code, stop and ask me before guessing.
+
+Finish: when every "Done when" line of the spec is true and CI is green, open the pull request and stop. In the PR description state what was built, how each "Done when" line was checked, and anything not done. Do not start another spec.
+```
+
+### Kickoff prompt for G3
+
+```
+Repository: babcoccl/trader, branch main.
+
+Task: implement spec G3 "Shadow ledger, Shadow screen and the dip-buying shadow sleeve" from docs/SPECS.md section E. Implement this spec only.
+
+Before writing any code:
+1. Read AGENTS.md.
+2. Read docs/SPECS.md section A in full.
+3. Read the start of section E (the rules for every spec in it) and spec G3.
+4. Read src/trader/strategy/regime.py, src/trader/strategy/sleeves.py, src/trader/engine/__main__.py, src/trader/engine/daily_cycle.py, src/trader/ledger/models.py, the newest file in migrations/versions/, src/trader/api/routes/rules.py and web/src/pages/Rules.tsx.
+
+Rules:
+- Work on a branch named devin/G3-shadow-ledger and open one pull request to main.
+- Change only the files the spec lists. Only the trend sleeve trades: do not change a rule, the sizing, the trading band, a risk limit, the halt or the approval requirement.
+- Code under src/trader/shadow/ must not import trader.plans, trader.execution or trader.risk, and must not write to plans, orders, fills, balances, equity_snapshots or decisions. Do not add any setting, variable or route that lets a shadow sleeve trade.
+- The Shadow page is read-only: no input, select, textarea or button.
+- Tests need a Postgres database whose name ends in _test, passed as TEST_DATABASE_URL. Never point it at the database named trader.
+- Never use real API keys and never place a real order.
+- If anything in the spec is ambiguous or contradicts the code, stop and ask me before guessing.
+
+Finish: when every "Done when" line of the spec is true and CI is green, open the pull request and stop. In the PR description state what was built, how each "Done when" line was checked, and anything not done. Do not start another spec.
+```
+
+### Kickoff prompt for G4
+
+```
+Repository: babcoccl/trader, branch main.
+
+Task: implement spec G4 "Funding-rate collection and the funding shadow sleeve" from docs/SPECS.md section E. Implement this spec only.
+
+Before writing any code:
+1. Read AGENTS.md.
+2. Read docs/SPECS.md section A in full.
+3. Read the start of section E (the rules for every spec in it) and spec G4.
+4. Read src/trader/shadow/ in full, src/trader/data/collector.py, src/trader/data/sources/coinbase.py, src/trader/api/routes/funding.py, web/src/pages/Positions.tsx and research/fixtures/coinbase_perp_product.json.
+
+Rules:
+- Work on a branch named devin/G4-funding-shadow and open one pull request to main.
+- Change only the files the spec lists. Only the trend sleeve trades: do not change a rule, the sizing, the trading band, a risk limit, the halt or the approval requirement.
+- Code under src/trader/shadow/ must not import trader.plans, trader.execution or trader.risk, and must not write to plans, orders, fills, balances, equity_snapshots or decisions. Do not add any setting, variable or route that lets a shadow sleeve trade.
+- The funding source is a public endpoint and needs no key. Tests use the fixture file and never call the network.
+- Tests need a Postgres database whose name ends in _test, passed as TEST_DATABASE_URL. Never point it at the database named trader.
+- Never use real API keys and never place a real order.
+- If anything in the spec is ambiguous or contradicts the code, stop and ask me before guessing.
+
+Finish: when every "Done when" line of the spec is true and CI is green, open the pull request and stop. In the PR description state what was built, how each "Done when" line was checked, and anything not done. Do not start another spec.
+```
+
+### Kickoff prompt for G5
+
+```
+Repository: babcoccl/trader, branch main.
+
+Task: implement spec G5 "Grid shadow sleeve for a sideways reading" from docs/SPECS.md section E. Implement this spec only.
+
+Before writing any code:
+1. Read AGENTS.md.
+2. Read docs/SPECS.md section A in full.
+3. Read the start of section E (the rules for every spec in it) and spec G5.
+4. Read src/trader/shadow/ in full and src/trader/strategy/sleeves.py.
+
+Rules:
+- Work on a branch named devin/G5-grid-shadow and open one pull request to main.
+- Change only the files the spec lists. Only the trend sleeve trades: do not change a rule, the sizing, the trading band, a risk limit, the halt or the approval requirement.
+- Code under src/trader/shadow/ must not import trader.plans, trader.execution or trader.risk, and must not write to plans, orders, fills, balances, equity_snapshots or decisions. Do not add any setting, variable or route that lets a shadow sleeve trade.
+- Tests need a Postgres database whose name ends in _test, passed as TEST_DATABASE_URL. Never point it at the database named trader.
+- Never use real API keys and never place a real order.
+- If anything in the spec is ambiguous or contradicts the code, stop and ask me before guessing.
+
+Finish: when every "Done when" line of the spec is true and CI is green, open the pull request and stop. In the PR description state what was built, how each "Done when" line was checked, and anything not done. Do not start another spec.
+```

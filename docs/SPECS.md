@@ -32,13 +32,14 @@ Written so that a session on a lightweight model can execute one spec without ma
 src/trader/
   core/        config.py, clock.py, logging.py, types.py, db.py
   data/        sources/, collector.py, candles.py
-  strategy/    rules.py, ensemble.py, sizing.py, dip_bid.py
+  strategy/    rules.py, ensemble.py, sizing.py, dip_bid.py, regime.py, sleeves.py (section E)
   risk/        engine.py, limits.py
   plans/       builder.py, approval.py
   ledger/      models.py, accounting.py
   execution/   base.py, paper.py, bitstamp.py, reconcile.py
   engine/      daily_cycle.py, intraday_cycle.py
   ops/         heartbeat.py, watchdog.py, digest.py
+  shadow/      book.py, runner.py, dip.py, funding.py, grid.py (section E; logs only, places no orders)
   llm/         (phase 6)
   api/         app.py, routes/, schemas.py, sse.py, auth.py
   backtest/    engine.py, costs.py
@@ -1129,3 +1130,779 @@ Order: D1 and D2 are independent; merge one at a time.
   XRP; per-asset caps or weights other than equal shares; changing a
   rule, the volatility target, the band or any limit; the funding watch
   on Positions; the committed fixtures in `research/`.
+
+## E. Regime awareness and shadow sleeves
+
+Requested by the owner on 2026-11-23: the system should know which
+market regime it is in and be able to run a different strategy per
+regime, for example a grid in sideways markets. The tests behind this
+section are in `docs/studies/regime-study.md`. They found no regime
+strategy whose result is distinguishable from chance, and the grid lost
+after fees, so this section builds the structure and records what each
+extra strategy would have done. It does not let any of them trade.
+
+Section A applies. Use the template in `docs/KICKOFF.md` with "section
+E" in place of "section B". Branch `devin/<ID>-<slug>`. One spec, one
+session, one pull request. No spec here needs an API key. The ids start
+with G because "sleeve E" already names the parked sudden-drop bids.
+
+**Rules for every spec in this section**
+
+1. Only the trend sleeve trades. No spec in this section changes a
+   rule, the sizing, the trading band, a risk limit, the halt or the
+   approval requirement, and every existing test passes without being
+   edited unless the spec names the change.
+2. A shadow sleeve is arithmetic on stored prices. Code under
+   `src/trader/shadow/` never imports from `trader.plans`,
+   `trader.execution` or `trader.risk`, never writes a row to `plans`,
+   `orders`, `fills`, `balances`, `equity_snapshots` or `decisions`, and
+   never calls an exchange endpoint that needs a key.
+3. A shadow failure never affects trading or another shadow sleeve:
+   each sleeve runs in its own database session after the cycles, and an
+   exception becomes an `events` row (`kind="shadow_error"`,
+   `severity="warning"`, at most one per sleeve and UTC day), not a
+   failed cycle and not a watchdog alarm.
+4. No setting, environment variable or API route can make a shadow
+   sleeve trade. That takes a new spec, written after the owner records
+   the decision in `docs/DECISIONS.md`, not before the spec 5.3 review,
+   and with at least 8 weeks of shadow record for that sleeve.
+
+These specs do not change what is traded or how it is sized, so they do
+not restart the four-week paper count of spec 5.3.
+
+**Expect small numbers.** At the rates in the study, 8 weeks of shadow
+running gives about 4 grid round trips, 1 dip-buying trade and 1 or 2
+funding episodes. The record shows whether the live behaviour matches
+the backtest; it cannot prove an edge by itself.
+
+Order: G1, then G2, then G3. G4 and G5 need G3 and are independent of
+each other; merge one at a time.
+
+### G1 Regime label on every daily decision
+
+- **Goal:** each daily decision records the regime of its asset
+  (uptrend, mixed or downtrend; calm or volatile; sideways reading or
+  not), computed only from candles the decision already uses. The
+  label appears in the decision's reason and on the Rules screen, so an
+  idle day reads "Downtrend, volatile" instead of only "0 of 9".
+- **Depends on:** D1.
+- **Files:** `src/trader/strategy/regime.py` (new),
+  `tests/strategy/test_regime.py` (new),
+  `src/trader/engine/daily_cycle.py`,
+  `tests/engine/test_daily_cycle.py`, `src/trader/api/routes/rules.py`,
+  `src/trader/api/schemas.py`, `tests/api/test_api.py`,
+  `web/src/api/client.ts`, `web/src/pages/Rules.tsx`,
+  `web/src/__tests__/Rules.test.tsx`, `web/src/__tests__/fixtures.ts`,
+  `docs/API.md`.
+- **Interfaces:**
+  1. In `regime.py`:
+
+     ```python
+     Trend = Literal["uptrend", "mixed", "downtrend"]
+     Volatility = Literal["calm", "volatile"]
+
+     ADX_PERIOD = 14
+     ADX_SIDEWAYS = 20.0
+     VOL_RANK_WINDOW = 365
+     VOL_RANK_MIN = 180
+
+
+     @dataclass(frozen=True)
+     class Regime:
+         trend: Trend
+         volatility: Volatility | None  # None: under 180 days of volatility
+         sideways: bool | None  # None: ADX not yet defined
+         vol_percentile: float | None
+         adx: float | None
+
+         def text(self) -> str: ...
+         def as_details(self) -> dict[str, Any]: ...
+
+
+     def trend(rules_positive: int) -> Trend: ...
+     def vol_percentile(close: pd.Series) -> pd.Series: ...
+     def adx(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series: ...
+     def label(
+         rules_positive: int, high: pd.Series, low: pd.Series, close: pd.Series
+     ) -> Regime: ...
+     def from_details(details: dict[str, Any]) -> Regime | None: ...
+     ```
+
+  2. Definitions. All use the last row of the series given.
+     - `trend`: 7, 8 or 9 rules positive is `uptrend`; 3 to 6 is
+       `mixed`; 0, 1 or 2 is `downtrend`.
+     - `vol_percentile`:
+       `sizing.annual_vol(close).rolling(365, min_periods=180).rank(pct=True)`.
+       `volatility` is `calm` when the last value is under 0.5,
+       `volatile` when it is 0.5 or more, `None` when it is NaN.
+     - `adx` (Wilder, period n = 14), with `prev` meaning `.shift(1)`:
+       `up = high - prev(high)`; `down = prev(low) - low`;
+       `plus_dm = up` where `up > down and up > 0`, else 0;
+       `minus_dm = down` where `down > up and down > 0`, else 0;
+       `tr = max(high - low, abs(high - prev(close)), abs(low - prev(close)))`
+       (row-wise, NaN skipped);
+       `w(x) = x.ewm(alpha=1 / n, min_periods=n).mean()`;
+       `plus_di = 100 * w(plus_dm) / w(tr)`;
+       `minus_di = 100 * w(minus_dm) / w(tr)`;
+       `adx = w(100 * abs(plus_di - minus_di) / (plus_di + minus_di))`.
+       `sideways` is `True` when the last ADX is under 20, `False` when
+       it is 20 or more, `None` when it is NaN.
+     - `text()`: the trend with a capital letter, then the volatility if
+       known, then "sideways reading" if `sideways` is `True`, joined
+       with ", ". Examples: "Downtrend, volatile"; "Mixed, calm,
+       sideways reading"; "Uptrend".
+     - `as_details()`: `{"trend", "volatility", "sideways",
+       "vol_percentile", "adx"}` with `None` for unknown values and no
+       NaN. `from_details` reverses it and returns `None` when the key
+       `trend` is missing.
+  3. Daily decision rows that carry `details["rules"]` also carry
+     `details["regime"]` (from `as_details()`).
+  4. Reason text. The prefix becomes
+     `"Checked <symbol>. <k> of 9 rules positive. <regime text>. Target
+     <t>, holding <c>."` The words "<k> of 9 rules positive." stay
+     exactly as they are.
+  5. `AssetRulesOut` gains `regime: RegimeOut | None` with fields
+     `trend: str`, `volatility: str | None`, `sideways: bool | None`,
+     `vol_percentile: float | None`, `adx: float | None`, `text: str`.
+     `None` for rows written before this spec.
+- **Steps:**
+  1. `regime.py` as above. It imports `sizing` and nothing from
+     `engine`, `plans`, `risk` or `execution`.
+  2. Daily cycle: after the rules are computed for an asset, call
+     `regime.label(k, df["high"], df["low"], df["close"])` on the same
+     de-duplicated frame and keep it in `per_asset`. The regime does not
+     enter `sizing.target_weights`, `should_trade`, the plan builder or
+     the risk check.
+  3. Rules route: fill `regime` from the stored `details["regime"]`.
+  4. Rules page: the asset heading becomes "<symbol>: <rules_positive>
+     of 9 rules on. <regime text>". Under the volatility line add one
+     muted line: "Regime: ADX <adx, 1 decimal> (sideways reading under
+     20). Volatility is higher than on <vol_percentile as %> of the last
+     365 days." Show "—" for a missing value, and omit both additions
+     when `regime` is null.
+  5. `docs/API.md`: document the new field.
+- **Tests:**
+  1. Fixture check. Build `close` from
+     `research/fixtures/btc_eth_daily.csv` and `high`, `low` from
+     `research/fixtures/btc_eth_daily_hl.csv`. For both assets and every
+     row of `research/fixtures/expected_regimes.csv`: `vol_percentile`
+     and `adx` match the columns `vol_percentile` and `adx14` to 1e-9
+     (empty means NaN), and for at least 200 dates spread over the file,
+     including the first and last row with a value, `label` on the
+     series cut at that date matches `trend`, `volatility` and
+     `sideways` (`rules_positive` is a column of the fixture).
+  2. `trend` for 0 to 9; `text()` for the three examples above;
+     `as_details()` and `from_details()` round-trip, including `None`
+     values; a series of 100 days gives `volatility` `None`; 20 days
+     gives `sideways` `None`.
+  3. Daily cycle: a decision with rules has `details["regime"]` with the
+     five keys and its reason contains the regime text; a decision
+     blocked for a missing candle has no `regime`; target weights, actions and plans are the
+     same as before for the existing fixtures.
+  4. API: a stored row with a regime is returned with `text`; a row
+     without one gives `regime: null`.
+  5. Web: the heading shows the regime text; the page renders with
+     `regime: null`; the page still has no `input`, `select`,
+     `textarea` or `button`.
+- **Done when:** tests pass (`pytest`, `npm test`); CI green; a
+  screenshot of the Rules screen showing a regime is in the PR.
+- **Out of scope:** using the regime to change a target, a plan or a
+  limit; intraday regimes; any statistical regime model; regime history
+  charts.
+
+### G2 Sleeve selector
+
+- **Goal:** the daily cycle gets its target from a selector that adds
+  up the sleeves allowed to trade in each asset's regime. The registry
+  holds one sleeve that trades, the trend sleeve, allowed in every
+  regime, so every target is the same number as before. Later specs
+  add sleeves to the registry in shadow mode.
+- **Depends on:** G1.
+- **Files:** `src/trader/strategy/sleeves.py` (new),
+  `tests/strategy/test_sleeves.py` (new),
+  `src/trader/engine/daily_cycle.py`,
+  `tests/engine/test_daily_cycle.py`, `src/trader/api/routes/rules.py`,
+  `tests/api/test_api.py`, `web/src/__tests__/fixtures.ts`,
+  `docs/API.md`.
+- **Interfaces:**
+
+  ```python
+  ALL_TRENDS: frozenset[str] = frozenset({"uptrend", "mixed", "downtrend"})
+
+
+  @dataclass(frozen=True)
+  class SleeveSpec:
+      name: str  # "trend"
+      title: str  # "Trend rules"
+      mode: Literal["active", "shadow"]
+      trends: frozenset[str]  # trend states in which it may hold a position
+      needs_sideways: bool  # True: also needs regime.sideways is True
+      max_weight: float  # most it may hold in one asset, fraction of the account
+
+
+  SLEEVES: tuple[SleeveSpec, ...] = (
+      SleeveSpec("trend", "Trend rules", "active", ALL_TRENDS, False, 1.0),
+  )
+
+
+  @dataclass(frozen=True)
+  class SleevePart:
+      name: str
+      allowed: bool
+      proposed: float
+      weight: float
+
+
+  @dataclass(frozen=True)
+  class Combined:
+      weights: dict[str, float]  # symbol -> target weight
+      parts: dict[str, list[SleevePart]]  # symbol -> one entry per active sleeve
+
+
+  def get(name: str) -> SleeveSpec: ...
+  def active() -> tuple[SleeveSpec, ...]: ...
+  def allowed(spec: SleeveSpec, regime: Regime | None) -> bool: ...
+  def combine(
+      proposals: dict[str, dict[str, float]],  # sleeve name -> symbol -> weight
+      regimes: dict[str, Regime | None],  # symbol -> regime
+  ) -> Combined: ...
+  ```
+
+- **Steps:**
+  1. `allowed`: with a regime, `regime.trend in spec.trends` and, when
+     `spec.needs_sideways`, `regime.sideways is True`. With `None`,
+     `True` only when `spec.trends == ALL_TRENDS` and not
+     `spec.needs_sideways`.
+  2. `combine`:
+     - `ValueError` if `proposals` names a sleeve that is not in
+       `SLEEVES` or whose mode is `shadow`, or if an active sleeve is
+       missing from `proposals`.
+     - Per symbol and active sleeve: `proposed` is the proposal, 0.0
+       when missing; `weight` is 0.0 when the sleeve is not allowed or
+       `proposed` is NaN or negative, otherwise
+       `min(proposed, spec.max_weight)`.
+     - A symbol's weight is the sum of its parts. If the weights of all
+       symbols sum to more than `1.0 + 1e-12`, divide every weight and
+       every part by that sum. No weight is negative and the total never
+       exceeds 1.0: no shorts, no leverage.
+  3. Daily cycle: keep the call to `sizing.target_weights`, then
+     `combined = sleeves.combine({"trend": weights}, regimes)` and use
+     `combined.weights[symbol]` as `target`. Add to `details`:
+     `"sleeves": [{"name", "mode": "active", "allowed", "proposed",
+     "weight"}]`. Nothing after `target` changes: the band, the plan
+     builder, the risk check and the approval are untouched.
+  4. Rules route: add one `ParameterOut` after "Assets":
+     name "Sleeves that trade", value the titles of `active()` joined
+     with ", ", followed by " (every regime)" when the sleeve's trends
+     are `ALL_TRENDS`. With this spec it reads "Trend rules (every
+     regime)".
+  5. `docs/API.md`: document `details["sleeves"]` and the new settings
+     row.
+- **Tests:**
+  1. The registry: exactly one sleeve has mode `active`, its name is
+     `trend`, its trends are `ALL_TRENDS`, `needs_sideways` is `False`
+     and `max_weight` is 1.0. This test's docstring says that changing
+     it needs a new spec and an owner decision.
+  2. `combine` with the trend sleeve returns the proposal unchanged for
+     every row of `research/fixtures/expected_signals.csv`
+     (`target_weight` per date for both assets, exact equality).
+  3. With a registry patched in the test to hold a second active sleeve
+     allowed only in `mixed` with `max_weight` 0.25: it adds its weight
+     in `mixed`, adds 0 in `uptrend` and `downtrend`, is capped at 0.25,
+     and totals above 1.0 are scaled to 1.0. NaN and negative proposals
+     give 0.
+  4. `combine` raises for an unknown sleeve, for a sleeve in shadow
+     mode, and for a missing active sleeve.
+  5. `allowed` for each trend state, for `needs_sideways` with
+     `sideways` `True`, `False` and `None`, and for a `None` regime.
+  6. Daily cycle: every existing test passes unedited; a decision's
+     `details["sleeves"]` has one entry whose `weight` equals the
+     decision's target.
+- **Done when:** tests pass; CI green; the PR description states that
+  the stored target weights are unchanged on the fixture.
+- **Out of scope:** a second sleeve of any kind; a setting, variable or
+  route that changes the registry; per-sleeve plans, stops or
+  accounting; any web change beyond the fixture.
+
+### G3 Shadow ledger, Shadow screen and the dip-buying shadow sleeve
+
+- **Goal:** a hypothetical book records what a sleeve would have bought
+  and sold, with fees, and a read-only Shadow screen shows it. The
+  first sleeve on it is dip-buying in a mixed regime. No order, plan or
+  account balance is touched.
+- **Depends on:** G2.
+- **Files:** `src/trader/shadow/__init__.py`,
+  `src/trader/shadow/book.py`, `src/trader/shadow/data.py`,
+  `src/trader/shadow/dip.py`, `src/trader/shadow/runner.py` (all new),
+  `tests/shadow/__init__.py`, `tests/shadow/test_book.py`,
+  `tests/shadow/test_data.py`, `tests/shadow/test_dip.py`,
+  `tests/shadow/test_runner.py`, `tests/shadow/test_isolation.py` (all
+  new), `src/trader/ledger/models.py`, `migrations/versions/<new>.py`,
+  `tests/ledger/test_schema.py`, `src/trader/strategy/sleeves.py`,
+  `tests/strategy/test_sleeves.py`, `src/trader/engine/__main__.py`,
+  `tests/engine/test_engine_service.py`,
+  `src/trader/api/routes/shadow.py` (new), `src/trader/api/app.py`,
+  `src/trader/api/schemas.py`, `tests/api/test_api.py`,
+  `web/src/api/client.ts`, `web/src/pages/Shadow.tsx` (new),
+  `web/src/App.tsx`, `web/src/__tests__/Shadow.test.tsx` (new),
+  `web/src/__tests__/fixtures.ts`, `docs/API.md`, `docs/SCHEMA.md`,
+  `docs/SETUP.md`.
+- **Interfaces:**
+  1. Tables (one migration; its `down_revision` is the current head).
+     Money columns are `NUMERIC(38,18)`, times are `timestamptz`.
+     - `shadow_trades`: `id`, `created_at`, `sleeve` (varchar 20),
+       `symbol` (varchar 20), `opened_at`, `entry_price`, `quantity`,
+       `cost_usd` (dollars spent, fee included), `entry_fee_usd`,
+       `closed_at` (null while open), `exit_price` (null),
+       `exit_fee_usd` (null), `pnl_usd` (null; proceeds after fee minus
+       `cost_usd`), `exit_reason` (varchar 60, null), `details` (jsonb,
+       default `{}`). Index on (`sleeve`, `closed_at`).
+     - `shadow_marks`: `id`, `created_at`, `sleeve`, `day` (date),
+       `equity_usd`, `cash_usd`, `exposure_usd`, `open_trades` (int),
+       `closed_trades` (int, running total), `note` (text), `details`
+       (jsonb). Unique (`sleeve`, `day`).
+     - `shadow_state`: `id`, `updated_at`, `sleeve`, `symbol`, `state`
+       (jsonb). Unique (`sleeve`, `symbol`). Not used by this spec; G5
+       uses it, and it is created here so that G4 and G5 need no
+       migration.
+  2. `book.py`. Each sleeve has its own book that starts with
+     `START_USD = Decimal("10000")`. All arithmetic is `Decimal`.
+
+     ```python
+     def buy(
+         session, sleeve, symbol, now, price, spend_usd, fee_rate, slippage, details=None
+     ) -> ShadowTrade: ...
+     def sell(session, trade, now, price, fee_rate, slippage, reason) -> ShadowTrade: ...
+     def open_trades(session, sleeve, symbol=None) -> list[ShadowTrade]: ...
+     def summary(session, sleeve, prices: dict[str, Decimal]) -> Summary: ...
+     def mark(session, sleeve, day, prices, note, details=None) -> ShadowMark: ...
+     def marked(session, sleeve, day) -> bool: ...
+     ```
+
+     - `buy`: fill price = `price * (1 + slippage)`; fee =
+       `spend_usd * fee_rate`; quantity = `(spend_usd - fee) / fill
+       price`; `cost_usd = spend_usd`.
+     - `sell`: fill price = `price * (1 - slippage)`; gross =
+       `quantity * fill price`; fee = `gross * fee_rate`;
+       `pnl_usd = gross - fee - cost_usd`. Selling a closed trade raises
+       `ValueError`.
+     - `Summary`: `cash` = `START_USD` + sum of `pnl_usd` of closed
+       trades − sum of `cost_usd` of open trades; `exposure` = sum of
+       open `quantity * prices[symbol]`; `equity = cash + exposure`;
+       `open_count`; `closed_count`; `fees` (all entry and exit fees).
+     - `mark` writes the day's row from `summary`; if the row exists it
+       is returned unchanged.
+  3. `data.py`, the only place shadow code reads prices and regimes:
+
+     ```python
+     MAX_PRICE_AGE = timedelta(minutes=15)
+
+
+     def symbols(wanted: tuple[str, ...]) -> tuple[str, ...]: ...
+     def regime_today(session, symbol, today: datetime) -> Regime | None: ...
+     def latest_regime(session, symbol) -> Regime | None: ...
+     def price(session, symbol, now: datetime) -> Decimal | None: ...
+     def daily_closes(session, symbol, today: datetime) -> pd.Series: ...
+     def bars_after(session, symbol, after: datetime, now: datetime) -> pd.DataFrame: ...
+     ```
+
+     - `symbols`: the entries of `wanted` that are in
+       `trader.data.sources.base.SYMBOLS`, in the order of `wanted`.
+     - `regime_today`: from the newest `decisions` row with
+       `cycle="daily"`, that symbol, `ran_at >= today` and a `details`
+       object that has the key `regime`; `None` when there is none.
+       `latest_regime`: the same without the `ran_at` condition.
+     - `price`: the close of the newest stored 5-minute candle of the
+       symbol; `None` when there is none or its bar closed more than
+       `MAX_PRICE_AGE` before `now`.
+     - `daily_closes`: daily closes with `open_time < today`, one row
+       per day, de-duplicated across sources the way
+       `daily_cycle.run` does it.
+     - `bars_after`: closed 5-minute candles (bar close at or before
+       `now`) with `open_time > after`, oldest first, de-duplicated the
+       same way.
+     - This module copies the de-duplication rule; it does not import
+       from `trader.engine`.
+  4. `sleeves.SLEEVES` gains
+     `SleeveSpec("dip", "Dip-buying in a mixed regime", "shadow",
+     frozenset({"mixed"}), False, 0.25)`. The G2 registry test still
+     passes: one active sleeve.
+  5. `dip.py`:
+
+     ```python
+     NAME = "dip"
+     SYMBOLS = ("BTC-USD", "ETH-USD")
+     Z_WINDOW = 20
+     Z_ENTRY = -2.0
+     HOLD_DAYS = 5
+     DESCRIPTION = (
+         "Buys 25% of its book when the trend rules are mixed (3 to 6 of 9) "
+         "and the daily close is 2 standard deviations under its 20-day "
+         "average. Sells 5 days later."
+     )
+
+
+     def zscore(close: pd.Series) -> float: ...
+     def run(session: Session, clock: Clock) -> ShadowMark | None: ...
+     ```
+
+     `zscore`: `(close[-1] - mean(last 20)) / std(last 20)`, sample
+     standard deviation (`ddof=1`), NaN with fewer than 20 closes or a
+     zero deviation.
+  6. `runner.py`: `DAILY = (dip,)`, `INTRADAY = ()`, and
+     `run(session_factory, clock) -> None`. Every module in those
+     tuples exposes `NAME`, `DESCRIPTION` and `run(session, clock)`. For
+     each module of `DAILY`, then of `INTRADAY`: open a session from
+     `session_factory` (the engine's, which commits on a clean exit) and
+     call the module's `run`. On an exception: roll back, log it, and in
+     a new session add the `shadow_error` event (`details={"sleeve":
+     NAME}`, the exception text in `message`) unless one exists for that
+     sleeve with `time` at or after 00:00 UTC today. Then go on to the
+     next module.
+  7. `GET /api/shadow` → `ShadowOut`, authentication as the other
+     routes:
+
+     ```
+     ShadowOut            sleeves: list[ShadowSleeveOut]     # runner order
+     ShadowSleeveOut
+       name: str, title: str, description: str
+       started_on: date | None            # day of the first mark
+       days: int                          # number of marks
+       equity_usd: Decimal | None         # newest mark
+       return_fraction: float | None      # equity / 10000 - 1
+       worst_drawdown: float | None       # lowest equity / running high - 1 over the marks
+       account_return_fraction: float | None  # see step 6
+       closed_trades: int, winning_trades: int, fees_usd: Decimal
+       last_note: str | None, last_day: date | None
+       open: list[ShadowTradeOut]
+       recent_closed: list[ShadowTradeOut]    # newest 20
+     ShadowTradeOut
+       symbol: str, opened_at: datetime, entry_price: Decimal,
+       cost_usd: Decimal, closed_at: datetime | None,
+       exit_price: Decimal | None, pnl_usd: Decimal | None,
+       exit_reason: str | None
+     ```
+- **Steps:**
+  1. Models, migration, `docs/SCHEMA.md`.
+  2. `dip.run`, in this order:
+     1. `today` = 00:00 UTC of `clock.now()`. If
+        `book.marked(session, NAME, today.date())`, return `None`.
+     2. The symbols are `data.symbols(SYMBOLS)`; with none, return
+        `None`. Read `data.regime_today` for each. If any is `None`,
+        return `None` (the run is tried again in five minutes).
+     3. Read `data.price` for each. If any is `None`, return `None`.
+     4. Sells: every open trade whose `opened_at` date plus `HOLD_DAYS`
+        is on or before today's date is sold at the price, with
+        `BITSTAMP.taker_fee` and `BITSTAMP.slippage`, reason "held 5
+        days".
+     5. Buys: for a symbol with no open trade, when
+        `sleeves.allowed(sleeves.get("dip"), regime)` and
+        `zscore(data.daily_closes(...)) < Z_ENTRY`: spend
+        `min(Decimal("0.25") * equity, cash)` from `book.summary`, same
+        fee and slippage. Skip a spend under 10 dollars.
+     6. `book.mark` for today with a note, one sentence per symbol, for
+        example: "BTC: downtrend, so no dip-buying (it needs a mixed
+        regime)."; "ETH: mixed, close is 0.8 standard deviations under
+        its 20-day average; it buys at 2.0."; "BTC: bought $2,500 at
+        61,170."; "ETH: holding since 2026-11-20, sells on 2026-11-25.";
+        "BTC: sold after 5 days, result -$31.20."
+  3. Engine: a method `run_shadow` and a job `cron minute="*/5",
+     second=50`. It calls `runner.run(self._session, self._clock)` and
+     only logs an exception that escapes it. It writes no `decisions`
+     row and does not change the engine's heartbeat status.
+  4. Route `shadow.py`, registered like the other routers.
+  5. Titles come from `sleeves.get(name).title`.
+  6. `account_return_fraction`: with the newest `equity_snapshots` row
+     of the current mode and the first row at or after the sleeve's
+     first mark day, newest equity divided by first equity, minus 1.
+     `None` when either is missing.
+  7. Web: tab "Shadow" after "Rules". Refreshes every 60 seconds. The
+     page starts with a notice: "Hypothetical results. These sleeves
+     place no orders and do not use the account." Then one card per
+     sleeve: title; description; `last_note` with its day; a line
+     "Since <started_on> (<days> days): <return> on a $10,000 book
+     after $<fees> in fees. Worst loss <worst_drawdown>. Trading
+     account over the same days: <account_return>."; "<closed_trades>
+     closed trades, <winning_trades> with a gain."; a table of open
+     trades (asset, opened, entry price, dollars spent); a table of
+     recent closed trades (asset, opened, closed, entry, exit, result,
+     why it was sold). Empty state for a sleeve with no mark: "No
+     record yet. The first entry appears after the next daily
+     decision." The page has no `input`, `select`, `textarea` or
+     `button`.
+  8. `docs/API.md`: the route. `docs/SETUP.md`: one sentence on the
+     Shadow screen saying that nothing on it is a real or paper order.
+- **Tests:**
+  1. Book: buying $2,500 at 100 with fee 0.004 and slippage 0.0001
+     gives fill price 100.01, fee 10, quantity 2490 / 100.01; selling at
+     110 gives fill price 109.989 and `pnl_usd` equal to quantity ×
+     109.989 × 0.996 − 2500; `summary` before and after; a second
+     `mark` for the same day changes nothing.
+  2. `zscore`: for both assets and every date of
+     `research/fixtures/expected_regimes.csv` it matches column `z20` to
+     1e-9; and with the fixture's `trend`, the rule "allowed and z under
+     -2" matches column `dip_trigger` on every row where it is not
+     empty.
+  3. `data`: `symbols` drops an asset that is not configured;
+     `regime_today` ignores yesterday's row and a row without a regime;
+     `price` returns `None` for a bar that closed 16 minutes ago;
+     `daily_closes` and `bars_after` return one row per bar when two
+     sources hold the same bar.
+  4. `dip.run` on a seeded database: a mixed regime with a z-score under
+     -2 buys 25% of equity; the same with a downtrend or an uptrend buys
+     nothing and the note says why; a second run the same day returns
+     `None`; a run 5 days later sells with reason "held 5 days"; a run 4
+     days later does not; no daily decision today returns `None` and
+     writes no mark; a stale price returns `None`.
+  5. Isolation, static: parse every file under `src/trader/shadow/`
+     with `ast` and fail on any import of `trader.plans`,
+     `trader.execution` or `trader.risk`.
+  6. Isolation, database: around a `runner.run` that buys and a later
+     one that sells, the row counts of `plans`, `orders`, `fills`,
+     `balances`, `equity_snapshots` and `decisions` are unchanged.
+  7. Runner and engine: with two modules of which the first raises,
+     the second still runs and one `shadow_error` event names the first;
+     a second run the same day adds no event; `Engine.run_shadow` does
+     not raise, writes no `decisions` row, and the scheduler still holds
+     the daily and intraday jobs.
+  8. API: a sleeve with marks, one open and one closed trade returns the
+     fields above; a sleeve with no mark returns nulls and empty lists;
+     401 without a login.
+  9. Web: the notice, a card with an open and a closed trade, the empty
+     state, and no form control.
+- **Done when:** tests pass (`pytest`, `npm test`); CI green; a
+  screenshot of the Shadow screen from a running stack is in the PR;
+  the PR description states that no `plans`, `orders` or `fills` row was
+  created by the shadow run on that stack.
+- **Out of scope:** any real or paper order; replaying days missed
+  while the engine was down (a missed day has no mark, and a sale due
+  that day happens on the next run); other assets than BTC and ETH;
+  charts; adding shadow results to the digest or the weekly report.
+
+### G4 Funding-rate collection and the funding shadow sleeve
+
+- **Goal:** the collector stores Coinbase's hourly perpetual funding
+  rate for BTC and ETH, which feeds the funding line on Positions, and a
+  shadow sleeve records what "hold while the trend is off and funding is
+  negative" would have earned.
+- **Depends on:** G3.
+- **Files:** `src/trader/data/sources/coinbase_funding.py` (new),
+  `tests/data/test_funding_source.py` (new),
+  `src/trader/data/collector.py`, `tests/data/test_collector.py`,
+  `src/trader/shadow/funding.py` (new), `tests/shadow/test_funding.py`
+  (new), `src/trader/shadow/runner.py`, `tests/shadow/test_runner.py`,
+  `src/trader/strategy/sleeves.py`, `tests/strategy/test_sleeves.py`,
+  `web/src/pages/Positions.tsx`, `web/src/__tests__/Positions.test.tsx`,
+  `docs/API.md`, `docs/SETUP.md`.
+- **Source (checked on 2026-11-23, no key needed):**
+  `GET https://api.coinbase.com/api/v3/brokerage/market/products/<product id>`.
+  Product ids: `BIP-20DEC30-CDE` (BTC), `ETP-20DEC30-CDE` (ETH). The
+  response's `future_product_details` holds `funding_rate` (a decimal
+  string, the rate for one interval, positive when longs pay),
+  `funding_time` (ISO time) and `funding_interval` (`"3600s"`). A
+  trimmed real response is in
+  `research/fixtures/coinbase_perp_product.json`. Coinbase publishes no
+  funding history on this endpoint, so the record starts when this spec
+  is deployed. The fields named `funding_rate` and `funding_time` inside
+  `perpetual_details` are empty for these products; do not use them.
+- **Interfaces:**
+  1. `coinbase_funding.py`:
+
+     ```python
+     VENUE = "coinbase_perp"
+     PRODUCTS = {"BTC-USD": "BIP-20DEC30-CDE", "ETH-USD": "ETP-20DEC30-CDE"}
+
+
+     @dataclass(frozen=True)
+     class FundingObservation:
+         symbol: str
+         venue: str
+         time: datetime  # funding_time, UTC
+         rate: Decimal
+         interval_hours: int
+
+
+     class CoinbaseFundingSource:
+         def __init__(self, get_json=_get_json, base_url=BASE_URL) -> None: ...
+         def fetch(self, symbol: str) -> FundingObservation: ...
+     ```
+
+     `fetch` raises `ValueError` when the rate is empty, the time is
+     null, or the interval is not a whole number of hours.
+  2. Collector: `Collector.__init__` takes
+     `funding_source: CoinbaseFundingSource | None = None` (default: a
+     new `CoinbaseFundingSource`). In `run_once`, when no funding fetch
+     was tried in the last 10 minutes (kept in memory, so the first run
+     after a start fetches), fetch every symbol of `PRODUCTS` that is in
+     the configured asset list and insert into `funding_rates`
+     (`ON CONFLICT (symbol, venue, time) DO NOTHING`).
+  3. `sleeves.SLEEVES` gains
+     `SleeveSpec("funding", "Negative funding while the trend is off",
+     "shadow", frozenset({"downtrend"}), False, 0.25)`.
+  4. `funding.py`: `NAME = "funding"`, `SYMBOLS = ("BTC-USD",
+     "ETH-USD")`, `WINDOW_DAYS = 7`, `MIN_READINGS = 126` (three
+     quarters of 168 hours), `DESCRIPTION`, `average(session, symbol,
+     today) -> tuple[Decimal | None, int]`, `run(session, clock)`.
+     `runner.DAILY` becomes `(dip, funding)`.
+- **Steps:**
+  1. A funding failure is not a candle outage: catch it, keep the
+     collector's heartbeat status as it was, and write one `events` row
+     (`kind="funding_source_failed"`, `severity="warning"`) when
+     failures start and one (`kind="funding_source_recovered"`,
+     `severity="info"`) when a fetch works again. No row per failed
+     attempt.
+  2. `average`: the mean `rate` and the count of `funding_rates` rows
+     for the symbol and `VENUE` with `today - 7 days <= time < today`.
+     The mean is `None` when the count is under `MIN_READINGS`.
+  3. `funding.run` follows `dip.run` steps 1 to 3 (once a day, the
+     configured symbols, today's regime and a fresh price), then per
+     symbol:
+     - "on" means `sleeves.allowed(sleeves.get("funding"), regime)` and
+       the average is not `None` and is under 0.
+     - On with no open trade: buy with `min(Decimal("0.25") * equity,
+       cash)`, taker fee and slippage as in G3.
+     - Not on with an open trade, and the average is not `None`: sell,
+       reason "trend no longer off" or "funding no longer negative".
+     - Average `None`: change nothing.
+     - Then `book.mark` with a note per symbol, for example: "BTC:
+       collecting funding rates, 40 of 126 hourly readings."; "ETH:
+       downtrend and 7-day funding is -0.0011% an hour; holding."; "BTC:
+       downtrend but 7-day funding is +0.0004% an hour; no position."
+  4. Positions screen: delete the sentence " — funding beats T-bills;
+     a carry trade is worth proposing." and its condition. A carry trade
+     was tested and rejected (`docs/DECISIONS.md`), and with real rates
+     arriving the line would suggest one. The rest of the funding line
+     stays.
+  5. `docs/API.md`: note that `GET /api/funding` now returns
+     `coinbase_perp` rows. `docs/SETUP.md`: one sentence that the
+     collector reads Coinbase's public funding rate and needs no key.
+- **Tests:**
+  1. Source: the fixture file gives rate `0.000004`, time
+     2026-11-23 18:00 UTC, interval 1 hour; an empty rate, a null time
+     and `"1800s"` each raise.
+  2. Collector: the first run stores two rows; a run one minute later
+     does not call the source; a run 10 minutes later calls it and, with
+     the same `funding_time`, stores no new row; a source that raises writes one event over three failing
+     runs and one recovery event, the heartbeat stays `ok` and candles
+     are still stored.
+  3. `average`: 125 rows give `None`; 126 rows give their mean; rows at
+     or after `today` and rows of another venue are ignored.
+  4. `funding.run`: downtrend with a negative average buys; a positive
+     average, a mixed regime and an uptrend do not; an open trade is
+     sold when the regime leaves downtrend and when the average turns
+     positive, with the matching reason; with too few readings an open
+     trade is kept and nothing is bought.
+  5. Positions: the funding line shows a rate and the text "carry
+     trade" is not on the page.
+  6. The G3 isolation tests pass with this sleeve in the runner.
+- **Done when:** tests pass; CI green; on a running stack
+  `GET /api/funding` returns a `coinbase_perp` rate for BTC and ETH and
+  the Shadow screen shows the funding card (screenshot in the PR).
+- **Out of scope:** trading a perpetual; funding for SOL or XRP; any
+  other venue; backfilling history; a watchdog alarm for funding.
+
+### G5 Grid shadow sleeve for a sideways reading
+
+- **Goal:** a shadow grid runs on Bitstamp's five-minute candles while
+  an asset's regime has a sideways reading, with the setting that did
+  least badly in the study: 5% spacing, 10 lots, everything sold when
+  the reading ends.
+- **Depends on:** G3.
+- **Files:** `src/trader/shadow/grid.py` (new),
+  `tests/shadow/test_grid.py` (new), `src/trader/shadow/runner.py`,
+  `tests/shadow/test_runner.py`, `src/trader/strategy/sleeves.py`,
+  `tests/strategy/test_sleeves.py`.
+- **Interfaces:**
+  1. `sleeves.SLEEVES` gains
+     `SleeveSpec("grid", "Grid while the market reads sideways",
+     "shadow", ALL_TRENDS, True, 0.5)`.
+  2. `grid.py`:
+
+     ```python
+     NAME = "grid"
+     SYMBOLS = ("BTC-USD", "ETH-USD")
+     SPACING = 0.05
+     LOTS = 10  # per symbol
+     THROUGH = 0.0001  # a level fills only if the bar trades this far beyond it
+     DESCRIPTION = (
+         "While ADX(14) is under 20: buys one lot each time the price falls "
+         "through a level 5% apart, sells that lot 5% higher, and sells "
+         "everything when the sideways reading ends."
+     )
+
+
+     def level_price(p0: float, j: int) -> float: ...  # p0 * (1 + SPACING) ** j
+     def step(state: GridState, lots: list[Lot], candle: Bar, on: bool) -> list[Action]: ...
+     def run(session: Session, clock: Clock) -> None: ...
+     ```
+
+     `runner.INTRADAY` becomes `(grid,)`.
+  3. `shadow_state.state` for (`grid`, symbol):
+     `{"on": bool, "p0": float | null, "cursor": ISO time | null}`.
+     `cursor` is the open time of the last candle processed. An open
+     lot is a `shadow_trades` row whose `details` is `{"level": j}`.
+- **Steps:**
+  1. `step` is a pure function (no database, floats allowed) so the
+     test can drive it bar by bar. For one closed candle, in this order:
+     1. Not `on`: every open lot is sold at the candle's open with
+        `BITSTAMP.taker_fee` and `BITSTAMP.slippage`, reason "sideways
+        reading ended". Set `state.on = False`. Return.
+     2. `on` and `state.on` is `False`: set `p0` to the candle's open
+        and `state.on = True`.
+     3. Sells: each lot held before this candle sells at `entry price ×
+        (1 + SPACING)` if `high > that price × (1 + THROUGH)`, with
+        `BITSTAMP.maker_fee` and no slippage, reason "sold one level
+        up".
+     4. Buys: `j = floor(log(open / p0) / log(1 + SPACING))`, the
+        level at or under the candle's open (level 0 is `p0` itself, so
+        the first lot is bought at `p0` as soon as a bar dips under
+        it). While
+        `low < level_price(p0, j) × (1 - THROUGH)`: if the symbol holds
+        fewer than `LOTS` lots and none at level `j`, buy one lot at
+        `level_price(p0, j)` with `BITSTAMP.maker_fee` and no slippage;
+        stop when `LOTS` are held; then `j -= 1`.
+  2. Lot size: `min(equity / (2 * LOTS), cash)` from `book.summary` at
+     the moment of the buy; skip a lot under 10 dollars.
+  3. `run`, per symbol of `data.symbols(SYMBOLS)`:
+     1. `on` is `sleeves.allowed(sleeves.get("grid"), regime)` with
+        `regime = data.latest_regime(...)`. No regime: `on` is `False`.
+     2. Load `data.bars_after(session, symbol, cursor, now)`. With no
+        stored state, set `cursor` to the newest closed candle and
+        process nothing.
+     3. Call `step` for each candle, apply its actions through
+        `book.buy` and `book.sell` (the candle's close time is the
+        trade time), and save the state.
+  4. Once per UTC day, on the first run after that day's daily decision
+     exists for both symbols, `book.mark` with a note per symbol, for
+     example: "BTC: no sideways reading (ADX 31.5), grid is off."; "ETH:
+     sideways reading (ADX 17.2). 3 lots held; next buy at 1,640, next
+     sell at 1,810."
+  5. After downtime `run` processes every candle since `cursor` with the
+     current reading. Say so in the module docstring.
+- **Tests:**
+  1. `step` on hand-built bars with `p0` = 100 (level 0 is 100.0,
+     level -1 is 95.2381, level 1 is 105.0): a bar with open 100 and
+     low 99.9 buys one lot at 100.0 (level 0); a bar with open 100 and
+     low 99.995 buys nothing; a later bar with high 105.02 sells the
+     level 0 lot at 105.0 with the maker fee; a bar with high exactly
+     105.0 does not; a bar with open 100 and low 85 buys levels 0, -1,
+     -2 and -3 in that order; with 10 lots held an eleventh is not
+     bought; a level already held is not bought twice; a lot bought in
+     a bar is not sold in the same bar.
+  2. When `on` turns `False`, every lot is sold at the next bar's open
+     with the taker fee and slippage and reason "sideways reading
+     ended"; when it turns `True` again, `p0` is that bar's open.
+  3. `run` on a seeded database: the first call sets the cursor and
+     trades nothing; later candles produce the same trades as `step`; a
+     second call with no new candle does nothing; with no daily decision
+     the grid stays off.
+  4. Fee arithmetic of one round trip on a $500 lot: bought and sold 5%
+     higher with 0.30% each side, the result is
+     500 × 0.997 × 1.05 × 0.997 − 500, within 1e-9.
+  5. The G3 isolation tests pass with this sleeve in the runner.
+- **Done when:** tests pass; CI green; a screenshot of the Shadow
+  screen with the grid card from a running stack is in the PR.
+- **Out of scope:** real or paper orders; any other spacing, lot count
+  or exit; intraday regime detection; order-book or tick data (a level
+  counts as filled when a five-minute bar trades through it, which is
+  more generous than a real queue).

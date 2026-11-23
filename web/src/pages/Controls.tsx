@@ -152,7 +152,7 @@ export function Controls() {
     ["Autonomy level", "Approve every plan (other levels are not built yet)"],
     ["Approval expiry", "6 hours (fixed)"],
     ["Drawdown halt", `${(s.halt_at * 100).toFixed(0)}% from peak`],
-    ["Sizing", "Volatility target 40%, BTC and ETH only, long only, no leverage"],
+    ["Sizing", "Volatility target 40%, assets set by TRADER_SYMBOLS (default BTC and ETH), long only, no leverage"],
     ["Venue and keys", "Bitstamp. API key without withdrawal permission."],
     ["Mode", s.mode],
   ];

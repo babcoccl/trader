@@ -54,7 +54,7 @@ docs/          DESIGN.md, DECISIONS.md, PLAN.md, SPECS.md, RUNBOOK.md
 - All timestamps are UTC, timezone-aware, stored as `timestamptz`. A "day" is 00:00 to 24:00 UTC. A daily candle is keyed by its open time.
 - Money and quantities are `decimal.Decimal` in code and `NUMERIC(38,18)` in the database. Floats are allowed only inside `strategy/` and `backtest/` maths.
 - Time is read only through `core.clock.Clock` (`now() -> datetime`), so tests can freeze it.
-- Symbols are `"BTC-USD"` and `"ETH-USD"` inside the application; adapters translate to venue names.
+- Symbols are the entries of `TRADER_SYMBOLS` (default `BTC-USD`, `ETH-USD`; `SOL-USD` and `XRP-USD` are allowed in paper mode); adapters translate to venue names.
 - `mode` is `"paper"` or `"live"`, default `"paper"`. Live order placement additionally requires `TRADER_LIVE_ENABLED=true`.
 - Every scheduled cycle writes exactly one row to `decisions` with a plain-English `reason`, including when it does nothing.
 - Every service writes a row to `heartbeats` at least every 60 seconds.
@@ -64,10 +64,10 @@ docs/          DESIGN.md, DECISIONS.md, PLAN.md, SPECS.md, RUNBOOK.md
 
 | Name | Value |
 |---|---|
-| Assets | BTC-USD, ETH-USD |
+| Assets | BTC-USD, ETH-USD by default; SOL-USD, XRP-USD in paper mode only |
 | Rules | SMA 50, 100, 200; momentum 30, 90, 180; breakout 20, 55, 100 (definitions in spec 1.2) |
 | Signal | Plain average of the nine rules, 0 to 1 per asset |
-| Sizing | Volatility target 0.40 a year, per-asset weight = signal / 2, scaled by `min(1, 0.40 / vol)`, total at most 1.0, no leverage, no shorts |
+| Sizing | Volatility target 0.40 a year, per-asset weight = signal / number of assets, scaled by `min(1, 0.40 / vol)`, total at most 1.0, no leverage, no shorts |
 | Trading band | Trade an asset only if `abs(target - current) > 0.20 * max(target, current)`, or target is 0 and current is not |
 | Decision time | 00:05 UTC daily, using candles up to the day that just closed |
 | Drawdown halt | 35% below the account high-water mark |

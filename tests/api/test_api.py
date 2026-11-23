@@ -778,3 +778,112 @@ def test_stream_replays_open_alarms_on_connect(seeded) -> None:
     assert lines[0] == "event: status"
     assert lines[2] == "event: alarm"
     assert '"key": "candle_stale:BTC-USD"' in lines[3]
+
+
+def test_equity_baselines_ignore_extra_symbols(seeded, monkeypatch) -> None:
+    """Spec D2: the BTC and BTC+ETH baselines always use BTC-USD and ETH-USD,
+    whatever TRADER_SYMBOLS holds."""
+    import trader.api.routes.reports as reports
+
+    client, _, _ = seeded
+    _login(client)
+    before = client.get("/api/reports/equity").json()
+    monkeypatch.setattr(
+        reports, "SYMBOLS", ("BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD")
+    )
+    after = client.get("/api/reports/equity").json()
+    assert [p["btc"] for p in after] == [p["btc"] for p in before]
+    assert [p["btc_eth"] for p in after] == [p["btc_eth"] for p in before]
+
+
+def _denied_plan_with_shadow_fill(s: Session, with_candle: bool) -> None:
+    decision = Decision(
+        cycle="daily", ran_at=NOW, action="none", reason="x", details={}
+    )
+    s.add(decision)
+    s.flush()
+    plan = Plan(
+        sleeve="trend",
+        symbol="SOL-USD",
+        side="buy",
+        status="denied",
+        reference_price=Decimal("50"),
+        target_weight=Decimal("0.1"),
+        entry_orders=[{"side": "buy", "type": "limit", "price": "50", "quantity": "2"}],
+        stop_price=None,
+        worst_case_loss=Decimal("10"),
+        est_fees=Decimal("1"),
+        rationale="x",
+        expires_at=NOW,
+        decided_at=NOW,
+        decision_id=decision.id,
+    )
+    s.add(plan)
+    s.flush()
+    order = Order(
+        plan_id=plan.id,
+        venue="paper",
+        client_order_id=f"{plan.id}-shadow-1",
+        venue_order_id="paper-sh",
+        symbol="SOL-USD",
+        side="buy",
+        type="limit",
+        price=Decimal("50"),
+        quantity=Decimal("2"),
+        status="filled",
+        mode="paper",
+        shadow=True,
+    )
+    s.add(order)
+    s.flush()
+    s.add(
+        Fill(
+            order_id=order.id,
+            time=NOW,
+            price=Decimal("50"),
+            quantity=Decimal("2"),
+            fee=Decimal("1"),
+            fee_currency="USD",
+            liquidity="maker",
+        )
+    )
+    if with_candle:
+        s.add(
+            Candle(
+                symbol="SOL-USD",
+                interval="5m",
+                open_time=NOW - timedelta(minutes=5),
+                open=Decimal("60"),
+                high=Decimal("60"),
+                low=Decimal("60"),
+                close=Decimal("60"),
+                volume=Decimal("1"),
+                source="bitstamp",
+            )
+        )
+    s.commit()
+
+
+def test_veto_scorecard_marks_removed_symbol(seeded) -> None:
+    """Review fix: a shadow holding in a symbol removed from
+    TRADER_SYMBOLS is valued at its newest stored close, not zero."""
+    client, _, engine = seeded
+    _login(client)
+    with Session(engine) as s:
+        _denied_plan_with_shadow_fill(s, with_candle=True)
+    v = client.get("/api/reports/summary").json()["vetoes"]
+    assert v["plans"] == 1 and v["shadow_fills"] == 1
+    # -2 x 50 spent - 1 fee + 2 x 60 mark.
+    assert float(v["result_usd"]) == 19
+
+
+def test_veto_scorecard_unpriced_mark_is_unavailable(seeded) -> None:
+    """With no stored mark for a held shadow unit the scorecard reports
+    unavailable, not a zero valuation."""
+    client, _, engine = seeded
+    _login(client)
+    with Session(engine) as s:
+        _denied_plan_with_shadow_fill(s, with_candle=False)
+    v = client.get("/api/reports/summary").json()["vetoes"]
+    assert v["plans"] == 1 and v["shadow_fills"] == 1
+    assert v["result_usd"] is None

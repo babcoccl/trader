@@ -1009,3 +1009,17 @@ def test_flatten_sells_everything_and_lowers_flag_via_risk(session: Session) -> 
         .where(AuditLog.action == "set risk.flatten_requested")
         .order_by(AuditLog.id)
     ).all() == ["owner", "executor"]
+
+
+def test_symbol_rules_come_from_assets(session: Session) -> None:
+    from trader.execution.paper import PaperAdapter
+
+    adapter = PaperAdapter(session, BITSTAMP)
+    sol = adapter.symbol_rules("SOL-USD")
+    xrp = adapter.symbol_rules("XRP-USD")
+    btc = adapter.symbol_rules("BTC-USD")
+
+    assert sol.tick == Decimal("0.001") and sol.lot == Decimal("0.00001")
+    assert xrp.tick == Decimal("0.00001") and xrp.lot == Decimal("0.00000001")
+    assert btc.tick == Decimal("0.01") and btc.lot == Decimal("0.00000001")
+    assert sol.min_notional == Decimal("10")

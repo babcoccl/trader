@@ -156,7 +156,11 @@ describe("Controls", () => {
 
     expect(await screen.findByText("Drawdown halt")).toBeInTheDocument();
     expect(screen.getByText("35% from peak")).toBeInTheDocument();
-    expect(screen.getByText(/Volatility target 40%/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Volatility target 40%, assets set by TRADER_SYMBOLS \(default BTC and ETH\), long only, no leverage/
+      )
+    ).toBeInTheDocument();
     expect(screen.getByText(/Bitstamp/)).toBeInTheDocument();
     expect(screen.getByText("paper")).toBeInTheDocument();
 

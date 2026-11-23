@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from trader.backtest.costs import CostModel
 from trader.core.clock import Clock, SystemClock
+from trader.data.sources.base import ASSETS
 from trader.execution.base import LIMIT_TTL, SymbolRules
 from trader.ledger import accounting
 from trader.ledger.models import Candle, Fill, Order, Plan, Setting
@@ -40,10 +41,8 @@ TRADE_THROUGH = Decimal("0.0001")
 INTERVAL_SECONDS = 300
 _PERIOD = timedelta(seconds=INTERVAL_SECONDS)
 
-# Bitstamp btcusd/ethusd: $0.01 tick, 8-decimal base, $10 minimum order.
-RULES = SymbolRules(
-    tick=Decimal("0.01"), lot=Decimal("0.00000001"), min_notional=Decimal("10")
-)
+# Bitstamp: $10 minimum order; tick and lot come from ASSETS per symbol.
+MIN_NOTIONAL = Decimal("10")
 
 _OPEN_STATUSES = ("new", "open", "partially_filled")
 
@@ -147,7 +146,8 @@ class PaperAdapter:
         return state
 
     def symbol_rules(self, symbol: str) -> SymbolRules:
-        return RULES
+        asset = ASSETS[symbol]
+        return SymbolRules(tick=asset.tick, lot=asset.lot, min_notional=MIN_NOTIONAL)
 
     # -- paper-only helpers ---------------------------------------------------
 

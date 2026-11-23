@@ -66,6 +66,9 @@ def _daily_closes(
     return df["close"]
 
 
+BASELINE_SYMBOLS = ("BTC-USD", "ETH-USD")
+
+
 def _baseline_at(closes: pd.Series, at: pd.Timestamp) -> float | None:
     """Last close at or before ``at``; None when the series starts later."""
     upto = closes.loc[:at]
@@ -95,7 +98,11 @@ def equity_report(
     # the snapshot times ([start, end) would often be empty).
     day_start = start - timedelta(days=2)
     day_end = end + timedelta(days=2)
-    closes = {s: _daily_closes(session, s, day_start, day_end) for s in SYMBOLS}
+    # Baselines are always BTC and ETH, whatever TRADER_SYMBOLS holds:
+    # they are the comparison the backtest and the paper run are judged on.
+    closes = {
+        s: _daily_closes(session, s, day_start, day_end) for s in BASELINE_SYMBOLS
+    }
     closes = {s: c for s, c in closes.items() if not c.empty}
 
     base0: dict[str, float] = {}
@@ -115,8 +122,8 @@ def equity_report(
                     ratios[s] = close / base0[s]
         btc = Decimal(str(eq0 * ratios["BTC-USD"])) if "BTC-USD" in ratios else None
         btc_eth = (
-            Decimal(str(eq0 * sum(ratios.values()) / len(SYMBOLS)))
-            if len(ratios) == len(SYMBOLS)
+            Decimal(str(eq0 * sum(ratios.values()) / len(BASELINE_SYMBOLS)))
+            if len(ratios) == len(BASELINE_SYMBOLS)
             else None
         )
         points.append(
@@ -146,7 +153,6 @@ def _veto_scorecard(session: Session, mode: str) -> VetoScorecard:
     if not rows:
         return VetoScorecard(plans=len(dead), shadow_fills=0, result_usd=None)
 
-    prices = latest_prices(session)
     cash = Decimal(0)
     held: dict[str, Decimal] = {}
     for fill, order in rows:
@@ -159,16 +165,35 @@ def _veto_scorecard(session: Session, mode: str) -> VetoScorecard:
             cash += fill.price * fill.quantity
             held[base] = held.get(base, Decimal(0)) - fill.quantity
         cash -= fee_usd
+    # Marks come from the newest stored candle per held asset, so a
+    # symbol removed from TRADER_SYMBOLS still prices its shadow units.
+    prices = latest_prices(session, (f"{asset}-USD" for asset in held))
+    unpriced = False
     for asset, qty in held.items():
         price = prices.get(f"{asset}-USD")
         if price is not None:
             cash += qty * price
-    return VetoScorecard(plans=len(dead), shadow_fills=len(rows), result_usd=cash)
+        elif qty != 0:
+            # No usable mark: report unavailable rather than count the
+            # held units at zero.
+            unpriced = True
+    return VetoScorecard(
+        plans=len(dead),
+        shadow_fills=len(rows),
+        result_usd=None if unpriced else cash,
+    )
 
 
 def _backtest_gap(session: Session, snaps: list[EquitySnapshot]) -> float | None:
     """Paper-versus-backtest gap in percentage points over the snapshot
     window, or None when daily candles do not cover it."""
+    # An asset-list change starts a new portfolio (spec 5.3): compare
+    # only over snapshots after the most recent one.
+    changed = session.scalar(
+        select(func.max(Event.time)).where(Event.kind == "asset_list_changed")
+    )
+    if changed is not None:
+        snaps = [s for s in snaps if s.time > changed]
     if len(snaps) < 2 or snaps[0].equity_usd <= 0:
         return None
     start = snaps[0].time

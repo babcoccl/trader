@@ -43,6 +43,7 @@ from trader.ledger.models import (
     Heartbeat,
     Plan,
 )
+from trader.ops import assets as asset_list
 from trader.ops import digest
 from trader.ops.watchdog import EXPECTED_SERVICES
 
@@ -227,6 +228,17 @@ def tracking_gap(
         "backtest_return": None,
         "gap_points": None,
     }
+    # An asset-list change starts a new portfolio (spec 5.3). Daily
+    # candles are whole days, so a midday change leaves the change day
+    # mixing two portfolios: both returns start the morning after.
+    changed = asset_list.last_change(session)
+    if changed is not None and start < changed < end:
+        day0 = changed.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = day0 if changed == day0 else day0 + timedelta(days=1)
+    if start >= end:
+        # The change consumed the whole window (e.g. a Sunday change in
+        # a Monday-to-Monday week): no post-change days to measure.
+        return out
     eq_start, eq_end, opened = _window_equity(session, mode, start, end)
     if eq_start is not None and eq_end is not None and eq_start > 0:
         out["paper_return"] = float(eq_end / eq_start - 1)
@@ -327,6 +339,16 @@ def build(session: Session, start: datetime, end: datetime) -> Event:
     ).all()
     raised = [e for e in alarms if e.kind == "alarm"]
 
+    changes = session.scalars(
+        select(Event)
+        .where(
+            Event.kind == asset_list.KIND,
+            Event.time >= start,
+            Event.time < end,
+        )
+        .order_by(Event.time, Event.id)
+    ).all()
+
     approvals = _approval_times(session, start, end)
     answered = [a["minutes"] for a in approvals]
 
@@ -341,6 +363,14 @@ def build(session: Session, start: datetime, end: datetime) -> Event:
     elif eq_start is not None:
         acct += f" (opened the week at {digest._money(eq_start)})"
     lines.append(acct + ".")
+    for change in changes:
+        lines.append(
+            f"**Asset list changed {change.time:%Y-%m-%d}:** "
+            f"{', '.join(change.details.get('from', []))} -> "
+            f"{', '.join(change.details.get('to', []))}. The four-week "
+            "count of spec 5.3 restarts; the returns below cover only "
+            "the days after the change."
+        )
     if gap["paper_return"] is not None:
         lines.append(f"**Paper return:** {gap['paper_return']:+.2%}.")
     if gap["backtest_return"] is not None:
@@ -399,6 +429,7 @@ def build(session: Session, start: datetime, end: datetime) -> Event:
         "mean_uptime": mean_uptime,
         "alarms_raised": len(raised),
         "alarms_cleared": sum(1 for e in alarms if e.kind == "alarm_cleared"),
+        "asset_list_changed": bool(changes),
         "approvals": approvals,
         "approval_median_minutes": median(answered) if answered else None,
         "approval_max_minutes": max(answered) if answered else None,

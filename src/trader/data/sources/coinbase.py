@@ -16,10 +16,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from trader.data.sources.base import Candle, period_seconds
+from trader.data.sources.base import ASSETS, Candle, period_seconds
 
 BASE_URL = "https://api.exchange.coinbase.com"
-PRODUCTS = {"BTC-USD": "BTC-USD", "ETH-USD": "ETH-USD"}
+PRODUCTS = {s: a.coinbase_product for s, a in ASSETS.items()}
 MAX_CANDLES = 300
 
 GetJson = Callable[[str, dict[str, Any]], Any]

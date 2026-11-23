@@ -176,3 +176,16 @@ def test_blocked_day_retries_once_data_arrives(engine) -> None:
     clock.advance(timedelta(minutes=5))
     service.retry_daily()
     assert _decision_count(engine) == 3
+
+
+def test_past_daily_time_gates_startup_catchup() -> None:
+    """Before 00:05 UTC a restart waits for the cron run; after it the
+    catch-up fills a missed run (spec D2: a new asset's first decision
+    comes at the next 00:05 UTC, not at restart time)."""
+    from trader.engine.__main__ import _past_daily_time
+
+    day = datetime(2026, 11, 23, tzinfo=UTC)
+    assert not _past_daily_time(day)  # 00:00
+    assert not _past_daily_time(day + timedelta(minutes=4, seconds=59))
+    assert _past_daily_time(day + timedelta(minutes=5))
+    assert _past_daily_time(day + timedelta(hours=10))

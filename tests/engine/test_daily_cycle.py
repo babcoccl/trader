@@ -394,8 +394,8 @@ def test_needs_retry(session: Session) -> None:
     at or after 00:05, and not halted."""
     day = datetime(2026, 11, 20, tzinfo=UTC)
     clock = FrozenClock(day + timedelta(minutes=5))
-    # No rows yet: the 00:05 job has not run, nothing to retry.
-    assert not daily_cycle.needs_retry(session, clock)
+    # No rows yet at 00:05: the scheduled run was missed, so retry it.
+    assert daily_cycle.needs_retry(session, clock)
     # Before 00:05 even a blocked row does not trigger a retry.
     _add_daily_row(session, day + timedelta(minutes=3))
     early = FrozenClock(day + timedelta(minutes=4))
@@ -469,3 +469,69 @@ def test_decision_details_carry_last_close_and_levels(session: Session) -> None:
     assert blocked[0].action == "blocked"
     assert "last_close" not in blocked[0].details
     assert "levels" not in blocked[0].details
+
+
+def test_four_assets_quarter_weights_and_per_asset_rounding(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec D2: with four configured assets all rules on and vol under the
+    target, each target weight is 0.25, and a SOL plan is rounded to SOL's
+    tick (3 price decimals) and lot (5 quantity decimals)."""
+    four = ("BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD")
+    session.execute(delete(CandleRow))
+    end = datetime(2026, 11, 19, tzinfo=UTC)
+    candles: list[Candle] = []
+    for symbol in four:
+        price = Decimal("50")
+        for i in range(210):
+            price *= Decimal("1.001")
+            candles.append(
+                Candle(
+                    symbol=symbol,
+                    interval="1d",
+                    open_time=end - timedelta(days=209 - i),
+                    open=price,
+                    high=price,
+                    low=price,
+                    close=price,
+                    volume=Decimal("0"),
+                    source="fixture",
+                )
+            )
+        candles.append(
+            Candle(
+                symbol=symbol,
+                interval="5m",
+                open_time=end + timedelta(days=1, minutes=-5),
+                open=price,
+                high=price,
+                low=price,
+                close=price,
+                volume=Decimal("0"),
+                source="fixture",
+            )
+        )
+    candles_mod.upsert(session, candles)
+    session.commit()
+
+    from trader.risk import engine as risk_engine
+
+    monkeypatch.setattr(daily_cycle, "SYMBOLS", four)
+    monkeypatch.setattr(risk_engine, "SYMBOLS", four)
+    clock = FrozenClock(datetime(2026, 11, 20, 0, 5, tzinfo=UTC))
+    portfolio = daily_cycle.CashOnlyPortfolio(
+        equity_usd=Decimal("10000"), weights={s: 0.0 for s in four}
+    )
+    rows = daily_cycle.run(session, clock, portfolio)
+    session.commit()
+
+    assert len(rows) == 4
+    assert {r.symbol for r in rows} == set(four)
+    for r in rows:
+        assert float(r.target_weight) == pytest.approx(0.25)
+        assert r.action == "plan_proposed"
+
+    plan = session.scalars(select(Plan).where(Plan.symbol == "SOL-USD")).one()
+    order = plan.entry_orders[0]
+    assert Decimal(order["price"]).as_tuple().exponent == -3
+    assert Decimal(order["quantity"]).as_tuple().exponent == -5

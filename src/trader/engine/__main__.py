@@ -11,7 +11,7 @@ Run: ``python -m trader.engine`` (Compose service ``engine``).
 import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from apscheduler.schedulers.blocking import (  # type: ignore[import-untyped]
@@ -28,11 +28,20 @@ from trader.data.sources.base import SYMBOLS
 from trader.engine import daily_cycle, intraday_cycle
 from trader.ledger import accounting
 from trader.ledger.models import Candle, Decision
+from trader.ops import assets as asset_list
 from trader.ops.heartbeat import beat
 
 log = logging.getLogger(__name__)
 
 SERVICE = "engine"
+
+
+def _past_daily_time(now: datetime) -> bool:
+    """True once today's scheduled 00:05 UTC daily run has passed, so the
+    startup catch-up only fills a missed run — a restart before 00:05
+    waits for the cron instead of deciding early (spec D2)."""
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return now >= today + timedelta(minutes=5)
 
 
 def _latest_prices(session: Session) -> dict[str, Decimal]:
@@ -119,7 +128,11 @@ class Engine:
                 beat(session, SERVICE, "error", str(exc), clock=self._clock)
 
     def serve(self) -> None:
-        self.run_daily()  # catch-up: no-op if today's rows already exist
+        with self._session() as session:
+            asset_list.record_change(session, self._clock)
+        if _past_daily_time(self._clock.now()):
+            # catch-up for a missed 00:05 run; no-op if today's rows exist
+            self.run_daily()
         scheduler = BlockingScheduler(timezone=UTC)
         scheduler.add_job(
             self.run_daily,

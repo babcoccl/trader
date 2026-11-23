@@ -46,6 +46,7 @@ from sqlalchemy.orm import Session
 
 from trader.core.clock import Clock, SystemClock
 from trader.core.config import get_settings
+from trader.data.sources.base import SYMBOLS
 from trader.data.sources.bitstamp import MARKETS
 from trader.execution.base import SymbolRules
 from trader.ledger.models import Fill, Order
@@ -355,9 +356,9 @@ class BitstampAdapter:
         }
 
     def venue_open_orders(self) -> list[dict[str, Any]]:
-        """Raw ``open_orders/{market}/`` rows for both markets."""
+        """Raw ``open_orders/{market}/`` rows for each configured market."""
         out: list[dict[str, Any]] = []
-        for market in MARKETS.values():
+        for market in {MARKETS[s] for s in SYMBOLS}:
             rows = self._request("POST", f"/api/v2/open_orders/{market}/")
             out.extend(rows)
         return out

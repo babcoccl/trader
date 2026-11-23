@@ -49,10 +49,18 @@ def test_series_match_fixture() -> None:
         vp = regime.vol_percentile(df["close"]).to_numpy()
         a = regime.adx(df["high"], df["low"], df["close"]).to_numpy()
         assert np.allclose(
-            vp, rows["vol_percentile"].to_numpy(dtype=float), atol=1e-9, equal_nan=True
+            vp,
+            rows["vol_percentile"].to_numpy(dtype=float),
+            rtol=0,
+            atol=1e-9,
+            equal_nan=True,
         )
         assert np.allclose(
-            a, rows["adx14"].to_numpy(dtype=float), atol=1e-9, equal_nan=True
+            a,
+            rows["adx14"].to_numpy(dtype=float),
+            rtol=0,
+            atol=1e-9,
+            equal_nan=True,
         )
 
 

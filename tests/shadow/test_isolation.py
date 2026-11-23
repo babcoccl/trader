@@ -85,5 +85,5 @@ def test_shadow_run_writes_no_trading_rows(engine, session) -> None:
         # And the sleeve did trade hypothetically.
         from trader.ledger.models import ShadowMark, ShadowTrade
 
-        assert s.scalar(select(func.count()).select_from(ShadowTrade)) == 2
+        assert s.scalar(select(func.count()).select_from(ShadowTrade)) == 4
         assert s.scalar(select(func.count()).select_from(ShadowMark)) == 2

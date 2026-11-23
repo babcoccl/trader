@@ -67,35 +67,42 @@ def run(session: Session, clock: Clock) -> ShadowMark | None:
     prices = {s: p for s, p in price_map.items() if p is not None}
 
     notes: list[str] = []
+    open_now: dict[str, bool] = {}
     for symbol in active:
-        price = prices[symbol]
         open_trade = next((t for t in book.open_trades(session, NAME, symbol)), None)
-        regime = regimes[symbol]
-        if open_trade is not None:
-            sell_day = open_trade.opened_at.date() + timedelta(days=HOLD_DAYS)
-            if sell_day <= today.date():
-                trade = book.sell(
-                    session,
-                    open_trade,
-                    now,
-                    price,
-                    BITSTAMP.taker_fee,
-                    BITSTAMP.slippage,
-                    f"held {HOLD_DAYS} days",
-                )
-                pnl = trade.pnl_usd or Decimal("0")
-                notes.append(
-                    f"{_code(symbol)}: sold after {HOLD_DAYS} days, "
-                    f"result {'-' if pnl < 0 else ''}"
-                    f"${abs(pnl):,.2f}."
-                )
-            else:
-                notes.append(
-                    f"{_code(symbol)}: holding since "
-                    f"{open_trade.opened_at.date()}, sells on {sell_day}."
-                )
+        if open_trade is None:
+            open_now[symbol] = False
             continue
+        sell_day = open_trade.opened_at.date() + timedelta(days=HOLD_DAYS)
+        if sell_day <= today.date():
+            trade = book.sell(
+                session,
+                open_trade,
+                now,
+                prices[symbol],
+                BITSTAMP.taker_fee,
+                BITSTAMP.slippage,
+                f"held {HOLD_DAYS} days",
+            )
+            open_now[symbol] = False
+            pnl = trade.pnl_usd or Decimal("0")
+            notes.append(
+                f"{_code(symbol)}: sold after {HOLD_DAYS} days, "
+                f"result {'-' if pnl < 0 else ''}"
+                f"${abs(pnl):,.2f}."
+            )
+        else:
+            open_now[symbol] = True
+            notes.append(
+                f"{_code(symbol)}: holding since "
+                f"{open_trade.opened_at.date()}, sells on {sell_day}."
+            )
 
+    for symbol in active:
+        if open_now[symbol]:
+            continue
+        price = prices[symbol]
+        regime = regimes[symbol]
         z = zscore(data.daily_closes(session, symbol, today))
         if not sleeves.allowed(sleeves.get(NAME), regime):
             trend = regime.trend if regime is not None else "unknown"

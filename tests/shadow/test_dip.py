@@ -148,9 +148,9 @@ def test_sell_after_hold_days(session) -> None:
     assert "holding since" in mark.note
     session.commit()
 
-    # Five days later: sold with the hold-days reason.
+    # Five days later, in an uptrend (no re-buy): sold with the hold-days reason.
     clock.advance(timedelta(days=1))
-    _tick(session, clock.now())
+    _tick(session, clock.now(), trend="uptrend")
     mark = dip.run(session, clock)
     assert mark is not None
     assert book.open_trades(session, "dip") == []
@@ -160,6 +160,23 @@ def test_sell_after_hold_days(session) -> None:
     assert all(t.pnl_usd is not None for t in sold)
     assert mark.closed_trades == 2
     session.commit()
+
+
+def test_exit_day_rebuys_when_dip_qualifies(session) -> None:
+    """On the day a trade is sold, a still-qualifying dip re-buys."""
+    _seed_day(session)
+    clock = FrozenClock(NOW)
+    dip.run(session, clock)
+    session.commit()
+
+    clock.advance(timedelta(days=5))
+    _tick(session, clock.now())
+    mark = dip.run(session, clock)
+    assert mark is not None
+    assert len(book.open_trades(session, "dip")) == 2
+    assert len(session.query(ShadowTrade).all()) == 4
+    assert "sold after 5 days" in mark.note
+    assert "bought" in mark.note
 
 
 def test_no_daily_decision_returns_none(session) -> None:

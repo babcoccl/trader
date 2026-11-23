@@ -70,16 +70,18 @@ FUNDING_TIME = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
 
 
 class FakeFunding:
-    """Returns a fixed funding observation; counts calls, can be made to fail."""
+    """Returns a fixed funding observation; counts calls, can be made to
+    fail for all symbols or a named subset."""
 
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, fail: bool = False, fail_for: tuple[str, ...] = ()) -> None:
         self.calls = 0
         self._fail = fail
+        self._fail_for = set(fail_for)
 
     def fetch(self, symbol: str) -> FundingObservation:
         self.calls += 1
-        if self._fail:
-            raise ConnectionError("funding down")
+        if self._fail or symbol in self._fail_for:
+            raise ConnectionError(f"funding down for {symbol}")
         return FundingObservation(
             symbol=symbol,
             venue=VENUE,
@@ -348,6 +350,72 @@ def test_funding_stored_then_throttled(session: Session) -> None:
     session.commit()
     assert funding.calls == 4
     assert session.scalar(select(func.count()).select_from(FundingRate)) == 2
+
+
+def test_funding_partial_outage_still_stores_other_symbols(
+    session: Session,
+) -> None:
+    """A failed BTC fetch does not skip ETH: its row still lands and one
+    failure event is written."""
+    clock = FrozenClock(NOW)
+    funding = FakeFunding(fail_for=("BTC-USD",))
+    collector = Collector(sources=[FakeSource()], clock=clock, funding_source=funding)
+    collector.run_once(session)
+    session.commit()
+
+    rows = session.scalars(select(FundingRate)).all()
+    assert [r.symbol for r in rows] == ["ETH-USD"]
+    failed = session.scalars(
+        select(Event).where(Event.kind == "funding_source_failed")
+    ).all()
+    assert len(failed) == 1
+    assert "BTC-USD" in failed[0].message
+
+    # Recovery clears when every product fetches again.
+    funding._fail_for.clear()
+    clock.advance(timedelta(minutes=11))
+    collector.run_once(session)
+    session.commit()
+    assert (
+        session.scalar(
+            select(func.count())
+            .select_from(Event)
+            .where(Event.kind == "funding_source_recovered")
+        )
+        == 1
+    )
+
+
+def test_rejected_funding_rows_keep_candles(session: Session) -> None:
+    """A funding row Postgres refuses rolls back only the funding insert:
+    the loop's candles and the ok heartbeat survive (spec G4 step 1 — a
+    funding failure is not a candle outage)."""
+
+    class BadInterval(FakeFunding):
+        def fetch(self, symbol: str) -> FundingObservation:
+            self.calls += 1
+            return FundingObservation(
+                symbol=symbol,
+                venue=VENUE,
+                time=FUNDING_TIME,
+                rate=Decimal("0.000004"),
+                interval_hours=0,  # violates funding_interval_positive
+            )
+
+    collector = Collector(
+        sources=[FakeSource()], clock=FrozenClock(NOW), funding_source=BadInterval()
+    )
+    written = collector.run_once(session)
+    session.commit()
+
+    assert written == 6
+    assert session.scalar(select(func.count()).select_from(CandleRow)) == 6
+    assert session.scalar(select(func.count()).select_from(FundingRate)) == 0
+    failed = session.scalars(
+        select(Event).where(Event.kind == "funding_source_failed")
+    ).all()
+    assert len(failed) == 1
+    assert all(h.status == "ok" for h in session.scalars(select(Heartbeat)))
 
 
 def test_funding_failure_events_and_recovery(session: Session) -> None:

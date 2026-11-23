@@ -169,6 +169,17 @@ class Collector:
                     "interval_hours": obs.interval_hours,
                 }
             )
+        if rows:
+            try:
+                # Own savepoint: a rejected funding row rolls back only the
+                # funding insert, never this loop's candles.
+                with session.begin_nested():
+                    session.execute(
+                        insert(FundingRate).values(rows).on_conflict_do_nothing()
+                    )
+            except Exception as exc:
+                log.warning("funding rows rejected: %s", exc)
+                failed.append(f"store: {exc}")
         if failed:
             if not self._funding_failing:
                 self._funding_failing = True
@@ -186,8 +197,6 @@ class Collector:
                 "info",
                 "funding source recovered",
             )
-        if rows:
-            session.execute(insert(FundingRate).values(rows).on_conflict_do_nothing())
 
     def _heartbeat(self, session: Session, status: str, detail: str) -> None:
         beat(session, "collector", status, detail, clock=self._clock)

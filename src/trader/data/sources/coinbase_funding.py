@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -58,14 +58,16 @@ class CoinbaseFundingSource:
     def __init__(self, get_json: GetJson = _get_json, base_url: str = BASE_URL) -> None:
         self._get = get_json
         self._base = base_url.rstrip("/")
+        self._seq = 0
 
     def fetch(self, symbol: str) -> FundingObservation:
         product = PRODUCTS[symbol]
+        self._seq += 1
         body = self._get(
             f"{self._base}/api/v3/brokerage/market/products/{product}",
             # Unknown parameter, ignored by Coinbase: it varies the URL so a
             # cached response cannot keep serving the same funding_time.
-            {"_": str(int(datetime.now(UTC).timestamp()))},
+            {"_": str(self._seq)},
         )
         details = body.get("future_product_details") or {}
         if not details.get("funding_rate"):

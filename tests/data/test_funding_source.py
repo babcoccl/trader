@@ -62,6 +62,15 @@ def test_fetch_parses_fixture() -> None:
     assert source.calls[0][1]
 
 
+def test_poll_urls_differ() -> None:
+    """Two fetches must produce different query parameters, or a cached
+    response keeps serving the same funding_time."""
+    source = _source()
+    source.fetch("BTC-USD")
+    source.fetch("BTC-USD")
+    assert source.calls[0][1] != source.calls[1][1]
+
+
 def test_empty_rate_raises() -> None:
     with pytest.raises(ValueError, match="funding_rate"):
         _source(_broken(funding_rate="")).fetch("BTC-USD")

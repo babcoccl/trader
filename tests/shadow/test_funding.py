@@ -13,6 +13,7 @@ from trader.ledger.models import FundingRate, ShadowTrade
 from trader.shadow import book, funding
 
 from .conftest import add_5m, add_daily_decision, pytestmark  # noqa: F401
+from .test_isolation import _counts
 
 NOW = datetime(2026, 11, 23, 12, 0, tzinfo=UTC)
 TODAY = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -162,6 +163,27 @@ def test_sold_when_average_turns_positive(session: Session) -> None:
         select(ShadowTrade).where(ShadowTrade.sleeve == funding.NAME)
     ).all()
     assert all(t.exit_reason == "funding no longer negative" for t in sold)
+    session.commit()
+
+
+def test_funding_run_writes_no_trading_rows(session: Session) -> None:
+    """Section E rule 2: a funding buy and sell touch only shadow tables."""
+    _seed_day(session)
+    session.commit()
+    before = _counts(session)
+    funding.run(session, FrozenClock(NOW))
+    assert _counts(session) == before  # buys
+
+    later = NOW + timedelta(days=1)
+    session.execute(delete(FundingRate))
+    today = later.replace(hour=0, minute=0, second=0, microsecond=0)
+    for symbol in funding.SYMBOLS:
+        add_funding(session, symbol, today - timedelta(days=7), 168, "0.00001")
+    _tick(session, later, "downtrend")
+    session.commit()
+    before = _counts(session)
+    funding.run(session, FrozenClock(later))
+    assert _counts(session) == before  # sells
     session.commit()
 
 

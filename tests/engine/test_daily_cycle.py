@@ -394,8 +394,8 @@ def test_needs_retry(session: Session) -> None:
     at or after 00:05, and not halted."""
     day = datetime(2026, 11, 20, tzinfo=UTC)
     clock = FrozenClock(day + timedelta(minutes=5))
-    # No rows yet: the 00:05 job has not run, nothing to retry.
-    assert not daily_cycle.needs_retry(session, clock)
+    # No rows yet at 00:05: the scheduled run was missed, so retry it.
+    assert daily_cycle.needs_retry(session, clock)
     # Before 00:05 even a blocked row does not trigger a retry.
     _add_daily_row(session, day + timedelta(minutes=3))
     early = FrozenClock(day + timedelta(minutes=4))

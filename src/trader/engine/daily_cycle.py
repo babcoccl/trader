@@ -86,10 +86,11 @@ def _existing_today(session: Session, today: datetime) -> list[Decision]:
 def needs_retry(session: Session, clock: Clock) -> bool:
     """Today's daily cycle still owes a decision, so it should run again.
 
-    True only when ``clock.now()`` is at or after 00:05 UTC, today has at
-    least one daily decision row, every one of today's daily rows is
-    ``blocked`` or ``error``, the rows span fewer than ``MAX_ATTEMPTS``
-    distinct runs, and trading is not halted.
+    True only when ``clock.now()`` is at or after 00:05 UTC and either
+    today has no daily decision rows at all — the scheduled run was
+    missed entirely — or every one of today's rows is ``blocked`` or
+    ``error`` and the rows span fewer than ``MAX_ATTEMPTS`` distinct
+    runs, and trading is not halted.
     """
     now = clock.now()
     today = _day_start(now)
@@ -102,13 +103,15 @@ def needs_retry(session: Session, clock: Clock) -> bool:
             Decision.ran_at < today + timedelta(days=1),
         )
     ).all()
-    if not rows:
+    if risk_engine.state(session, clock).halted:
         return False
+    if not rows:
+        return True  # the 00:05 run never happened: recover it
     if any(action not in ("blocked", "error") for action, _ in rows):
         return False
     if len({ran_at for _, ran_at in rows}) >= MAX_ATTEMPTS:
         return False
-    return not risk_engine.state(session, clock).halted
+    return True
 
 
 def _finite(x: float) -> float | None:

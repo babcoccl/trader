@@ -18,6 +18,9 @@ from trader.ledger.models import Event, Setting
 
 SETTING_KEY = "assets.symbols"
 KIND = "asset_list_changed"
+# Before spec D2 the asset list was fixed in code, so a stored row
+# absent on an existing deployment means that pair.
+_PRE_D2_LIST = ["BTC-USD", "ETH-USD"]
 
 
 def record_change(session: Session, clock: Clock) -> None:
@@ -25,15 +28,13 @@ def record_change(session: Session, clock: Clock) -> None:
     ``asset_list_changed`` event naming the old and new lists."""
     current = list(SYMBOLS)
     row = session.get(Setting, SETTING_KEY)
-    stored = list(row.value) if row is not None else None
-    if stored == current:
-        return
+    stored = list(row.value) if row is not None else _PRE_D2_LIST
     if row is None:
         session.add(Setting(key=SETTING_KEY, value=current, updated_at=clock.now()))
-    else:
+    elif stored != current:
         row.value = current
         row.updated_at = clock.now()
-    if stored:
+    if stored != current:
         session.add(
             Event(
                 time=clock.now(),

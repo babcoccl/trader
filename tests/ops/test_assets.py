@@ -82,3 +82,20 @@ def test_changed_list_writes_one_event(session: Session) -> None:
         "BTC-USD",
         "ETH-USD",
     ]
+
+
+def test_upgrade_with_expanded_list_writes_event(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing deployment that adds SOL/XRP during upgrade has no
+    stored row: the pre-D2 list was BTC+ETH, so this counts as a change."""
+    monkeypatch.setattr(
+        asset_list, "SYMBOLS", ("BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD")
+    )
+    asset_list.record_change(session, FrozenClock(NOW))
+    session.commit()
+
+    (event,) = session.scalars(select(Event)).all()
+    assert event.kind == asset_list.KIND
+    assert event.details["from"] == ["BTC-USD", "ETH-USD"]
+    assert asset_list.last_change(session) == NOW

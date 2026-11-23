@@ -228,11 +228,13 @@ def tracking_gap(
         "backtest_return": None,
         "gap_points": None,
     }
-    # An asset-list change starts a new portfolio (spec 5.3): measure
-    # only from the most recent one.
+    # An asset-list change starts a new portfolio (spec 5.3). Daily
+    # candles are whole days, so a midday change leaves the change day
+    # mixing two portfolios: both returns start the morning after.
     changed = asset_list.last_change(session)
     if changed is not None and start < changed < end:
-        start = changed
+        day0 = changed.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = day0 if changed == day0 else day0 + timedelta(days=1)
     eq_start, eq_end, opened = _window_equity(session, mode, start, end)
     if eq_start is not None and eq_end is not None and eq_start > 0:
         out["paper_return"] = float(eq_end / eq_start - 1)

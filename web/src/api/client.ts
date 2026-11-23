@@ -222,6 +222,40 @@ export interface RulesOut {
   parameters: ParameterOut[];
 }
 
+export interface ShadowTradeOut {
+  symbol: string;
+  opened_at: string;
+  entry_price: string;
+  cost_usd: string;
+  closed_at: string | null;
+  exit_price: string | null;
+  pnl_usd: string | null;
+  exit_reason: string | null;
+}
+
+export interface ShadowSleeveOut {
+  name: string;
+  title: string;
+  description: string;
+  started_on: string | null;
+  days: number;
+  equity_usd: string | null;
+  return_fraction: number | null;
+  worst_drawdown: number | null;
+  account_return_fraction: number | null;
+  closed_trades: number;
+  winning_trades: number;
+  fees_usd: string;
+  last_note: string | null;
+  last_day: string | null;
+  open: ShadowTradeOut[];
+  recent_closed: ShadowTradeOut[];
+}
+
+export interface ShadowOut {
+  sleeves: ShadowSleeveOut[];
+}
+
 export interface SettingOut {
   key: string;
   value: unknown;
@@ -313,6 +347,7 @@ export const api = {
   digests: (limit?: number) =>
     request<DigestOut[]>(`/api/digests${limit ? `?limit=${limit}` : ""}`),
   rules: () => request<RulesOut>("/api/rules"),
+  shadow: () => request<ShadowOut>("/api/shadow"),
   settings: () => request<SettingOut[]>("/api/settings"),
   putSetting: (key: string, value: unknown) =>
     request<SettingOut>(`/api/settings/${key}`, {

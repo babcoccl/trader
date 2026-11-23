@@ -30,6 +30,7 @@ from trader.ledger import accounting
 from trader.ledger.models import Candle, Decision
 from trader.ops import assets as asset_list
 from trader.ops.heartbeat import beat
+from trader.shadow import runner as shadow_runner
 
 log = logging.getLogger(__name__)
 
@@ -127,6 +128,16 @@ class Engine:
                 )
                 beat(session, SERVICE, "error", str(exc), clock=self._clock)
 
+    def run_shadow(self) -> None:
+        """Run the shadow sleeves (spec G3). Each runs in its own session;
+        a failure lands as a ``shadow_error`` event inside ``runner.run``,
+        so an escaping exception is a bug and is only logged. No
+        ``decisions`` row, no heartbeat change."""
+        try:
+            shadow_runner.run(self._session, self._clock)
+        except Exception:
+            log.exception("shadow runner failed")
+
     def serve(self) -> None:
         with self._session() as session:
             asset_list.record_change(session, self._clock)
@@ -155,6 +166,14 @@ class Engine:
             "cron",
             minute="*/5",
             second=10,
+            coalesce=True,
+            max_instances=1,
+        )
+        scheduler.add_job(
+            self.run_shadow,
+            "cron",
+            minute="*/5",
+            second=50,
             coalesce=True,
             max_instances=1,
         )

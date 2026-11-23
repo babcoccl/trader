@@ -31,6 +31,9 @@ from trader.ledger.models import (
     Order,
     Plan,
     Setting,
+    ShadowMark,
+    ShadowState,
+    ShadowTrade,
 )
 from trader.risk import engine as risk
 
@@ -234,6 +237,9 @@ def seeded(monkeypatch):
             FundingRate,
             AuditLog,
             Digest,
+            ShadowTrade,
+            ShadowMark,
+            ShadowState,
         ):
             s.execute(delete(table))
         s.commit()
@@ -278,6 +284,7 @@ def test_routes_require_login(seeded) -> None:
         "/api/reports/weekly",
         "/api/digests",
         "/api/rules",
+        "/api/shadow",
         "/api/settings",
         "/api/stream",
     ):
@@ -920,3 +927,123 @@ def test_veto_scorecard_unpriced_mark_is_unavailable(seeded) -> None:
     v = client.get("/api/reports/summary").json()["vetoes"]
     assert v["plans"] == 1 and v["shadow_fills"] == 1
     assert v["result_usd"] is None
+
+
+def _seed_shadow(s: Session) -> None:
+    day = NOW.date() - timedelta(days=3)
+    s.add(
+        ShadowMark(
+            sleeve="dip",
+            day=day,
+            equity_usd=Decimal("10000"),
+            cash_usd=Decimal("10000"),
+            exposure_usd=Decimal("0"),
+            open_trades=0,
+            closed_trades=0,
+            note=(
+                "BTC: mixed, close is 0.8 standard deviations under its "
+                "20-day average; it buys at 2.0."
+            ),
+            details={},
+        )
+    )
+    s.add(
+        ShadowMark(
+            sleeve="dip",
+            day=day + timedelta(days=1),
+            equity_usd=Decimal("9900"),
+            cash_usd=Decimal("7500"),
+            exposure_usd=Decimal("2400"),
+            open_trades=1,
+            closed_trades=0,
+            note="BTC: holding since 2026-11-20, sells on 2026-11-25.",
+            details={},
+        )
+    )
+    s.add(
+        ShadowTrade(
+            sleeve="dip",
+            symbol="BTC-USD",
+            opened_at=NOW - timedelta(days=2),
+            entry_price=Decimal("60000"),
+            quantity=Decimal("0.04"),
+            cost_usd=Decimal("2400"),
+            entry_fee_usd=Decimal("9.6"),
+            details={},
+        )
+    )
+    s.add(
+        ShadowTrade(
+            sleeve="dip",
+            symbol="ETH-USD",
+            opened_at=NOW - timedelta(days=10),
+            entry_price=Decimal("3000"),
+            quantity=Decimal("0.8"),
+            cost_usd=Decimal("2400"),
+            entry_fee_usd=Decimal("9.6"),
+            closed_at=NOW - timedelta(days=5),
+            exit_price=Decimal("3200"),
+            exit_fee_usd=Decimal("10.24"),
+            pnl_usd=Decimal("149.76"),
+            exit_reason="held 5 days",
+            details={},
+        )
+    )
+    s.commit()
+
+
+def test_shadow(seeded) -> None:
+    """Spec G3: one sleeve with marks, one open and one closed trade."""
+    client, _, engine = seeded
+    _login(client)
+    with Session(engine) as s:
+        _seed_shadow(s)
+    body = client.get("/api/shadow").json()
+    assert [s["name"] for s in body["sleeves"]] == ["dip"]
+    slv = body["sleeves"][0]
+    assert slv["title"] == "Dip-buying in a mixed regime"
+    assert "25%" in slv["description"]
+    assert slv["started_on"] == str(NOW.date() - timedelta(days=3))
+    assert slv["days"] == 2
+    assert float(slv["equity_usd"]) == 9900
+    assert slv["return_fraction"] == pytest.approx(-0.01)
+    # Running high 10000 -> 9900: worst drawdown -1%.
+    assert slv["worst_drawdown"] == pytest.approx(-0.01)
+    # Seeded equity snapshot is 10000 over the whole window -> 0 return.
+    assert slv["account_return_fraction"] == pytest.approx(0.0)
+    assert slv["closed_trades"] == 1
+    assert slv["winning_trades"] == 1
+    assert float(slv["fees_usd"]) == pytest.approx(9.6 + 9.6 + 10.24)
+    assert slv["last_note"].startswith("BTC: holding since")
+    assert slv["last_day"] == str(NOW.date() - timedelta(days=2))
+    assert len(slv["open"]) == 1
+    assert slv["open"][0]["symbol"] == "BTC-USD"
+    assert slv["open"][0]["closed_at"] is None
+    assert len(slv["recent_closed"]) == 1
+    closed = slv["recent_closed"][0]
+    assert closed["exit_reason"] == "held 5 days"
+    assert float(closed["pnl_usd"]) == pytest.approx(149.76)
+
+
+def test_shadow_empty_state(seeded) -> None:
+    """A sleeve with no mark returns nulls and empty lists."""
+    client, _, _ = seeded
+    _login(client)
+    body = client.get("/api/shadow").json()
+    slv = body["sleeves"][0]
+    assert slv["name"] == "dip"
+    for key in (
+        "started_on",
+        "equity_usd",
+        "return_fraction",
+        "worst_drawdown",
+        "account_return_fraction",
+        "last_note",
+        "last_day",
+    ):
+        assert slv[key] is None, key
+    assert slv["days"] == 0
+    assert slv["closed_trades"] == 0
+    assert slv["winning_trades"] == 0
+    assert float(slv["fees_usd"]) == 0
+    assert slv["open"] == [] and slv["recent_closed"] == []

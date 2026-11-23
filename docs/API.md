@@ -295,6 +295,37 @@ event: decision
 data: {"id": 61, "cycle": "intraday", "ran_at": "...", "symbol": null, "action": "none", "reason": "Checked prices. Nothing to do."}
 ```
 
+### `GET /api/shadow` → `ShadowOut` (spec G3)
+
+The shadow sleeves' hypothetical books: one entry per sleeve in runner
+order. Read-only — a shadow sleeve records what it would have done; it
+places no real or paper order and uses no account balance.
+
+```json
+{"sleeves": [{
+  "name": "dip", "title": "Dip-buying in a mixed regime",
+  "description": "Buys 25% of its book ...",
+  "started_on": "2026-11-20", "days": 3,
+  "equity_usd": "9900.00", "return_fraction": -0.01,
+  "worst_drawdown": -0.01, "account_return_fraction": 0.02,
+  "closed_trades": 1, "winning_trades": 1, "fees_usd": "29.44",
+  "last_note": "BTC: holding since 2026-11-20, sells on 2026-11-25.",
+  "last_day": "2026-11-22",
+  "open": [{"symbol": "BTC-USD", "opened_at": "...", "entry_price": "60000",
+    "cost_usd": "2400", "closed_at": null, "exit_price": null,
+    "pnl_usd": null, "exit_reason": null}],
+  "recent_closed": [{"symbol": "ETH-USD", "opened_at": "...",
+    "entry_price": "3000", "cost_usd": "2400", "closed_at": "...",
+    "exit_price": "3200", "pnl_usd": "149.76", "exit_reason": "held 5 days"}]
+}]}
+```
+
+`return_fraction` is equity over the book's $10,000 start, `worst_drawdown`
+the deepest drop of the marks' equity from a running high, and
+`account_return_fraction` the trading account's return over the same
+days (from `equity_snapshots`, `null` when snapshots are missing). A
+sleeve with no mark yet returns nulls and empty lists.
+
 ## Error codes
 
 `401` not logged in · `404` unknown plan or non-editable setting ·

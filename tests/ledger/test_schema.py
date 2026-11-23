@@ -34,6 +34,9 @@ EXPECTED_TABLES = {
     "settings",
     "audit_log",
     "digests",
+    "shadow_trades",
+    "shadow_marks",
+    "shadow_state",
 }
 
 

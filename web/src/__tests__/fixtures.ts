@@ -161,3 +161,51 @@ export function makeWeeklyReport(
     ...overrides,
   };
 }
+
+export function makeShadowOut(): import("../api/client").ShadowOut {
+  return {
+    sleeves: [
+      {
+        name: "dip",
+        title: "Dip-buying in a mixed regime",
+        description:
+          "Buys 25% of its book when the trend rules are mixed (3 to 6 of 9) and the daily close is 2 standard deviations under its 20-day average. Sells 5 days later.",
+        started_on: "2026-11-20",
+        days: 3,
+        equity_usd: "9900.00",
+        return_fraction: -0.01,
+        worst_drawdown: -0.01,
+        account_return_fraction: 0.02,
+        closed_trades: 1,
+        winning_trades: 1,
+        fees_usd: "29.44",
+        last_note: "BTC: holding since 2026-11-20, sells on 2026-11-25.",
+        last_day: "2026-11-22",
+        open: [
+          {
+            symbol: "BTC-USD",
+            opened_at: "2026-11-20T00:05:00Z",
+            entry_price: "60000",
+            cost_usd: "2400",
+            closed_at: null,
+            exit_price: null,
+            pnl_usd: null,
+            exit_reason: null,
+          },
+        ],
+        recent_closed: [
+          {
+            symbol: "ETH-USD",
+            opened_at: "2026-11-10T00:05:00Z",
+            entry_price: "3000",
+            cost_usd: "2400",
+            closed_at: "2026-11-15T00:05:00Z",
+            exit_price: "3200",
+            pnl_usd: "149.76",
+            exit_reason: "held 5 days",
+          },
+        ],
+      },
+    ],
+  };
+}

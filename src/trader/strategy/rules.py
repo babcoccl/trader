@@ -41,3 +41,28 @@ def all_rules(close: pd.Series) -> dict[str, pd.Series]:
     rules.update({f"momentum{n}": momentum(close, n) for n in MOMENTUM_PERIODS})
     rules.update({f"breakout{n}": breakout(close, n) for n in BREAKOUT_PERIODS})
     return rules
+
+
+def levels(close: pd.Series) -> dict[str, float]:
+    """The price level each rule compared the last close with (spec D1).
+
+    ``sma<n>``: the n-day mean. ``momentum<n>``: the close n days earlier.
+    ``breakout<n>``: the n-day high while the rule is off, the ``n // 2``-day
+    low while it is on (each is the level that flips it). NaN where the rule
+    is itself undefined on the last row.
+    """
+    out: dict[str, float] = {}
+    for n in SMA_PERIODS:
+        out[f"sma{n}"] = float(close.rolling(n, min_periods=n).mean().iloc[-1])
+    for n in MOMENTUM_PERIODS:
+        out[f"momentum{n}"] = float(close.shift(n).iloc[-1])
+    for n in BREAKOUT_PERIODS:
+        state = breakout(close, n).iloc[-1]
+        if pd.isna(state):
+            level = np.nan
+        elif state == 1.0:
+            level = close.rolling(n // 2, min_periods=n // 2).min().iloc[-1]
+        else:
+            level = close.rolling(n, min_periods=n).max().iloc[-1]
+        out[f"breakout{n}"] = float(level)
+    return out

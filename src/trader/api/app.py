@@ -21,6 +21,7 @@ from trader.api.routes import (
     plans,
     positions,
     reports,
+    rules,
     settings,
     status,
 )
@@ -71,6 +72,7 @@ for r in (
     activity.router,
     funding.router,
     reports.router,
+    rules.router,
     settings.router,
     controls.router,
     sse.router,

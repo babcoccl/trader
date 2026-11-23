@@ -194,6 +194,62 @@ class FlattenRequest(BaseModel):
     confirm: Literal["FLATTEN"]
 
 
+class DailyRunOut(BaseModel):
+    ran_at: datetime
+    action: str
+    reason: str
+
+
+class RuleOut(BaseModel):
+    name: str
+    label: str
+    positive: bool | None
+    level: float | None
+    distance: float | None
+
+
+class AssetRulesOut(BaseModel):
+    symbol: str
+    decided_at: datetime | None
+    action: str | None
+    reason: str | None
+    last_close: float | None
+    rules_positive: int | None
+    rules: list[RuleOut]
+    annual_vol: float | None
+    raw_weight: float | None
+    target_weight: Decimal | None
+    current_weight: Decimal | None
+
+
+class IntradayAssetOut(BaseModel):
+    symbol: str
+    last_price: float | None
+    nearest_stop_distance: float | None
+    drop_bid: float | None
+    drop_bid_distance: float | None
+
+
+class IntradayRulesOut(BaseModel):
+    ran_at: datetime
+    action: str
+    reason: str
+    assets: list[IntradayAssetOut]
+
+
+class ParameterOut(BaseModel):
+    name: str
+    value: str
+
+
+class RulesOut(BaseModel):
+    next_daily_decision_at: datetime
+    latest_daily: DailyRunOut | None
+    assets: list[AssetRulesOut]
+    intraday: IntradayRulesOut | None
+    parameters: list[ParameterOut]
+
+
 class OkOut(BaseModel):
     status: str = "ok"
     detail: dict[str, Any] = Field(default_factory=dict)

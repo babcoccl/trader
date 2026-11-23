@@ -56,6 +56,35 @@ an ISO `ran_at` cursor — pass the oldest `ran_at` of the previous page.
 }]
 ```
 
+### `GET /api/rules` → `RulesOut` (spec D1)
+
+Read-only view of what the system checks: the nine trend rules per asset
+with the price level each compared the last close against, the newest
+five-minute check, and the fixed settings. `assets` always has one entry
+per symbol, built from the newest daily row that recorded `rules` in
+`details`; `latest_daily` is the newest daily row of any kind.
+
+```json
+{
+  "next_daily_decision_at": "2026-11-24T00:05:00Z",
+  "latest_daily": {"ran_at": "2026-11-23T00:05:00Z", "action": "none", "reason": "Checked BTC-USD. 0 of 9 rules positive."},
+  "assets": [{
+    "symbol": "BTC-USD", "decided_at": "2026-11-23T00:05:00Z",
+    "action": "none", "reason": "...", "last_close": 62000.0,
+    "rules_positive": 0,
+    "rules": [{"name": "sma50", "label": "Price above its 50-day average",
+               "positive": false, "level": 86000.0, "distance": -0.28}],
+    "annual_vol": 0.55, "raw_weight": 0.0,
+    "target_weight": "0", "current_weight": "0"
+  }],
+  "intraday": {"ran_at": "...", "action": "none", "reason": "...",
+    "assets": [{"symbol": "BTC-USD", "last_price": 62100.0,
+                "nearest_stop_distance": null, "drop_bid": 55900.0,
+                "drop_bid_distance": 0.0998}]},
+  "parameters": [{"name": "Assets", "value": "BTC-USD, ETH-USD"}]
+}
+```
+
 ### `GET /api/plans?status=` → `PlanOut[]` · `GET /api/plans/{id}` → `PlanOut`
 
 `status` is `pending|approved|denied|expired|voided|completed`.

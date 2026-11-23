@@ -277,6 +277,7 @@ def test_routes_require_login(seeded) -> None:
         "/api/reports/summary",
         "/api/reports/weekly",
         "/api/digests",
+        "/api/rules",
         "/api/settings",
         "/api/stream",
     ):
@@ -529,6 +530,120 @@ def test_reports(seeded) -> None:
     assert summary["vetoes"]["plans"] == 0
     digests = client.get("/api/digests").json()
     assert digests[0]["day"] == "2026-11-20"
+
+
+def _daily_decision(**kw: Any) -> Decision:
+    base: dict[str, Any] = {
+        "cycle": "daily",
+        "ran_at": NOW - timedelta(hours=5),
+        "symbol": "BTC-USD",
+        "action": "none",
+        "reason": "Checked BTC-USD. 0 of 9 rules positive.",
+        "details": {},
+    }
+    base.update(kw)
+    return Decision(**base)
+
+
+_RULE_VALUES = {
+    "sma50": 0.0,
+    "sma100": 0.0,
+    "sma200": 0.0,
+    "momentum30": 1.0,
+    "momentum90": 0.0,
+    "momentum180": 0.0,
+    "breakout20": 1.0,
+    "breakout55": 0.0,
+    "breakout100": None,
+}
+_LEVELS = {name: 50000.0 + i for i, name in enumerate(_RULE_VALUES)}
+
+
+def test_rules_empty_state(seeded) -> None:
+    client, _, _ = seeded
+    _login(client)
+    body = client.get("/api/rules").json()
+    assert body["latest_daily"] is None  # the seeded decision is intraday
+    assert [a["symbol"] for a in body["assets"]] == ["BTC-USD", "ETH-USD"]
+    for a in body["assets"]:
+        assert a["decided_at"] is None
+        assert len(a["rules"]) == 9
+        assert all(r["level"] is None and r["distance"] is None for r in a["rules"])
+    assert body["intraday"]["ran_at"] is not None
+    names = [p["name"] for p in body["parameters"]]
+    assert names[:3] == ["Assets", "Daily decision time", "Five-minute check"]
+    assert "Drawdown halt" in names and "Sudden-drop bids" in names
+
+
+def test_rules_uses_newest_row_with_rules(seeded) -> None:
+    client, _, engine = seeded
+    _login(client)
+    with Session(engine) as s:
+        for symbol in ("BTC-USD", "ETH-USD"):
+            s.add(
+                _daily_decision(
+                    ran_at=NOW - timedelta(days=2),
+                    symbol=symbol,
+                    reason=f"old {symbol}",
+                    details={"rules": _RULE_VALUES},
+                )
+            )
+            s.add(
+                _daily_decision(
+                    ran_at=NOW - timedelta(days=1),
+                    symbol=symbol,
+                    reason=f"new {symbol}",
+                    target_weight=Decimal("0.0"),
+                    current_weight=Decimal("0.0"),
+                    details={
+                        "rules": _RULE_VALUES,
+                        "last_close": 60000.0,
+                        "levels": _LEVELS,
+                        "annual_vol": 0.5,
+                        "raw_weight": 0.1,
+                    },
+                )
+            )
+        # A newer blocked row must not blank the asset; it lands in
+        # latest_daily.
+        s.add(
+            _daily_decision(
+                ran_at=NOW - timedelta(hours=1),
+                symbol="BTC-USD",
+                action="blocked",
+                reason="Yesterday's BTC-USD candle is missing.",
+            )
+        )
+        s.commit()
+    body = client.get("/api/rules").json()
+    assert body["latest_daily"]["action"] == "blocked"
+    assert "missing" in body["latest_daily"]["reason"]
+    for a in body["assets"]:
+        assert a["reason"] == f"new {a['symbol']}"
+        assert a["last_close"] == 60000.0
+        assert a["rules_positive"] == 2
+        assert a["annual_vol"] == 0.5
+        by_name = {r["name"]: r for r in a["rules"]}
+        assert by_name["sma50"]["positive"] is False
+        assert by_name["momentum30"]["positive"] is True
+        assert by_name["breakout100"]["positive"] is None
+        assert by_name["sma50"]["level"] == _LEVELS["sma50"]
+        assert by_name["sma50"]["distance"] == pytest.approx(
+            60000.0 / _LEVELS["sma50"] - 1
+        )
+
+
+def test_rules_row_without_levels(seeded) -> None:
+    client, _, engine = seeded
+    _login(client)
+    with Session(engine) as s:
+        for symbol in ("BTC-USD", "ETH-USD"):
+            s.add(_daily_decision(symbol=symbol, details={"rules": _RULE_VALUES}))
+        s.commit()
+    body = client.get("/api/rules").json()
+    for a in body["assets"]:
+        assert a["decided_at"] is not None
+        assert all(r["level"] is None and r["distance"] is None for r in a["rules"])
 
 
 def test_settings(seeded) -> None:

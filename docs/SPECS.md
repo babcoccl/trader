@@ -807,3 +807,325 @@ before spec 5.4.
   screenshot is in the PR.
 - **Out of scope:** changing what the report computes; the `report`
   command (it must still write any window asked for).
+
+## D. Enhancements after the first paper day
+
+Requested by the owner on 2026-11-23, after the first 12 hours of paper
+trading showed no trade (all nine rules were off for both assets). The
+tests behind D2 are in `docs/studies/more-trades-study.md`. Section A
+applies. Use the template in `docs/KICKOFF.md` with "section D" in place
+of "section B". Branch `devin/<ID>-<slug>`. One spec, one session, one
+pull request. Neither spec needs an API key or places an order on an
+exchange. Neither spec changes a rule, a risk limit, the halt or the
+approval requirement.
+
+Order: D1 and D2 are independent; merge one at a time.
+
+### D1 Rules screen: what the system is checking and why it is not trading
+
+- **Goal:** one read-only screen shows, per asset, each of the nine
+  rules as on or off with the price level it was compared with, the
+  resulting target weight, the five-minute check, and the fixed
+  settings. The owner can see why nothing is trading without reading
+  logs.
+- **Depends on:** nothing.
+- **Files:** `src/trader/strategy/rules.py`,
+  `tests/strategy/test_rules.py`, `src/trader/engine/daily_cycle.py`,
+  `tests/engine/test_daily_cycle.py`, `src/trader/api/routes/rules.py`
+  (new), `src/trader/api/app.py`, `src/trader/api/schemas.py`,
+  `tests/api/test_api.py`, `web/src/api/client.ts`,
+  `web/src/pages/Rules.tsx` (new), `web/src/App.tsx`,
+  `web/src/__tests__/Rules.test.tsx` (new),
+  `web/src/__tests__/fixtures.ts`, `docs/API.md`, `docs/SETUP.md`.
+- **Interfaces:**
+  1. `rules.levels(close: pd.Series) -> dict[str, float]`: for the last
+     row of `close`, the price each rule compared the close with. Keys
+     are the nine names of `all_rules`. Values:
+     - `sma<n>`: the n-day mean.
+     - `momentum<n>`: the close n days earlier.
+     - `breakout<n>`: when the rule's last value is 1.0, the
+       `n // 2`-day low of closes (a close at or under it turns the rule
+       off); otherwise the n-day high of closes (a close at or above it
+       turns the rule on).
+     - `nan` where the rule itself is undefined.
+     Do not change `sma`, `momentum`, `breakout` or `all_rules`.
+  2. Daily decision rows that carry `details["rules"]` also carry
+     `details["last_close"]` (float, the daily close the rules used) and
+     `details["levels"]` (`{rule name: float | null}`, from
+     `rules.levels`, NaN stored as `null` with the existing `_finite`).
+     Nothing else in the daily cycle changes.
+  3. `GET /api/rules` → `RulesOut`, authentication as the other routes:
+
+     ```
+     RulesOut
+       next_daily_decision_at: datetime        # as in /api/status
+       latest_daily: DailyRunOut | None        # newest daily row of any kind
+       assets: list[AssetRulesOut]             # one per symbol in SYMBOLS, in that order
+       intraday: IntradayRulesOut | None       # from the newest intraday row
+       parameters: list[ParameterOut]
+     DailyRunOut        ran_at: datetime, action: str, reason: str
+     AssetRulesOut
+       symbol: str
+       decided_at: datetime | None             # None when no row with rules exists
+       action: str | None
+       reason: str | None
+       last_close: float | None
+       rules_positive: int | None              # count of rules equal to 1.0
+       rules: list[RuleOut]                    # always nine, in all_rules order
+       annual_vol: float | None
+       raw_weight: float | None
+       target_weight: Decimal | None
+       current_weight: Decimal | None
+     RuleOut
+       name: str                               # "sma50"
+       label: str                              # see Steps 2
+       positive: bool | None                   # None when the stored value is null
+       level: float | None                     # None for rows written before this spec
+       distance: float | None                  # last_close / level - 1, None if either is missing
+     IntradayRulesOut
+       ran_at: datetime, action: str, reason: str
+       assets: list[IntradayAssetOut]
+     IntradayAssetOut
+       symbol: str
+       last_price: float | None
+       nearest_stop_distance: float | None
+       drop_bid: float | None                  # details.per_asset[symbol].dip_quote.bid
+       drop_bid_distance: float | None         # 1 - drop_bid / last_price
+     ParameterOut       name: str, value: str
+     ```
+
+     For each symbol the asset block is built from the newest
+     `decisions` row with `cycle="daily"`, that `symbol`, and a
+     `details` object containing the key `rules`. A newer blocked or
+     error row does not replace it; it appears in `latest_daily`.
+- **Steps:**
+  1. Route `rules.py`, registered in `app.py` like the other routers.
+     `next_daily_decision_at` reuses `status._next_daily_decision`.
+  2. Labels: `sma<n>` → "Price above its <n>-day average";
+     `momentum<n>` → "Price above its level <n> days ago";
+     `breakout<n>` → "<n>-day breakout (on at a <n>-day high, off at a
+     <n // 2>-day low)".
+  3. `parameters`, in this order, with values read from the code
+     constants so the screen cannot drift from the code:
+     Assets (`SYMBOLS` joined with ", "); Daily decision time
+     ("00:05 UTC"); Five-minute check ("every 5 minutes");
+     Volatility target (`daily_cycle.VOL_TARGET` as a percentage);
+     Trading band (`daily_cycle.BAND` as a percentage, followed by
+     " of the larger of target and holding"); Drawdown halt and Largest
+     loss per plan (from `Limits.load`); Approval expiry
+     (`builder.APPROVAL_EXPIRY` in hours); Entry order ("maker-only
+     limit at the best bid, re-priced every <REPRICE_SECONDS / 60>
+     minutes, market order after <MARKET_AFTER_SECONDS / 60> minutes");
+     Emergency stop ("<STOP_SWINGS> <STOP_DAYS>-day swings below the
+     entry price, checked every 30 seconds"); Sudden-drop bids ("Parked.
+     Shown as an observation only; no order is placed").
+  4. Web: add the tab "Rules" after "Approvals" in `TABS`. The page has
+     three cards and refreshes every 60 seconds.
+     - "Trend rules (decided daily at 00:05 UTC)". First line: the
+       time until `next_daily_decision_at`. If `latest_daily.action` is
+       `blocked` or `error`, a warning line with its `reason`. Then one
+       block per asset: a heading "<symbol>: <rules_positive> of 9 rules
+       on", the asset's `reason`, "Decided <decided_at>", a line
+       "Volatility <annual_vol as %> a year. Target <target_weight as
+       %>, holding <current_weight as %>.", and a table with columns
+       Rule (`label`), Status ("On", "Off", "No data"), Compared with
+       (`level`), Last close against it (`distance` as a signed
+       percentage). A missing `level` or `distance` shows "—". If any
+       level is missing, one muted line: "Levels appear after the next
+       daily decision." Empty state for an asset with no `decided_at`:
+       "No daily decision recorded yet."
+     - "Five-minute check": the intraday `reason` and its time, then
+       per asset: price, nearest stop distance (or "none"), and
+       "Sudden-drop level <drop_bid> (<drop_bid_distance> under the
+       price)". Under the card title, in muted text: "Observation only.
+       The sudden-drop sleeve is parked and places no orders."
+     - "Fixed settings": the `parameters` rows as a two-column table.
+     Prices are formatted by a helper `formatPrice(x)`: 1,000 and
+     above with no decimals and thousands separators; 1 to 999.99 with
+     2 decimals; under 1 with 4 decimals.
+  5. The page contains no form control: no `<input>`, `<select>`,
+     `<textarea>` or `<button>`.
+  6. `docs/API.md`: document the route. `docs/SETUP.md`: add the Rules
+     screen to the list of screens, one sentence.
+- **Tests:**
+  1. `levels` on a hand-built series: the `sma` value equals the mean of
+     the last n closes; the `momentum` value equals the close n rows
+     back; `breakout` returns the n-day high while the rule is 0.0 and
+     the `n // 2`-day low while it is 1.0; a series shorter than n gives
+     NaN for that rule.
+  2. Daily cycle: a decision with rules has `last_close` and nine
+     `levels`; a blocked decision has neither.
+  3. API: with two daily rows per symbol the newer one is used; a newer
+     blocked row is returned in `latest_daily` and does not blank the
+     assets; a row written without `levels` gives `level: null` and
+     `distance: null` for every rule; with no rows `assets` holds one
+     entry per symbol with `decided_at: null`; the route returns 401
+     without a login.
+  4. Web: the fixture renders nine rows per asset with "On" and "Off",
+     the "Observation only" line and the settings table; the empty
+     state renders; the rendered page has no `input`, `select`,
+     `textarea` or `button` element.
+- **Done when:** tests pass (`pytest`, `npm test`); CI green; a
+  screenshot of the Rules screen from a running stack is in the PR.
+- **Out of scope:** editing any rule or setting; showing history of
+  rule values; predicting tomorrow's flip price; any change to how a
+  decision is made.
+
+### D2 Asset list from configuration, with SOL and XRP available for paper trading
+
+- **Goal:** the owner can paper trade the same nine rules on BTC, ETH,
+  SOL and XRP by setting one variable. The default stays BTC and ETH,
+  and live mode refuses any asset other than BTC and ETH.
+- **Why these two:** on 2026-11-23 SOL/USD and XRP/USD each traded
+  about $14 million a day on Bitstamp with over $250,000 resting within
+  0.1% of the price. SHIB/USD and BNB/USD traded under $0.3 million a
+  day there and are not usable. In the backtest (Binance prices,
+  Bitstamp costs, 2022 to 2026) the four-asset version returned 9.6% a
+  year against 11.4% for BTC and ETH, with a similar worst loss (-23%
+  against -24%) and trades on about 180 days a year against 113. It is
+  a paper test of a wider base, not an expected improvement.
+- **Depends on:** nothing.
+- **Files:** `src/trader/core/config.py`, `tests/core/test_config.py`,
+  `src/trader/data/sources/base.py`,
+  `src/trader/data/sources/bitstamp.py`,
+  `src/trader/data/sources/coinbase.py`, `tests/data/test_sources.py`,
+  `src/trader/data/collector.py`, `tests/data/test_collector.py`,
+  `src/trader/engine/daily_cycle.py`, `tests/engine/test_daily_cycle.py`,
+  `src/trader/engine/intraday_cycle.py`,
+  `tests/engine/test_intraday_cycle.py`,
+  `src/trader/api/routes/reports.py`, `tests/api/test_api.py`,
+  `web/src/pages/Controls.tsx`, `web/src/__tests__/Controls.test.tsx`,
+  `docker-compose.yml`, `docker-compose.prod.yml`, `.env.example`,
+  `docs/SETUP.md`, `docs/PAPER.md`, `docs/SPECS.md` (section A rows
+  named in step 9 only), `docs/DECISIONS.md`.
+- **Interfaces:**
+  1. `Settings.symbols: str = "BTC-USD,ETH-USD"` (variable
+     `TRADER_SYMBOLS`) and `Settings.symbol_list -> tuple[str, ...]`:
+     split on commas, strip spaces, upper-case; an empty list or a
+     repeated symbol raises `ValueError`, and so does a list without
+     both `BTC-USD` and `ETH-USD` (they are the comparison baselines).
+     A model validator raises
+     `ValueError("live mode supports only BTC-USD and ETH-USD")` when
+     `mode == "live"` and `symbol_list` holds anything else.
+  2. In `data/sources/base.py`:
+
+     ```python
+     @dataclass(frozen=True)
+     class Asset:
+         symbol: str
+         bitstamp_market: str
+         coinbase_product: str
+         tick: Decimal  # price step
+         lot: Decimal  # quantity step
+         daily_start: datetime  # first daily candle to backfill (UTC)
+
+
+     ASSETS: dict[str, Asset]  # the four rows below
+     SYMBOLS: tuple[str, ...]  # get_settings().symbol_list, each checked against ASSETS
+     ```
+
+     | symbol | bitstamp_market | coinbase_product | tick | lot | daily_start |
+     |---|---|---|---|---|---|
+     | BTC-USD | btcusd | BTC-USD | 0.01 | 0.00000001 | 2019-01-01 |
+     | ETH-USD | ethusd | ETH-USD | 0.01 | 0.00000001 | 2019-01-01 |
+     | SOL-USD | solusd | SOL-USD | 0.001 | 0.00001 | 2022-08-18 |
+     | XRP-USD | xrpusd | XRP-USD | 0.00001 | 0.00000001 | 2019-01-01 |
+
+     BTC and ETH keep exactly today's values (`VENUE_TICK`,
+     `VENUE_LOT`), so no existing test changes. Bitstamp reports 6
+     quantity decimals for ETH, not 8; leave that for spec 5.4. SOL and XRP steps are Bitstamp's `counter_decimals` and
+     `base_decimals` from `GET /api/v2/markets/` on 2026-11-23. A symbol
+     in `TRADER_SYMBOLS` that is not in `ASSETS` raises `ValueError`
+     naming it when `base.py` is imported, so every service refuses to
+     start.
+- **Steps:**
+  1. `bitstamp.MARKETS` and `coinbase.PRODUCTS` are built from `ASSETS`
+     (all four rows, whatever `SYMBOLS` is). Their names and types stay.
+  2. Collector: the daily backfill and the daily gap search start at
+     `ASSETS[symbol].daily_start` in place of `DAILY_BACKFILL_START`.
+     Reason: Bitstamp returns an empty list for a 1,000-day window with
+     no candles in it, and fewer than 1,000 rows for a window that
+     starts before the first candle; `BitstampSource.fetch` stops on
+     both, so SOL would be left with no history. Do not change
+     `BitstampSource.fetch`.
+  3. Daily cycle: `tick` and `lot` passed to `builder.build` come from
+     `ASSETS[symbol]`. Remove `VENUE_TICK` and `VENUE_LOT`. Sizing is
+     already `signal / number of assets`; do not change `sizing.py`.
+  4. Intraday reason text. Prices use a helper `_fmt_price(p)`: 1,000
+     and above `f"{p:,.0f}"`; 1 to under 1,000 `f"{p:,.2f}"`; under 1
+     `f"{p:.4f}"`. The list of sudden-drop distances is joined with
+     ", " and " and " before the last item. For BTC above 1,000 and ETH
+     above 1,000 the text is byte-for-byte what it is today.
+  5. `reports.py`, equity baselines: "Buy and hold BTC" and "Buy and
+     hold BTC+ETH" always use BTC-USD and ETH-USD, whatever `SYMBOLS`
+     is: load the closes for those two symbols and average over those
+     two (today both use `SYMBOLS`). The comparison with the backtest
+     keeps using `SYMBOLS`.
+  6. Controls screen: the "Sizing" row text becomes "Volatility target
+     40%, assets set by TRADER_SYMBOLS (default BTC and ETH), long
+     only, no leverage".
+  7. Both Compose files: add
+     `TRADER_SYMBOLS: ${TRADER_SYMBOLS:-BTC-USD,ETH-USD}` to `api`,
+     `collector`, `engine`, `executor` and `watchdog`. `.env.example`:
+     add the variable, commented out, with one line of explanation.
+  8. `docs/SETUP.md`: a section "Paper trading more assets" with the
+     `.env` line `TRADER_SYMBOLS=BTC-USD,ETH-USD,SOL-USD,XRP-USD`, the
+     restart command for Linux/macOS and PowerShell
+     (`docker compose -f docker-compose.prod.yml up -d` in both), and
+     these facts: change the list only while the account holds no
+     position; history for a new asset is downloaded at the next
+     collector start; a new asset gets its first daily decision at the
+     next 00:05 UTC; each asset's share of the account is at most one
+     divided by the number of assets (25% with four); live mode starts
+     only with BTC and ETH. `docs/PAPER.md`: one paragraph: changing
+     the asset list restarts the four-week count of spec 5.3.
+  9. `docs/SPECS.md` section A: "Symbols are..." becomes "Symbols are
+     the entries of `TRADER_SYMBOLS` (default `BTC-USD`, `ETH-USD`;
+     `SOL-USD` and `XRP-USD` are allowed in paper mode); adapters
+     translate to venue names."; the Assets row becomes "BTC-USD,
+     ETH-USD by default; SOL-USD, XRP-USD in paper mode only"; in the
+     Sizing row "signal / 2" becomes "signal / number of assets". In
+     `docs/DECISIONS.md` leave the Open row "Asset list" as it is: the
+     owner decides after the paper results.
+- **Tests:**
+  1. Config: default gives `("BTC-USD", "ETH-USD")`; `"btc-usd,sol-usd"`
+     raises (no ETH); `" btc-usd , eth-usd,sol-usd "` gives
+     `("BTC-USD", "ETH-USD", "SOL-USD")`; empty and repeated values raise;
+     `mode="live"` with SOL raises; `mode="live"` with the default does
+     not.
+  2. Sources: `MARKETS["SOL-USD"] == "solusd"`,
+     `PRODUCTS["XRP-USD"] == "XRP-USD"`; an unknown symbol in
+     `TRADER_SYMBOLS` raises on import of `base` (use
+     `importlib.reload` with the variable set and
+     `get_settings.cache_clear()` before it, then restore both).
+     Wherever a test below says "`SYMBOLS` patched", patch the name in
+     the module under test (for example
+     `monkeypatch.setattr(daily_cycle, "SYMBOLS", ...)`): each module
+     imports the tuple by name.
+  3. Collector: with `SYMBOLS` patched to include SOL-USD, the first
+     daily request for SOL starts at 2022-08-18 and the first for BTC at
+     2019-01-01.
+  4. Daily cycle: with `SYMBOLS` patched to four assets, all rules on
+     and volatility under the target, each target weight is 0.25, and a
+     SOL plan's limit price has 3 decimals and its quantity 5.
+  5. Intraday: `_fmt_price` for 61416.2, 131.416 and 0.52341 gives
+     "61,416", "131.42" and "0.5234"; the existing reason-text tests
+     pass unchanged; with four assets the drop-bid sentence reads
+     "... under BTC, ... under ETH, ... under SOL and ... under XRP.".
+  6. Reports: with `SYMBOLS` patched to four assets the BTC+ETH
+     baseline equals the two-asset value.
+  7. Web: Controls shows the new Sizing text.
+- **Done when:** tests pass (`pytest`, `npm test`); CI green. With
+  `TRADER_SYMBOLS=BTC-USD,ETH-USD,SOL-USD,XRP-USD` in `.env`,
+  `docker compose up -d --build` reaches seven running services, and
+  after the backfill
+  `docker compose exec -T db psql -U trader -c "select symbol, interval, count(*), min(open_time)::date from candles group by 1,2 order by 1,2"`
+  shows more than 1,500 daily candles for SOL-USD starting 2022-08-18
+  and more than 2,800 for XRP-USD; the Overview status line names four
+  prices; with `TRADER_MODE=live` added, the services exit with the
+  live-mode message (paste the log line). Then remove both lines again.
+  Paste each output in the PR.
+- **Out of scope:** any asset beyond these four; live trading of SOL or
+  XRP; per-asset caps or weights other than equal shares; changing a
+  rule, the volatility target, the band or any limit; the funding watch
+  on Positions; the committed fixtures in `research/`.

@@ -56,6 +56,14 @@ an ISO `ran_at` cursor — pass the oldest `ran_at` of the previous page.
 }]
 ```
 
+A daily decision's `details` also carries `sleeves` (spec G2): one entry
+per sleeve that trades, `{"name", "mode": "active", "allowed",
+"proposed", "weight"}` — whether the sleeve may hold a position in the
+asset's regime, the weight it proposed and the weight it got after
+capping and scaling. The sum of the sleeves' `weight` is the decision's
+`target_weight`. With the current registry it is a single `trend` entry
+whose `weight` equals the target.
+
 ### `GET /api/rules` → `RulesOut` (spec D1)
 
 Read-only view of what the system checks: the nine trend rules per asset
@@ -88,7 +96,8 @@ rows written before G1.
     "assets": [{"symbol": "BTC-USD", "last_price": 62100.0,
                 "nearest_stop_distance": null, "drop_bid": 55900.0,
                 "drop_bid_distance": 0.0998}]},
-  "parameters": [{"name": "Assets", "value": "BTC-USD, ETH-USD"}]
+  "parameters": [{"name": "Assets", "value": "BTC-USD, ETH-USD"},
+                 {"name": "Sleeves that trade", "value": "Trend rules (every regime)"}]
 }
 ```
 

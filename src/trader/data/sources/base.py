@@ -7,13 +7,73 @@ needs an API key.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Protocol
 
+from trader.core.config import get_settings
+
 INTERVAL_SECONDS = {"1d": 86400, "5m": 300}
 
-SYMBOLS = ("BTC-USD", "ETH-USD")
+
+@dataclass(frozen=True)
+class Asset:
+    """One tradable asset's venue names and rounding/backfill parameters."""
+
+    symbol: str
+    bitstamp_market: str
+    coinbase_product: str
+    tick: Decimal  # price step
+    lot: Decimal  # quantity step
+    daily_start: datetime  # first daily candle to backfill (UTC)
+
+
+ASSETS: dict[str, Asset] = {
+    "BTC-USD": Asset(
+        "BTC-USD",
+        "btcusd",
+        "BTC-USD",
+        Decimal("0.01"),
+        Decimal("0.00000001"),
+        datetime(2019, 1, 1, tzinfo=UTC),
+    ),
+    "ETH-USD": Asset(
+        "ETH-USD",
+        "ethusd",
+        "ETH-USD",
+        Decimal("0.01"),
+        Decimal("0.00000001"),
+        datetime(2019, 1, 1, tzinfo=UTC),
+    ),
+    "SOL-USD": Asset(
+        "SOL-USD",
+        "solusd",
+        "SOL-USD",
+        Decimal("0.001"),
+        Decimal("0.00001"),
+        datetime(2022, 8, 18, tzinfo=UTC),
+    ),
+    "XRP-USD": Asset(
+        "XRP-USD",
+        "xrpusd",
+        "XRP-USD",
+        Decimal("0.00001"),
+        Decimal("0.00000001"),
+        datetime(2019, 1, 1, tzinfo=UTC),
+    ),
+}
+
+
+def _checked_symbols() -> tuple[str, ...]:
+    """Configured assets; an unknown symbol refuses every service at import."""
+    symbols = get_settings().symbol_list
+    for symbol in symbols:
+        if symbol not in ASSETS:
+            raise ValueError(f"TRADER_SYMBOLS names an unknown asset: {symbol}")
+    return symbols
+
+
+SYMBOLS: tuple[str, ...] = _checked_symbols()
 
 
 @dataclass(frozen=True)

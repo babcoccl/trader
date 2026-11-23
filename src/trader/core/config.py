@@ -3,7 +3,10 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BASELINE_SYMBOLS = ("BTC-USD", "ETH-USD")
 
 
 class Settings(BaseSettings):
@@ -18,10 +21,34 @@ class Settings(BaseSettings):
     live_enabled: bool = False
     log_level: str = "INFO"
     dashboard_password: str = ""
+    # Comma-separated assets, e.g. "BTC-USD,ETH-USD,SOL-USD,XRP-USD".
+    symbols: str = "BTC-USD,ETH-USD"
     # Live venue credentials (spec 5.2); read-only until live_enabled.
     bitstamp_key: str = ""
     bitstamp_secret: str = ""
     bitstamp_base_url: str = "https://www.bitstamp.net/api/v2"
+
+    @property
+    def symbol_list(self) -> tuple[str, ...]:
+        """Configured assets, normalized: comma-split, stripped, upper-cased."""
+        parts = tuple(s.strip().upper() for s in self.symbols.split(","))
+        if not parts or any(not s for s in parts) or len(set(parts)) != len(parts):
+            raise ValueError(f"invalid TRADER_SYMBOLS value: {self.symbols!r}")
+        missing = [s for s in _BASELINE_SYMBOLS if s not in parts]
+        if missing:
+            raise ValueError(
+                f"TRADER_SYMBOLS must include {', '.join(_BASELINE_SYMBOLS)} "
+                "(the comparison baselines)"
+            )
+        return parts
+
+    @model_validator(mode="after")
+    def _live_supports_baseline_only(self) -> "Settings":
+        if self.mode == "live" and any(
+            s not in _BASELINE_SYMBOLS for s in self.symbol_list
+        ):
+            raise ValueError("live mode supports only BTC-USD and ETH-USD")
+        return self
 
 
 @lru_cache

@@ -14,10 +14,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from trader.data.sources.base import Candle, period_seconds
+from trader.data.sources.base import ASSETS, Candle, period_seconds
 
 BASE_URL = "https://www.bitstamp.net/api/v2"
-MARKETS = {"BTC-USD": "btcusd", "ETH-USD": "ethusd"}
+MARKETS = {s: a.bitstamp_market for s, a in ASSETS.items()}
 
 GetJson = Callable[[str, dict[str, Any]], Any]
 

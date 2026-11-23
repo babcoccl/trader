@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from trader.backtest.costs import BITSTAMP
 from trader.core.clock import Clock
 from trader.data import candles as candles_mod
-from trader.data.sources.base import SYMBOLS
+from trader.data.sources.base import ASSETS, SYMBOLS
 from trader.ledger.models import Candle, Decision, Signal
 from trader.plans import builder
 from trader.risk import engine as risk_engine
@@ -37,10 +37,6 @@ VOL_TARGET = 0.40
 # How many daily runs one UTC day may make before waiting for the next
 # day's 00:05 job (spec R4): a blocked day retries every 5 minutes.
 MAX_ATTEMPTS = 12
-# Bitstamp market rules until the executor reads them from ``/markets/``
-# (spec 2.4): counter_decimals=2, base_decimals=8 for btcusd and ethusd.
-VENUE_TICK = Decimal("0.01")
-VENUE_LOT = Decimal("0.00000001")
 
 
 class PortfolioView(Protocol):
@@ -262,8 +258,8 @@ def run(
                 BITSTAMP,
                 clock,
                 rules_positive=a["k"],
-                tick=VENUE_TICK,
-                lot=VENUE_LOT,
+                tick=ASSETS[symbol].tick,
+                lot=ASSETS[symbol].lot,
             )
             if plan is not None:
                 verdict = risk_engine.check_plan(plan, portfolio, limits, risk_state)

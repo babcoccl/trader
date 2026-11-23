@@ -56,3 +56,12 @@ Each report contains:
 - **Alarms**: every `alarm` and `alarm_cleared` event of the week.
 - **Approvals**: minutes from proposal to decision for every plan
   decided in the week, plus the median and slowest.
+
+## Changing the asset list
+
+`TRADER_SYMBOLS` can add SOL-USD and XRP-USD to the paper account
+(see `docs/SETUP.md`, "Paper trading more assets"). Changing the asset
+list restarts the four-week count of spec 5.3: the promotion gate
+compares paper against backtest over the same four weeks, and the
+weeks before the change traded a different portfolio, so the count
+starts over at the change.

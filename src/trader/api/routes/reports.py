@@ -66,6 +66,9 @@ def _daily_closes(
     return df["close"]
 
 
+BASELINE_SYMBOLS = ("BTC-USD", "ETH-USD")
+
+
 def _baseline_at(closes: pd.Series, at: pd.Timestamp) -> float | None:
     """Last close at or before ``at``; None when the series starts later."""
     upto = closes.loc[:at]
@@ -95,7 +98,11 @@ def equity_report(
     # the snapshot times ([start, end) would often be empty).
     day_start = start - timedelta(days=2)
     day_end = end + timedelta(days=2)
-    closes = {s: _daily_closes(session, s, day_start, day_end) for s in SYMBOLS}
+    # Baselines are always BTC and ETH, whatever TRADER_SYMBOLS holds:
+    # they are the comparison the backtest and the paper run are judged on.
+    closes = {
+        s: _daily_closes(session, s, day_start, day_end) for s in BASELINE_SYMBOLS
+    }
     closes = {s: c for s, c in closes.items() if not c.empty}
 
     base0: dict[str, float] = {}
@@ -115,8 +122,8 @@ def equity_report(
                     ratios[s] = close / base0[s]
         btc = Decimal(str(eq0 * ratios["BTC-USD"])) if "BTC-USD" in ratios else None
         btc_eth = (
-            Decimal(str(eq0 * sum(ratios.values()) / len(SYMBOLS)))
-            if len(ratios) == len(SYMBOLS)
+            Decimal(str(eq0 * sum(ratios.values()) / len(BASELINE_SYMBOLS)))
+            if len(ratios) == len(BASELINE_SYMBOLS)
             else None
         )
         points.append(

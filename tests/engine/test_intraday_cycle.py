@@ -238,3 +238,28 @@ def test_empty_table_blocked(session: Session) -> None:
     assert row.action == "blocked"
     for symbol in SYMBOLS:
         assert row.details["per_asset"][symbol]["last_price"] is None
+
+
+def test_fmt_price() -> None:
+    assert intraday_cycle._fmt_price(61416.2) == "61,416"
+    assert intraday_cycle._fmt_price(131.416) == "131.42"
+    assert intraday_cycle._fmt_price(0.52341) == "0.5234"
+
+
+def test_drop_bid_sentence_four_assets(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec D2: with four assets the drop-bid clause lists them comma-joined
+    with 'and' before the last."""
+    four = ("BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD")
+    last_open = NOW.replace(second=0, microsecond=0) - timedelta(minutes=5)
+    for symbol in ("SOL-USD", "XRP-USD"):
+        candles_mod.upsert(session, _five_min_candles(symbol, last_open, 289, 100.0))
+    session.commit()
+    monkeypatch.setattr(intraday_cycle, "SYMBOLS", four)
+    row = intraday_cycle.run(session, FrozenClock(NOW))
+    session.commit()
+    assert " under BTC, " in row.reason
+    assert " under ETH, " in row.reason
+    assert " under SOL and " in row.reason
+    assert " under XRP." in row.reason

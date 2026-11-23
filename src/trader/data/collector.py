@@ -2,9 +2,9 @@
 
 Every minute: store the last two closed 5m candles per symbol and, after
 00:01 UTC, yesterday's 1d candle. On start it refills every gap in the
-backfill windows (daily candles from 2019-01-01, 5m candles for the last 30
-days). A heartbeat row is written each loop. On a source failure the backup
-source takes over and an `events` row is written.
+backfill windows (daily candles from each asset's ``daily_start``, 5m
+candles for the last 30 days). A heartbeat row is written each loop. On a
+source failure the backup source takes over and an `events` row is written.
 
 Run: ``python -m trader.data.collector`` (Compose service ``collector``).
 """
@@ -25,6 +25,7 @@ from trader.core.db import session_scope
 from trader.core.logging import setup as setup_logging
 from trader.data import candles as candles_mod
 from trader.data.sources.base import (
+    ASSETS,
     SYMBOLS,
     Candle,
     CandleSource,
@@ -37,7 +38,6 @@ from trader.ops.heartbeat import beat
 
 log = logging.getLogger(__name__)
 
-DAILY_BACKFILL_START = datetime(2019, 1, 1, tzinfo=UTC)
 FIVEM_BACKFILL_DAYS = 30
 
 
@@ -151,12 +151,13 @@ class Collector:
         day_end = _floor(now, 86400)
         fivem_start = _floor(now - timedelta(days=FIVEM_BACKFILL_DAYS), 300)
         for symbol in SYMBOLS:
-            self._store(session, symbol, "1d", DAILY_BACKFILL_START, day_end)
+            daily_start = ASSETS[symbol].daily_start
+            self._store(session, symbol, "1d", daily_start, day_end)
             self._store(session, symbol, "5m", fivem_start, now)
             self._tick_heartbeat(f"backfilled {symbol}")
         for symbol in SYMBOLS:
             for interval, start in (
-                ("1d", DAILY_BACKFILL_START),
+                ("1d", ASSETS[symbol].daily_start),
                 ("5m", fivem_start),
             ):
                 end = day_end if interval == "1d" else now

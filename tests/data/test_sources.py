@@ -6,6 +6,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from trader.data.sources.bitstamp import BitstampSource
 from trader.data.sources.coinbase import CoinbaseSource
 
@@ -179,3 +181,34 @@ def test_coinbase_continues_past_empty_chunk() -> None:
     out = src.fetch("BTC-USD", "5m", start, end)
 
     assert [c.open_time for c in out] == [datetime.fromtimestamp(t0 + 301 * step, UTC)]
+
+
+def test_markets_and_products_cover_all_assets() -> None:
+    from trader.data.sources.bitstamp import MARKETS
+    from trader.data.sources.coinbase import PRODUCTS
+
+    assert MARKETS["SOL-USD"] == "solusd"
+    assert MARKETS["XRP-USD"] == "xrpusd"
+    assert PRODUCTS["SOL-USD"] == "SOL-USD"
+    assert PRODUCTS["XRP-USD"] == "XRP-USD"
+
+
+def test_unknown_symbol_refuses_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An asset name outside ASSETS makes base.py raise on import, so no
+    service starts."""
+    import importlib
+
+    import trader.data.sources.base as base
+    from trader.core.config import get_settings
+
+    monkeypatch.setenv("TRADER_SYMBOLS", "BTC-USD,ETH-USD,SHIB-USD")
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(ValueError, match="SHIB-USD"):
+            importlib.reload(base)
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()
+        importlib.reload(base)

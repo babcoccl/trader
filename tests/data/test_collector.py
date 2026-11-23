@@ -165,3 +165,38 @@ def test_heartbeat_recovers_after_outage(session: Session) -> None:
         h.status for h in session.scalars(select(Heartbeat).order_by(Heartbeat.id))
     ]
     assert statuses == ["error", "ok"]
+
+
+def test_daily_backfill_starts_at_each_assets_daily_start(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec D2: SOL's first daily request starts 2022-08-18, BTC's 2019-01-01 —
+    a window before the first candle returns short pages the fetch loop reads
+    as the end of history."""
+    import trader.data.collector as collector_mod
+
+    calls: list[tuple[str, str, datetime]] = []
+
+    class RecordingSource:
+        name = "record"
+
+        def fetch(
+            self, symbol: str, interval: str, start: datetime, end: datetime
+        ) -> list[Candle]:
+            calls.append((symbol, interval, start))
+            return []
+
+    four = ("BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD")
+    monkeypatch.setattr(collector_mod, "SYMBOLS", four)
+    collector = Collector(
+        sources=[RecordingSource()], clock=_Frozen(), session_factory=lambda: session
+    )
+    collector.refill_gaps(session)
+    session.commit()
+
+    first_daily: dict[str, datetime] = {}
+    for symbol, interval, start in calls:
+        if interval == "1d" and symbol not in first_daily:
+            first_daily[symbol] = start
+    assert first_daily["SOL-USD"] == datetime(2022, 8, 18, tzinfo=UTC)
+    assert first_daily["BTC-USD"] == datetime(2019, 1, 1, tzinfo=UTC)

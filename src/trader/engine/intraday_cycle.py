@@ -79,6 +79,22 @@ def _bid_distance(price: float, bid: float) -> float:
     return float((Decimal(str(price)) - Decimal(str(bid))) / Decimal(str(price)))
 
 
+def _fmt_price(p: float) -> str:
+    """Price in reason text: round for BTC/ETH, decimals for cheap assets."""
+    if p >= 1000:
+        return f"{p:,.0f}"
+    if p >= 1:
+        return f"{p:,.2f}"
+    return f"{p:.4f}"
+
+
+def _join_items(items: list[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    if len(items) > 2:
+        return ", ".join(items[:-1]) + " and " + items[-1]
+    return " and ".join(items)
+
+
 def run(session: Session, clock: Clock) -> Decision:
     """One intraday evaluation. Writes and returns one decisions row."""
     now = clock.now()
@@ -144,7 +160,7 @@ def run(session: Session, clock: Clock) -> Decision:
         return row
 
     prices = ", ".join(
-        f"{s.split('-')[0]} {per_asset[s]['last_price']:,.0f}" for s in SYMBOLS
+        f"{s.split('-')[0]} {_fmt_price(per_asset[s]['last_price'])}" for s in SYMBOLS
     )
     stops = {
         s: d
@@ -162,10 +178,12 @@ def run(session: Session, clock: Clock) -> Decision:
     if len(bids) == len(SYMBOLS):
         bid_part = (
             "Sudden-drop bid would sit "
-            + " and ".join(
-                f"{_bid_distance(per_asset[s]['last_price'], bids[s]['bid']):.1%} "
-                f"under {s.split('-')[0]}"
-                for s in SYMBOLS
+            + _join_items(
+                [
+                    f"{_bid_distance(per_asset[s]['last_price'], bids[s]['bid']):.1%} "
+                    f"under {s.split('-')[0]}"
+                    for s in SYMBOLS
+                ]
             )
             + "."
         )

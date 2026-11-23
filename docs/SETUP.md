@@ -384,6 +384,7 @@ Environment variables (in `.env` next to the Compose file):
 | `TRADER_DASHBOARD_PASSWORD` | `api` | Dashboard login. Required. |
 | `TRADER_LAN_ADDRESS` | `docker-compose.prod.yml` only | Address the dashboard binds to. Required on the box. |
 | `TRADER_MODE`, `TRADER_LIVE_ENABLED` | `docker-compose.prod.yml` only | See section 10. `docker-compose.yml` is fixed to paper. |
+| `TRADER_SYMBOLS` | all | Comma-separated assets. Default `BTC-USD,ETH-USD`; `SOL-USD` and `XRP-USD` allowed in paper. |
 | `TRADER_LOG_LEVEL` | all | `INFO` by default. |
 | `TRADER_DATABASE_URL` | all | Set by Compose. Change only when running a service outside Compose. |
 
@@ -391,6 +392,29 @@ Settings on the Controls screen: silence alarm (minutes without a
 heartbeat before an alarm, default 5) and daily digest time (default
 00:30 UTC). The risk limits (35% halt, 40% volatility target, 6-hour
 expiry, 2% price-move void) are fixed in code on purpose.
+
+### Paper trading more assets
+
+Set the asset list in `.env` next to the Compose file:
+
+```
+TRADER_SYMBOLS=BTC-USD,ETH-USD,SOL-USD,XRP-USD
+```
+
+Then restart the stack (Linux/macOS and Windows PowerShell, same command):
+
+```
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Facts to know before changing the list:
+
+- Change the list only while the account holds no position.
+- History for a new asset is downloaded at the next collector start.
+- A new asset gets its first daily decision at the next 00:05 UTC.
+- Each asset's share of the account is at most one divided by the
+  number of assets (25% with four).
+- Live mode starts only with BTC and ETH.
 
 ## 12. Troubleshooting
 

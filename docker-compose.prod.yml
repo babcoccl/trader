@@ -49,6 +49,7 @@ services:
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
+      TRADER_SYMBOLS: ${TRADER_SYMBOLS:-BTC-USD,ETH-USD}
       TRADER_DASHBOARD_PASSWORD: ${TRADER_DASHBOARD_PASSWORD:?set TRADER_DASHBOARD_PASSWORD in .env}
     depends_on:
       db:
@@ -65,6 +66,7 @@ services:
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
+      TRADER_SYMBOLS: ${TRADER_SYMBOLS:-BTC-USD,ETH-USD}
     depends_on:
       db:
         condition: service_healthy
@@ -80,6 +82,7 @@ services:
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
+      TRADER_SYMBOLS: ${TRADER_SYMBOLS:-BTC-USD,ETH-USD}
     depends_on:
       db:
         condition: service_healthy
@@ -95,6 +98,7 @@ services:
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
+      TRADER_SYMBOLS: ${TRADER_SYMBOLS:-BTC-USD,ETH-USD}
     depends_on:
       db:
         condition: service_healthy
@@ -110,6 +114,7 @@ services:
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
+      TRADER_SYMBOLS: ${TRADER_SYMBOLS:-BTC-USD,ETH-USD}
     depends_on:
       db:
         condition: service_healthy

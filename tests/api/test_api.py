@@ -778,3 +778,19 @@ def test_stream_replays_open_alarms_on_connect(seeded) -> None:
     assert lines[0] == "event: status"
     assert lines[2] == "event: alarm"
     assert '"key": "candle_stale:BTC-USD"' in lines[3]
+
+
+def test_equity_baselines_ignore_extra_symbols(seeded, monkeypatch) -> None:
+    """Spec D2: the BTC and BTC+ETH baselines always use BTC-USD and ETH-USD,
+    whatever TRADER_SYMBOLS holds."""
+    import trader.api.routes.reports as reports
+
+    client, _, _ = seeded
+    _login(client)
+    before = client.get("/api/reports/equity").json()
+    monkeypatch.setattr(
+        reports, "SYMBOLS", ("BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD")
+    )
+    after = client.get("/api/reports/equity").json()
+    assert [p["btc"] for p in after] == [p["btc"] for p in before]
+    assert [p["btc_eth"] for p in after] == [p["btc_eth"] for p in before]

@@ -12,6 +12,9 @@ The scripts that produced the study results in `docs/DESIGN.md`. They are refere
 | `fixtures/expected_signals.csv` | Every rule, the ensemble, annual volatility and target weight per day and asset, from `bt.py` |
 | `fixtures/expected_backtest.json` | Backtest statistics from `bt.py` for two cost models and four trading bands |
 | `fixtures/expected_equity_study_040_band_0.2.csv` | Daily equity for the headline run |
+| `fixtures/btc_eth_daily_hl.csv` | Binance BTCUSDT and ETHUSDT daily high and low for the same days (spec G1) |
+| `fixtures/expected_regimes.csv` | Rules positive, trend state, volatility percentile, ADX(14), sideways reading, 20-day z-score and the dip-buying trigger per day and asset (specs G1 and G3), from `make_regime_fixtures.py` |
+| `fixtures/coinbase_perp_product.json` | One real response of Coinbase's public product endpoint for the BTC perpetual, trimmed to the fields spec G4 reads (fetched 2026-11-23) |
 
 `check_spec.py` re-implements specs 1.2 and 1.3 from their text using only these files and compares with the expected values. It was run on 2026-11-21 and matched to 5e-12 on signals and 3e-14 on backtest statistics:
 
@@ -57,7 +60,11 @@ Then, in either shell:
 | `python intraday.py` then `python intraday2.py` | Study 3: 5-minute strategies (dip buying, grids, breakouts), and entry timing |
 | `python venue.py` | Trend sleeve at each candidate venue's costs; New York-hours variant |
 | `python alpaca_liq.py`, `alpaca_liq2.py`, `bitstamp_liq.py` | Live order-book and volume checks (results change with the market) |
+| `python redditideas.py` then `python redditideas2.py` | Funding-rate overlays and the negative-funding rule while the trend is off, with a time-shift placebo (`docs/studies/regime-study.md` section 5) |
+| `python regimes.py`, then `regimes2.py`, `regimes3.py`, `regimes4.py` | Study 4: trend sleeve by regime, dip-buying inside a regime, regime-switching variants |
+| `python gridreg.py`, then `gridreg2.py`, `gridreg3.py` | Study 4: grid bot run only while a sideways regime is detected (five-minute bars) |
 | `python make_fixtures.py` | Regenerates `fixtures/` |
+| `python make_regime_fixtures.py` | Regenerates `fixtures/btc_eth_daily_hl.csv` and `fixtures/expected_regimes.csv` |
 
 Notes:
 

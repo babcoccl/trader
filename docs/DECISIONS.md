@@ -29,6 +29,9 @@ The owner's decisions, newest last. This file and `docs/SPECS.md` are authoritat
 | 2026-11-23 | More trades | Tested and rejected: faster rules, a tighter trading band, and buying oversold bounces while the trend is off. Each adds trades and lowers the return (`docs/studies/more-trades-study.md`). The nine rules, the 20% band and the 40% volatility target stay |
 | 2026-11-23 | Rules screen | A read-only screen shows each rule, its level and the fixed settings (spec D1) |
 | 2026-11-23 | Extra assets | SOL and XRP may be paper traded through `TRADER_SYMBOLS` (spec D2). SHIB and BNB are rejected: too thinly traded on Bitstamp. Live mode stays BTC and ETH only |
+| 2026-11-23 | Regime awareness | Every daily decision records its regime: uptrend, mixed or downtrend by rule count; calm or volatile; sideways reading when ADX(14) is under 20 (spec G1). A selector adds up the sleeves allowed in a regime; only the trend sleeve is in it (spec G2) |
+| 2026-11-23 | Shadow sleeves | Dip-buying in a mixed regime, the negative-funding rule and a grid for sideways readings run as hypothetical records with no orders (specs G3 to G5). Tested first: none is distinguishable from chance and the grid lost after fees (`docs/studies/regime-study.md`). Dip buying and grids stay rejected for trading. A shadow sleeve trades only after a new owner decision, not before the 5.3 review, with at least 8 weeks of shadow record |
+| 2026-11-23 | Funding-rate source | Coinbase's public product endpoint for its BTC and ETH perpetual-style futures, no key. It returns only the current rate, so the record starts at deployment |
 
 ## Open
 

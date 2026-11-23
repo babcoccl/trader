@@ -1,0 +1,25 @@
+{
+ "product_id": "BIP-20DEC30-CDE",
+ "price": "61365",
+ "product_type": "FUTURE",
+ "display_name": "BTC Perp",
+ "product_venue": "FCM",
+ "future_product_details": {
+  "venue": "cde",
+  "contract_code": "BIP",
+  "contract_size": "0.01",
+  "contract_root_unit": "BTC",
+  "perpetual_details": {
+   "open_interest": "196872",
+   "funding_rate": "",
+   "funding_time": null,
+   "max_leverage": "",
+   "base_asset_uuid": "",
+   "underlying_type": ""
+  },
+  "funding_interval": "3600s",
+  "funding_rate": "0.000004",
+  "funding_time": "2026-11-23T18:00:00Z",
+  "index_price": "61352.503293"
+ }
+}

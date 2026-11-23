@@ -633,6 +633,32 @@ def test_rules_uses_newest_row_with_rules(seeded) -> None:
         )
 
 
+def test_rules_regime(seeded) -> None:
+    """Spec G1: a stored regime comes back with ``text``; a row without one
+    gives ``regime: null``."""
+    client, _, engine = seeded
+    _login(client)
+    stored = {
+        "trend": "downtrend",
+        "volatility": "volatile",
+        "sideways": False,
+        "vol_percentile": 0.83,
+        "adx": 24.6,
+    }
+    with Session(engine) as s:
+        s.add(_daily_decision(details={"rules": _RULE_VALUES, "regime": stored}))
+        s.add(_daily_decision(symbol="ETH-USD", details={"rules": _RULE_VALUES}))
+        s.commit()
+    body = client.get("/api/rules").json()
+    by_symbol = {a["symbol"]: a for a in body["assets"]}
+    rg = by_symbol["BTC-USD"]["regime"]
+    assert rg["text"] == "Downtrend, volatile"
+    assert rg["adx"] == 24.6
+    assert rg["vol_percentile"] == 0.83
+    assert rg["sideways"] is False
+    assert by_symbol["ETH-USD"]["regime"] is None
+
+
 def test_rules_row_without_levels(seeded) -> None:
     client, _, engine = seeded
     _login(client)

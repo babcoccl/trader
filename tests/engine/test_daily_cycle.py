@@ -27,7 +27,7 @@ from trader.ledger.models import (
     Signal,
 )
 from trader.ledger.models import Candle as CandleRow
-from trader.strategy import rules
+from trader.strategy import regime, rules
 
 TEST_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -469,6 +469,37 @@ def test_decision_details_carry_last_close_and_levels(session: Session) -> None:
     assert blocked[0].action == "blocked"
     assert "last_close" not in blocked[0].details
     assert "levels" not in blocked[0].details
+
+
+def test_decision_details_carry_regime(session: Session) -> None:
+    """Spec G1: a decision with rules also stores the asset's regime (five
+    keys, no NaN) and names it in the reason; a blocked decision has none.
+    Weights, actions and plans are unchanged by it."""
+    clock = FrozenClock(datetime(2026, 11, 20, 0, 5, tzinfo=UTC))
+    rows = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    session.commit()
+    assert len(rows) == 2
+    for r in rows:
+        rg = r.details["regime"]
+        assert set(rg) == {
+            "trend",
+            "volatility",
+            "sideways",
+            "vol_percentile",
+            "adx",
+        }
+        assert rg["trend"] in ("uptrend", "mixed", "downtrend")
+        assert all(v is None or v == v for v in rg.values())  # no NaN
+        parsed = regime.from_details(rg)
+        assert parsed is not None and parsed.text() in r.reason
+
+    # The fixture ends 2026-11-19, so the next day's run blocks and has
+    # no regime.
+    clock = FrozenClock(datetime(2026, 11, 21, 0, 5, tzinfo=UTC))
+    blocked = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    session.commit()
+    assert len(blocked) == 1
+    assert "regime" not in blocked[0].details
 
 
 def test_four_assets_quarter_weights_and_per_asset_rounding(

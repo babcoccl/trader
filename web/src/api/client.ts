@@ -170,6 +170,15 @@ export interface RuleOut {
   distance: number | null;
 }
 
+export interface RegimeOut {
+  trend: string;
+  volatility: string | null;
+  sideways: boolean | null;
+  vol_percentile: number | null;
+  adx: number | null;
+  text: string;
+}
+
 export interface AssetRulesOut {
   symbol: string;
   decided_at: string | null;
@@ -182,6 +191,7 @@ export interface AssetRulesOut {
   raw_weight: number | null;
   target_weight: string | null;
   current_weight: string | null;
+  regime: RegimeOut | null;
 }
 
 export interface IntradayAssetOut {

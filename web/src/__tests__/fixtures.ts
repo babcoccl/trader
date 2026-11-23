@@ -124,6 +124,7 @@ export function makeRulesOut(overrides: Partial<RulesOut> = {}): RulesOut {
       raw_weight: 0.11,
       target_weight: "0.000000000000000000",
       current_weight: "0.000000000000000000",
+      regime: null,
     })),
     intraday: {
       ran_at: iso(60_000),

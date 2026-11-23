@@ -62,7 +62,11 @@ Read-only view of what the system checks: the nine trend rules per asset
 with the price level each compared the last close against, the newest
 five-minute check, and the fixed settings. `assets` always has one entry
 per symbol, built from the newest daily row that recorded `rules` in
-`details`; `latest_daily` is the newest daily row of any kind.
+`details`; `latest_daily` is the newest daily row of any kind. `regime`
+(spec G1) is the market regime stored on that row — trend, volatility,
+sideways reading plus the raw `vol_percentile` and `adx`, and `text`, the
+short label that also appears in the decision's reason — or `null` for
+rows written before G1.
 
 ```json
 {
@@ -75,7 +79,10 @@ per symbol, built from the newest daily row that recorded `rules` in
     "rules": [{"name": "sma50", "label": "Price above its 50-day average",
                "positive": false, "level": 86000.0, "distance": -0.28}],
     "annual_vol": 0.55, "raw_weight": 0.0,
-    "target_weight": "0", "current_weight": "0"
+    "target_weight": "0", "current_weight": "0",
+    "regime": {"trend": "downtrend", "volatility": "volatile",
+               "sideways": false, "vol_percentile": 0.83, "adx": 24.6,
+               "text": "Downtrend, volatile"}
   }],
   "intraday": {"ran_at": "...", "action": "none", "reason": "...",
     "assets": [{"symbol": "BTC-USD", "last_price": 62100.0,

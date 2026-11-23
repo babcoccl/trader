@@ -28,6 +28,15 @@ class SleeveSpec:
 
 SLEEVES: tuple[SleeveSpec, ...] = (
     SleeveSpec("trend", "Trend rules", "active", ALL_TRENDS, False, 1.0),
+    # Spec G3: shadow mode — records a hypothetical book, never trades.
+    SleeveSpec(
+        "dip",
+        "Dip-buying in a mixed regime",
+        "shadow",
+        frozenset({"mixed"}),
+        False,
+        0.25,
+    ),
 )
 
 

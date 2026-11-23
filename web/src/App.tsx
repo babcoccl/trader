@@ -9,8 +9,9 @@ import { Overview } from "./pages/Overview";
 import { Positions } from "./pages/Positions";
 import { Reports } from "./pages/Reports";
 import { Rules } from "./pages/Rules";
+import { Shadow } from "./pages/Shadow";
 
-const TABS = ["Overview", "Approvals", "Rules", "Positions", "Activity", "Reports", "Controls"] as const;
+const TABS = ["Overview", "Approvals", "Rules", "Shadow", "Positions", "Activity", "Reports", "Controls"] as const;
 type Tab = (typeof TABS)[number];
 
 function ComingSoon({ name }: { name: string }) {
@@ -97,6 +98,8 @@ export function App() {
           <Approvals />
         ) : tab === "Rules" ? (
           <Rules />
+        ) : tab === "Shadow" ? (
+          <Shadow />
         ) : tab === "Positions" ? (
           <Positions />
         ) : tab === "Activity" ? (

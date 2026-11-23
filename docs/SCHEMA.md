@@ -169,6 +169,61 @@ One row per scheduled cycle, including cycles that do nothing.
 | body_md | text | |
 | stats | jsonb | default `{}` |
 
+## shadow_trades
+
+One hypothetical trade of a shadow sleeve (spec G3). Nothing here is a
+plan, order or fill.
+
+| Column | Type | Notes |
+|---|---|---|
+| sleeve | varchar(20) | `"dip"` |
+| symbol | varchar(20) | |
+| opened_at | timestamptz | |
+| entry_price | NUMERIC(38,18) | fill price (price + slippage) |
+| quantity | NUMERIC(38,18) | |
+| cost_usd | NUMERIC(38,18) | dollars spent, fee included |
+| entry_fee_usd | NUMERIC(38,18) | |
+| closed_at | timestamptz (null) | null while open |
+| exit_price | NUMERIC(38,18) (null) | fill price (price − slippage) |
+| exit_fee_usd | NUMERIC(38,18) (null) | |
+| pnl_usd | NUMERIC(38,18) (null) | proceeds after fee − cost_usd |
+| exit_reason | varchar(60) (null) | e.g. `"held 5 days"` |
+| details | jsonb | default `{}` |
+
+INDEX (sleeve, closed_at)
+
+## shadow_marks
+
+A shadow sleeve's end-of-day book value (spec G3).
+
+| Column | Type | Notes |
+|---|---|---|
+| sleeve | varchar(20) | |
+| day | date | |
+| equity_usd | NUMERIC(38,18) | cash + exposure |
+| cash_usd | NUMERIC(38,18) | |
+| exposure_usd | NUMERIC(38,18) | open positions at the day's price |
+| open_trades | integer | |
+| closed_trades | integer | running total |
+| note | text | one sentence per symbol |
+| details | jsonb | default `{}` |
+
+UNIQUE (sleeve, day)
+
+## shadow_state
+
+Per-(sleeve, symbol) scratch state for later shadow specs (G5); created
+here, unused by G3. `updated_at` instead of `created_at`.
+
+| Column | Type | Notes |
+|---|---|---|
+| updated_at | timestamptz | |
+| sleeve | varchar(20) | |
+| symbol | varchar(20) | |
+| state | jsonb | default `{}` |
+
+UNIQUE (sleeve, symbol)
+
 ## Indexes
 
 Every `time`/`open_time` column is indexed (`candles.open_time`,

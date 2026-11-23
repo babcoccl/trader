@@ -42,6 +42,18 @@ def test_registry_has_exactly_one_trading_sleeve() -> None:
     assert sleeves.get("trend") is spec
 
 
+def test_dip_sleeve_is_shadow_only() -> None:
+    """Spec G3 registers the dip-buying sleeve in shadow mode: in the
+    registry for titles and ``allowed``, never in ``active()``."""
+    spec = sleeves.get("dip")
+    assert spec.mode == "shadow"
+    assert spec.title == "Dip-buying in a mixed regime"
+    assert spec.trends == frozenset({"mixed"})
+    assert spec.needs_sideways is False
+    assert spec.max_weight == 0.25
+    assert spec not in sleeves.active()
+
+
 def test_combine_returns_fixture_targets_unchanged() -> None:
     """For every row of expected_signals.csv, combining the trend sleeve's
     proposal returns the stored target_weight exactly."""

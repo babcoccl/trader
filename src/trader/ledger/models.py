@@ -19,6 +19,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -220,6 +221,81 @@ class EquitySnapshot(Base):
     equity_usd: Mapped[Decimal] = mapped_column(Money)
     high_water_mark: Mapped[Decimal] = mapped_column(Money)
     drawdown: Mapped[Decimal] = mapped_column(Money)
+
+
+class ShadowTrade(Base):
+    """One hypothetical position of a shadow sleeve (spec G3).
+
+    Records what a sleeve would have bought and sold, with fees. Nothing
+    here is a plan, an order or an account balance.
+    """
+
+    __tablename__ = "shadow_trades"
+    __table_args__ = (Index("ix_shadow_trades_sleeve_closed", "sleeve", "closed_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    sleeve: Mapped[str] = mapped_column(String(20))
+    symbol: Mapped[str] = mapped_column(String(20))
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    entry_price: Mapped[Decimal] = mapped_column(Money)
+    quantity: Mapped[Decimal] = mapped_column(Money)
+    cost_usd: Mapped[Decimal] = mapped_column(Money)  # dollars spent, fee included
+    entry_fee_usd: Mapped[Decimal] = mapped_column(Money)
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    exit_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    exit_fee_usd: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    pnl_usd: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    details: Mapped[dict[str, Any]] = mapped_column(
+        _jsonb(), server_default=text("'{}'::jsonb")
+    )
+
+
+class ShadowMark(Base):
+    """One shadow sleeve's end-of-day book value (spec G3)."""
+
+    __tablename__ = "shadow_marks"
+    __table_args__ = (UniqueConstraint("sleeve", "day"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    sleeve: Mapped[str] = mapped_column(String(20))
+    day: Mapped[date] = mapped_column(Date)
+    equity_usd: Mapped[Decimal] = mapped_column(Money)
+    cash_usd: Mapped[Decimal] = mapped_column(Money)
+    exposure_usd: Mapped[Decimal] = mapped_column(Money)
+    open_trades: Mapped[int] = mapped_column(Integer)
+    closed_trades: Mapped[int] = mapped_column(Integer)  # running total
+    note: Mapped[str] = mapped_column(Text)
+    details: Mapped[dict[str, Any]] = mapped_column(
+        _jsonb(), server_default=text("'{}'::jsonb")
+    )
+
+
+class ShadowState(Base):
+    """Per-(sleeve, symbol) scratch state for later shadow specs (G5).
+
+    Created with the other shadow tables so G4 and G5 need no migration;
+    this spec does not use it.
+    """
+
+    __tablename__ = "shadow_state"
+    __table_args__ = (UniqueConstraint("sleeve", "symbol"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sleeve: Mapped[str] = mapped_column(String(20))
+    symbol: Mapped[str] = mapped_column(String(20))
+    state: Mapped[dict[str, Any]] = mapped_column(
+        _jsonb(), server_default=text("'{}'::jsonb")
+    )
 
 
 class Event(Base):

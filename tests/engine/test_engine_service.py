@@ -27,6 +27,9 @@ from trader.ledger.models import (
     Order,
     Plan,
     Setting,
+    ShadowMark,
+    ShadowState,
+    ShadowTrade,
     Signal,
 )
 from trader.ledger.models import Candle as CandleRow
@@ -98,6 +101,9 @@ def engine():
             Balance,
             Event,
             Heartbeat,
+            ShadowTrade,
+            ShadowMark,
+            ShadowState,
         ):
             s.execute(delete(table))
         s.commit()
@@ -176,6 +182,44 @@ def test_blocked_day_retries_once_data_arrives(engine) -> None:
     clock.advance(timedelta(minutes=5))
     service.retry_daily()
     assert _decision_count(engine) == 3
+
+
+def test_run_shadow_writes_no_decisions_and_scheduler_keeps_jobs(
+    engine, monkeypatch
+) -> None:
+    """Spec G3: ``Engine.run_shadow`` does not raise, writes no
+    ``decisions`` row, and ``serve`` still schedules the daily and
+    intraday jobs alongside the shadow job."""
+    clock = FrozenClock(datetime(2026, 11, 23, 12, 0, tzinfo=UTC))
+    service = Engine(clock=clock, session_factory=_session_factory(engine))
+    service.run_shadow()
+    assert _decision_count(engine) == 0
+
+    # serve() uses BlockingScheduler; capture the jobs without starting it.
+    jobs: list[dict] = []
+
+    class FakeScheduler:
+        def __init__(self, **kw):
+            pass
+
+        def add_job(self, fn, trigger, **kw):
+            jobs.append({"fn": fn, "trigger": trigger, **kw})
+
+        def start(self):
+            pass
+
+    import trader.engine.__main__ as engine_main
+
+    monkeypatch.setattr(engine_main, "BlockingScheduler", FakeScheduler)
+    service.serve()
+    names = [j["fn"].__name__ for j in jobs]
+    assert "run_daily" in names
+    assert "run_intraday" in names
+    assert "run_shadow" in names
+    shadow_job = jobs[names.index("run_shadow")]
+    assert shadow_job["trigger"] == "cron"
+    assert shadow_job["minute"] == "*/5"
+    assert shadow_job["second"] == 50
 
 
 def test_past_daily_time_gates_startup_catchup() -> None:

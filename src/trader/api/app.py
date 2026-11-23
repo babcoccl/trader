@@ -23,6 +23,7 @@ from trader.api.routes import (
     reports,
     rules,
     settings,
+    shadow,
     status,
 )
 from trader.core.config import get_settings
@@ -73,6 +74,7 @@ for r in (
     funding.router,
     reports.router,
     rules.router,
+    shadow.router,
     settings.router,
     controls.router,
     sse.router,

@@ -260,6 +260,40 @@ class RulesOut(BaseModel):
     parameters: list[ParameterOut]
 
 
+class ShadowTradeOut(BaseModel):
+    symbol: str
+    opened_at: datetime
+    entry_price: Decimal
+    cost_usd: Decimal
+    closed_at: datetime | None
+    exit_price: Decimal | None
+    pnl_usd: Decimal | None
+    exit_reason: str | None
+
+
+class ShadowSleeveOut(BaseModel):
+    name: str
+    title: str
+    description: str
+    started_on: date | None
+    days: int
+    equity_usd: Decimal | None
+    return_fraction: float | None
+    worst_drawdown: float | None
+    account_return_fraction: float | None
+    closed_trades: int
+    winning_trades: int
+    fees_usd: Decimal
+    last_note: str | None
+    last_day: date | None
+    open: list[ShadowTradeOut]
+    recent_closed: list[ShadowTradeOut]
+
+
+class ShadowOut(BaseModel):
+    sleeves: list[ShadowSleeveOut]
+
+
 class OkOut(BaseModel):
     status: str = "ok"
     detail: dict[str, Any] = Field(default_factory=dict)

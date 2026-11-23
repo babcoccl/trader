@@ -502,6 +502,24 @@ def test_decision_details_carry_regime(session: Session) -> None:
     assert "regime" not in blocked[0].details
 
 
+def test_decision_details_carry_sleeves(session: Session) -> None:
+    """Spec G2: a decision records one sleeve entry per active sleeve, and
+    its weight equals the decision's target weight."""
+    clock = FrozenClock(datetime(2026, 11, 20, 0, 5, tzinfo=UTC))
+    rows = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    session.commit()
+    assert len(rows) == 2
+    for r in rows:
+        parts = r.details["sleeves"]
+        assert len(parts) == 1
+        part = parts[0]
+        assert set(part) == {"name", "mode", "allowed", "proposed", "weight"}
+        assert part["name"] == "trend"
+        assert part["mode"] == "active"
+        assert part["allowed"] is True
+        assert part["weight"] == float(r.target_weight)
+
+
 def test_four_assets_quarter_weights_and_per_asset_rounding(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

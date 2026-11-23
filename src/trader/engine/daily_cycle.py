@@ -28,7 +28,7 @@ from trader.ledger.models import Candle, Decision, Signal
 from trader.plans import builder
 from trader.risk import engine as risk_engine
 from trader.risk.limits import Limits
-from trader.strategy import ensemble, regime, rules, sizing
+from trader.strategy import ensemble, regime, rules, sizing, sleeves
 
 log = logging.getLogger(__name__)
 
@@ -208,13 +208,20 @@ def run(
         {s: a["vol"] for s, a in per_asset.items()},
         vol_target=VOL_TARGET,
     )
+    # Spec G2: the target is the sum of the sleeves allowed in each asset's
+    # regime. The trend sleeve trades in every regime, so these weights are
+    # the same numbers sizing produced; nothing after `target` changes.
+    combined = sleeves.combine(
+        {"trend": weights},
+        {s: a["regime"] for s, a in per_asset.items()},
+    )
     limits = Limits.load(session)
     risk_state = risk_engine.state(session, clock)
 
     decisions: list[Decision] = []
     for symbol in SYMBOLS:
         a = per_asset[symbol]
-        target = weights[symbol]
+        target = combined.weights[symbol]
         current = portfolio.weights.get(symbol, 0.0)
         # Size the plan at the freshest stored close (what the portfolio is
         # marked with), not yesterday's daily close: a higher latest price
@@ -256,6 +263,16 @@ def run(
                 "raw_weight": _finite(a["signal"] / len(SYMBOLS)),
                 "scaled_weight": target,
                 "regime": a["regime"].as_details(),
+                "sleeves": [
+                    {
+                        "name": p.name,
+                        "mode": "active",
+                        "allowed": p.allowed,
+                        "proposed": _finite(p.proposed),
+                        "weight": _finite(p.weight),
+                    }
+                    for p in combined.parts[symbol]
+                ],
             },
         )
         session.add(decision)

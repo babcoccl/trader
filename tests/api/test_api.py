@@ -571,7 +571,14 @@ def test_rules_empty_state(seeded) -> None:
         assert all(r["level"] is None and r["distance"] is None for r in a["rules"])
     assert body["intraday"]["ran_at"] is not None
     names = [p["name"] for p in body["parameters"]]
-    assert names[:3] == ["Assets", "Daily decision time", "Five-minute check"]
+    assert names[:4] == [
+        "Assets",
+        "Sleeves that trade",
+        "Daily decision time",
+        "Five-minute check",
+    ]
+    values = {p["name"]: p["value"] for p in body["parameters"]}
+    assert values["Sleeves that trade"] == "Trend rules (every regime)"
     assert "Drawdown halt" in names and "Sudden-drop bids" in names
 
 

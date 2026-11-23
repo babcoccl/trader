@@ -29,6 +29,7 @@ from trader.plans import builder
 from trader.risk.limits import Limits
 from trader.strategy import regime as regime_mod
 from trader.strategy import rules as rules_mod
+from trader.strategy import sleeves
 
 router = APIRouter(dependencies=[AuthRequired])
 
@@ -146,6 +147,13 @@ def _parameters(session: Session) -> list[ParameterOut]:
     limits = Limits.load(session)
     return [
         ParameterOut(name="Assets", value=", ".join(SYMBOLS)),
+        ParameterOut(
+            name="Sleeves that trade",
+            value=", ".join(
+                s.title + (" (every regime)" if s.trends == sleeves.ALL_TRENDS else "")
+                for s in sleeves.active()
+            ),
+        ),
         ParameterOut(name="Daily decision time", value="00:05 UTC"),
         ParameterOut(name="Five-minute check", value="every 5 minutes"),
         ParameterOut(name="Volatility target", value=f"{daily_cycle.VOL_TARGET:.0%}"),

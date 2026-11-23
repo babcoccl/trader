@@ -15,13 +15,13 @@ from sqlalchemy.orm import Session
 
 from trader.core.clock import Clock
 from trader.ledger.models import Event
-from trader.shadow import dip
+from trader.shadow import dip, funding
 
 log = logging.getLogger(__name__)
 
 # Every module listed here exposes NAME, DESCRIPTION and
 # run(session, clock).
-DAILY: tuple[ModuleType, ...] = (dip,)
+DAILY: tuple[ModuleType, ...] = (dip, funding)
 INTRADAY: tuple[ModuleType, ...] = ()
 
 

@@ -66,7 +66,7 @@ describe("Positions", () => {
       rates: [
         {
           symbol: "BTC-USD",
-          venue: "binance",
+          venue: "coinbase_perp",
           time: new Date().toISOString(),
           rate: "0.0001",
           interval_hours: 8,
@@ -84,8 +84,9 @@ describe("Positions", () => {
     expect(screen.getByText(/sell limit 0\.01 @ \$61,000/)).toBeInTheDocument();
     expect(await screen.findByText(/Funding watch:/)).toBeInTheDocument();
     expect(screen.getByText(/BTC-USD 12\.0% a year/)).toBeInTheDocument();
-    expect(screen.getByText(/funding beats T-bills/)).toBeInTheDocument();
     expect(screen.getByText(/T-bill 4\.0%/)).toBeInTheDocument();
+    // Spec G4: no carry-trade suggestion (tested and rejected).
+    expect(screen.queryByText(/carry trade/)).not.toBeInTheDocument();
   });
 
   it("shows the empty state and no funding rows", async () => {

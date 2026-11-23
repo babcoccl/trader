@@ -2,20 +2,23 @@
 Needs TEST_DATABASE_URL (Compose Postgres)."""
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
+from trader.core.clock import FrozenClock
 from trader.data.collector import Collector
 from trader.data.sources.base import Candle
+from trader.data.sources.coinbase_funding import VENUE, FundingObservation
 from trader.ledger.models import Candle as CandleRow
 from trader.ledger.models import (
     Decision,
     Event,
     Fill,
+    FundingRate,
     Heartbeat,
     Order,
     Plan,
@@ -63,6 +66,29 @@ class FakeSource:
         return out
 
 
+FUNDING_TIME = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
+
+
+class FakeFunding:
+    """Returns a fixed funding observation; counts calls, can be made to fail."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.calls = 0
+        self._fail = fail
+
+    def fetch(self, symbol: str) -> FundingObservation:
+        self.calls += 1
+        if self._fail:
+            raise ConnectionError("funding down")
+        return FundingObservation(
+            symbol=symbol,
+            venue=VENUE,
+            time=FUNDING_TIME,
+            rate=Decimal("0.000004"),
+            interval_hours=1,
+        )
+
+
 class _Frozen:
     def now(self) -> datetime:
         return NOW
@@ -84,18 +110,38 @@ def session():
     engine = create_engine(TEST_URL)
     _alembic("upgrade", "head")
     with Session(engine) as s:
-        for model in (CandleRow, Event, Heartbeat, Fill, Order, Plan, Decision):
+        for model in (
+            CandleRow,
+            Event,
+            Heartbeat,
+            Fill,
+            Order,
+            Plan,
+            Decision,
+            FundingRate,
+        ):
             s.execute(delete(model))
         s.commit()
         yield s
-        for model in (CandleRow, Event, Heartbeat, Fill, Order, Plan, Decision):
+        for model in (
+            CandleRow,
+            Event,
+            Heartbeat,
+            Fill,
+            Order,
+            Plan,
+            Decision,
+            FundingRate,
+        ):
             s.execute(delete(model))
         s.commit()
     engine.dispose()
 
 
 def test_run_once_stores_recent_candles_and_heartbeat(session: Session) -> None:
-    collector = Collector(sources=[FakeSource()], clock=_Frozen())
+    collector = Collector(
+        sources=[FakeSource()], clock=_Frozen(), funding_source=FakeFunding()
+    )
     written = collector.run_once(session)
     session.commit()
 
@@ -118,7 +164,9 @@ def test_no_daily_before_00_01(session: Session) -> None:
         def now(self) -> datetime:
             return early
 
-    collector = Collector(sources=[FakeSource()], clock=_EarlyClock())
+    collector = Collector(
+        sources=[FakeSource()], clock=_EarlyClock(), funding_source=FakeFunding()
+    )
     collector.run_once(session)
     session.commit()
     assert (
@@ -135,6 +183,7 @@ def test_failover_writes_event_and_uses_backup(session: Session) -> None:
     collector = Collector(
         sources=[FakeSource("down", fail=True), FakeSource("backup")],
         clock=_Frozen(),
+        funding_source=FakeFunding(),
     )
     written = collector.run_once(session)
     session.commit()
@@ -148,7 +197,11 @@ def test_failover_writes_event_and_uses_backup(session: Session) -> None:
 
 
 def test_all_sources_down_writes_error_no_candles(session: Session) -> None:
-    collector = Collector(sources=[FakeSource("a", fail=True)], clock=_Frozen())
+    collector = Collector(
+        sources=[FakeSource("a", fail=True)],
+        clock=_Frozen(),
+        funding_source=FakeFunding(),
+    )
     written = collector.run_once(session)
     session.commit()
 
@@ -162,7 +215,9 @@ def test_all_sources_down_writes_error_no_candles(session: Session) -> None:
 
 def test_heartbeat_recovers_after_outage(session: Session) -> None:
     sources = [FakeSource("a", fail=True), FakeSource("b", fail=True)]
-    collector = Collector(sources=sources, clock=_Frozen())
+    collector = Collector(
+        sources=sources, clock=_Frozen(), funding_source=FakeFunding()
+    )
     collector.run_once(session)
     # Source a recovers; rotation put it first again.
     sources[0]._fail = False
@@ -196,7 +251,10 @@ def test_daily_backfill_starts_at_each_assets_daily_start(
     four = ("BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD")
     monkeypatch.setattr(collector_mod, "SYMBOLS", four)
     collector = Collector(
-        sources=[RecordingSource()], clock=_Frozen(), session_factory=lambda: session
+        sources=[RecordingSource()],
+        clock=_Frozen(),
+        session_factory=lambda: session,
+        funding_source=FakeFunding(),
     )
     collector.refill_gaps(session)
     session.commit()
@@ -253,7 +311,9 @@ def test_removed_symbol_with_open_order_still_collected(
     )
     session.commit()
 
-    collector = Collector(sources=[FakeSource()], clock=_Frozen())
+    collector = Collector(
+        sources=[FakeSource()], clock=_Frozen(), funding_source=FakeFunding()
+    )
     written = collector.run_once(session)
     session.commit()
 
@@ -261,3 +321,62 @@ def test_removed_symbol_with_open_order_still_collected(
     assert "SOL-USD" in symbols
     # 2 symbols x (2 5m + 1 1d) + SOL's share = 9.
     assert written == 9
+
+
+def test_funding_stored_then_throttled(session: Session) -> None:
+    """Spec G4: first run fetches per product; a run a minute later does
+    not call the source; ten minutes later it fetches and the same
+    funding_time stores no new row."""
+    clock = FrozenClock(NOW)
+    funding = FakeFunding()
+    collector = Collector(sources=[FakeSource()], clock=clock, funding_source=funding)
+    collector.run_once(session)
+    session.commit()
+
+    rows = session.scalars(select(FundingRate)).all()
+    assert len(rows) == 2
+    assert all(r.venue == "coinbase_perp" for r in rows)
+    assert {r.symbol for r in rows} == {"BTC-USD", "ETH-USD"}
+    assert funding.calls == 2
+
+    clock.advance(timedelta(minutes=1))
+    collector.run_once(session)
+    assert funding.calls == 2
+
+    clock.advance(timedelta(minutes=9))
+    collector.run_once(session)
+    session.commit()
+    assert funding.calls == 4
+    assert session.scalar(select(func.count()).select_from(FundingRate)) == 2
+
+
+def test_funding_failure_events_and_recovery(session: Session) -> None:
+    """A failing funding source writes one ``funding_source_failed`` event
+    over repeated failing runs, one ``funding_source_recovered`` when a
+    fetch works again; the heartbeat stays ``ok`` and candles still land."""
+    clock = FrozenClock(NOW)
+    funding = FakeFunding(fail=True)
+    collector = Collector(sources=[FakeSource()], clock=clock, funding_source=funding)
+    for _ in range(3):
+        collector.run_once(session)
+        clock.advance(timedelta(minutes=11))
+    session.commit()
+
+    failed = session.scalars(
+        select(Event).where(Event.kind == "funding_source_failed")
+    ).all()
+    assert len(failed) == 1
+    assert failed[0].severity == "warning"
+    assert session.scalar(select(func.count()).select_from(Event)) == 1
+    assert all(h.status == "ok" for h in session.scalars(select(Heartbeat)))
+    assert session.scalar(select(func.count()).select_from(CandleRow)) > 0
+
+    funding._fail = False
+    collector.run_once(session)
+    session.commit()
+    recovered = session.scalars(
+        select(Event).where(Event.kind == "funding_source_recovered")
+    ).all()
+    assert len(recovered) == 1
+    assert recovered[0].severity == "info"
+    assert session.scalar(select(func.count()).select_from(FundingRate)) == 2

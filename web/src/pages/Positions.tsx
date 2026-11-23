@@ -23,9 +23,6 @@ function FundingWatch() {
         ))
       )}{" "}
       vs T-bill {pct(t_bill_rate)}
-      {rates.length > 0 && rates.every((r) => Number(r.annual_rate) > t_bill_rate)
-        ? " — funding beats T-bills; a carry trade is worth proposing."
-        : ""}
     </p>
   );
 }

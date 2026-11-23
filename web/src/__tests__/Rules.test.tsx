@@ -86,6 +86,34 @@ describe("Rules", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the regime text in the heading and a muted regime line", async () => {
+    const data = makeRulesOut();
+    data.assets = data.assets.map((a) => ({
+      ...a,
+      regime: {
+        trend: "downtrend",
+        volatility: "volatile",
+        sideways: false,
+        vol_percentile: 0.83,
+        adx: 24.63,
+        text: "Downtrend, volatile",
+      },
+    }));
+    rulesMock.mockResolvedValue(data);
+    renderRules();
+
+    expect(
+      await screen.findByText(
+        "BTC-USD: 2 of 9 rules on. Downtrend, volatile",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText(
+        "Regime: ADX 24.6 (sideways reading under 20). Volatility is higher than on 83.0% of the last 365 days.",
+      ),
+    ).toHaveLength(2);
+  });
+
   it("has no form controls", async () => {
     rulesMock.mockResolvedValue(makeRulesOut());
     const { container } = renderRules();

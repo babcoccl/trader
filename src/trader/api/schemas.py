@@ -208,6 +208,15 @@ class RuleOut(BaseModel):
     distance: float | None
 
 
+class RegimeOut(BaseModel):
+    trend: str
+    volatility: str | None
+    sideways: bool | None
+    vol_percentile: float | None
+    adx: float | None
+    text: str
+
+
 class AssetRulesOut(BaseModel):
     symbol: str
     decided_at: datetime | None
@@ -220,6 +229,7 @@ class AssetRulesOut(BaseModel):
     raw_weight: float | None
     target_weight: Decimal | None
     current_weight: Decimal | None
+    regime: RegimeOut | None
 
 
 class IntradayAssetOut(BaseModel):

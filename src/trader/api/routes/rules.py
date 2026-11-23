@@ -18,6 +18,7 @@ from trader.api.schemas import (
     IntradayAssetOut,
     IntradayRulesOut,
     ParameterOut,
+    RegimeOut,
     RuleOut,
     RulesOut,
 )
@@ -26,6 +27,7 @@ from trader.engine import daily_cycle
 from trader.ledger.models import Decision
 from trader.plans import builder
 from trader.risk.limits import Limits
+from trader.strategy import regime as regime_mod
 from trader.strategy import rules as rules_mod
 
 router = APIRouter(dependencies=[AuthRequired])
@@ -84,6 +86,7 @@ def _asset(session: Session, symbol: str) -> AssetRulesOut:
                 distance=distance,
             )
         )
+    regime = regime_mod.from_details(details.get("regime") or {})
     return AssetRulesOut(
         symbol=symbol,
         decided_at=row.ran_at if row else None,
@@ -98,6 +101,11 @@ def _asset(session: Session, symbol: str) -> AssetRulesOut:
         raw_weight=details.get("raw_weight"),
         target_weight=row.target_weight if row else None,
         current_weight=row.current_weight if row else None,
+        regime=(
+            RegimeOut(**regime.as_details(), text=regime.text())
+            if regime is not None
+            else None
+        ),
     )
 
 

@@ -28,7 +28,7 @@ from trader.ledger.models import Candle, Decision, Signal
 from trader.plans import builder
 from trader.risk import engine as risk_engine
 from trader.risk.limits import Limits
-from trader.strategy import ensemble, rules, sizing
+from trader.strategy import ensemble, regime, rules, sizing
 
 log = logging.getLogger(__name__)
 
@@ -172,6 +172,14 @@ def run(
             "k": sum(1 for v in rule_values.values() if v == 1.0),
             "last_close": close.iloc[-1],
             "levels": rules.levels(close),
+            # Recorded and shown only (spec G1): never enters sizing,
+            # should_trade, the plan builder or the risk check.
+            "regime": regime.label(
+                sum(1 for v in rule_values.values() if v == 1.0),
+                df["high"],
+                df["low"],
+                close,
+            ),
         }
 
     day = yesterday.date()
@@ -219,6 +227,7 @@ def run(
         ) or Decimal(str(a["last_close"]))
         prefix = (
             f"Checked {symbol}. {a['k']} of 9 rules positive. "
+            f"{a['regime'].text()}. "
             f"Target {target:.0%}, holding {current:.0%}."
         )
         if sizing.should_trade(target, current, band=BAND):
@@ -246,6 +255,7 @@ def run(
                 "annual_vol": _finite(a["vol"]),
                 "raw_weight": _finite(a["signal"] / len(SYMBOLS)),
                 "scaled_weight": target,
+                "regime": a["regime"].as_details(),
             },
         )
         session.add(decision)

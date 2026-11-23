@@ -38,6 +38,7 @@ function AssetBlock({ asset }: { asset: AssetRulesOut }) {
     <div className="rules-asset">
       <h3>
         {asset.symbol}: {asset.rules_positive ?? "—"} of 9 rules on
+        {asset.regime ? `. ${asset.regime.text}` : ""}
       </h3>
       <p>{asset.reason}</p>
       <p className="muted">Decided {decidedAt(asset.decided_at)}</p>
@@ -46,6 +47,17 @@ function AssetBlock({ asset }: { asset: AssetRulesOut }) {
         {weightPct(asset.target_weight)}, holding{" "}
         {weightPct(asset.current_weight)}.
       </p>
+      {asset.regime ? (
+        <p className="muted">
+          Regime: ADX{" "}
+          {asset.regime.adx === null ? "—" : asset.regime.adx.toFixed(1)}{" "}
+          (sideways reading under 20). Volatility is higher than on{" "}
+          {asset.regime.vol_percentile === null
+            ? "—"
+            : pct(asset.regime.vol_percentile)}{" "}
+          of the last 365 days.
+        </p>
+      ) : null}
       <div className="table-scroll">
         <table className="data-table">
           <thead>

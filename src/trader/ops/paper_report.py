@@ -235,6 +235,10 @@ def tracking_gap(
     if changed is not None and start < changed < end:
         day0 = changed.replace(hour=0, minute=0, second=0, microsecond=0)
         start = day0 if changed == day0 else day0 + timedelta(days=1)
+    if start >= end:
+        # The change consumed the whole window (e.g. a Sunday change in
+        # a Monday-to-Monday week): no post-change days to measure.
+        return out
     eq_start, eq_end, opened = _window_equity(session, mode, start, end)
     if eq_start is not None and eq_end is not None and eq_start > 0:
         out["paper_return"] = float(eq_end / eq_start - 1)

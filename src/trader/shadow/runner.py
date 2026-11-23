@@ -29,6 +29,7 @@ def _record_error(
     session_factory: Callable[[], AbstractContextManager[Session]],
     module: ModuleType,
     exc: Exception,
+    now: datetime,
     today: datetime,
 ) -> None:
     with session_factory() as session:
@@ -45,7 +46,7 @@ def _record_error(
             return
         session.add(
             Event(
-                time=datetime.now(UTC),
+                time=now,
                 kind="shadow_error",
                 severity="warning",
                 message=str(exc),
@@ -68,6 +69,6 @@ def run(
         except Exception as exc:
             log.exception("shadow sleeve %s failed", module.NAME)
             try:
-                _record_error(session_factory, module, exc, today)
+                _record_error(session_factory, module, exc, now, today)
             except Exception:
                 log.exception("recording shadow_error for %s failed", module.NAME)

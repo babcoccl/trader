@@ -66,7 +66,9 @@ def run(session: Session, clock: Clock) -> ShadowMark | None:
         return None
     prices = {s: p for s, p in price_map.items() if p is not None}
 
-    notes: list[str] = []
+    # One sentence per symbol. A symbol sold today that re-buys gets a
+    # single combined sentence.
+    note: dict[str, str] = {}
     open_now: dict[str, bool] = {}
     for symbol in active:
         open_trade = next((t for t in book.open_trades(session, NAME, symbol)), None)
@@ -86,14 +88,14 @@ def run(session: Session, clock: Clock) -> ShadowMark | None:
             )
             open_now[symbol] = False
             pnl = trade.pnl_usd or Decimal("0")
-            notes.append(
+            note[symbol] = (
                 f"{_code(symbol)}: sold after {HOLD_DAYS} days, "
                 f"result {'-' if pnl < 0 else ''}"
                 f"${abs(pnl):,.2f}."
             )
         else:
             open_now[symbol] = True
-            notes.append(
+            note[symbol] = (
                 f"{_code(symbol)}: holding since "
                 f"{open_trade.opened_at.date()}, sells on {sell_day}."
             )
@@ -103,21 +105,28 @@ def run(session: Session, clock: Clock) -> ShadowMark | None:
             continue
         price = prices[symbol]
         regime = regimes[symbol]
+        sold = symbol in note
         z = zscore(data.daily_closes(session, symbol, today))
         if not sleeves.allowed(sleeves.get(NAME), regime):
+            if sold:
+                continue
             trend = regime.trend if regime is not None else "unknown"
-            notes.append(
+            note[symbol] = (
                 f"{_code(symbol)}: {trend}, so no dip-buying (it needs a mixed regime)."
             )
             continue
         if pd.isna(z):
-            notes.append(
+            if sold:
+                continue
+            note[symbol] = (
                 f"{_code(symbol)}: mixed, too few days for a 20-day "
                 "average; it buys at 2.0."
             )
             continue
         if not (z < Z_ENTRY):
-            notes.append(
+            if sold:
+                continue
+            note[symbol] = (
                 f"{_code(symbol)}: mixed, close is {abs(z):.1f} standard "
                 f"deviations {'under' if z < 0 else 'over'} its 20-day "
                 f"average; it buys at 2.0."
@@ -126,7 +135,9 @@ def run(session: Session, clock: Clock) -> ShadowMark | None:
         summary = book.summary(session, NAME, prices)
         spend = min(Decimal("0.25") * summary.equity, summary.cash)
         if spend < MIN_SPEND_USD:
-            notes.append(
+            if sold:
+                continue
+            note[symbol] = (
                 f"{_code(symbol)}: dip signal (z {z:.2f}) but "
                 f"${spend:.2f} is under the $10 minimum."
             )
@@ -142,7 +153,15 @@ def run(session: Session, clock: Clock) -> ShadowMark | None:
             BITSTAMP.slippage,
             details={"zscore": z, "regime": regime.trend if regime else None},
         )
-        notes.append(
-            f"{_code(symbol)}: bought ${spend:,.2f} at {trade.entry_price:,.2f}."
-        )
-    return book.mark(session, NAME, today.date(), prices, " ".join(notes))
+        if sold:
+            note[symbol] = (
+                note[symbol][:-1]
+                + f", and re-bought ${spend:,.2f} at {trade.entry_price:,.2f}."
+            )
+        else:
+            note[symbol] = (
+                f"{_code(symbol)}: bought ${spend:,.2f} at {trade.entry_price:,.2f}."
+            )
+    return book.mark(
+        session, NAME, today.date(), prices, " ".join(note[s] for s in active)
+    )

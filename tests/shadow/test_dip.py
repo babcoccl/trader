@@ -163,7 +163,8 @@ def test_sell_after_hold_days(session) -> None:
 
 
 def test_exit_day_rebuys_when_dip_qualifies(session) -> None:
-    """On the day a trade is sold, a still-qualifying dip re-buys."""
+    """On the day a trade is sold, a still-qualifying dip re-buys, sized
+    on the book after every sale that day — not interleaved per asset."""
     _seed_day(session)
     clock = FrozenClock(NOW)
     dip.run(session, clock)
@@ -173,10 +174,29 @@ def test_exit_day_rebuys_when_dip_qualifies(session) -> None:
     _tick(session, clock.now())
     mark = dip.run(session, clock)
     assert mark is not None
-    assert len(book.open_trades(session, "dip")) == 2
-    assert len(session.query(ShadowTrade).all()) == 4
-    assert "sold after 5 days" in mark.note
-    assert "bought" in mark.note
+    all_trades = session.query(ShadowTrade).all()
+    assert len(all_trades) == 4
+    open_now = {t.symbol: t for t in book.open_trades(session, "dip")}
+    assert set(open_now) == {"BTC-USD", "ETH-USD"}
+
+    # One sentence per asset: sell and re-buy combined.
+    assert mark.note.count("BTC:") == 1
+    assert mark.note.count("ETH:") == 1
+    assert "sold after 5 days, result" in mark.note
+    assert "re-bought" in mark.note
+
+    # Both buys were sized on the book after both sales:
+    # spend_btc = 25% of (10000 + pnl_btc + pnl_eth), and spend_eth on
+    # equity reduced by the BTC buy's fee and slippage.
+    closed = {t.symbol: t for t in all_trades if t.closed_at is not None}
+    equity_after_sells = Decimal("10000") + sum(t.pnl_usd for t in closed.values())
+    btc, eth = open_now["BTC-USD"], open_now["ETH-USD"]
+    eps = Decimal("0.000000000001")
+    assert abs(btc.cost_usd - Decimal("0.25") * equity_after_sells) < eps
+    exposure_btc = btc.quantity * Decimal("100")  # the mark price
+    equity_after_btc = equity_after_sells - btc.cost_usd + exposure_btc
+    assert abs(eth.cost_usd - Decimal("0.25") * equity_after_btc) < eps
+    session.commit()
 
 
 def test_no_daily_decision_returns_none(session) -> None:

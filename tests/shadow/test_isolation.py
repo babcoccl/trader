@@ -31,23 +31,44 @@ SHADOW_DIR = os.path.join(
     "trader",
     "shadow",
 )
-FORBIDDEN = ("trader.plans", "trader.execution", "trader.risk")
+FORBIDDEN_ROOTS = ("plans", "execution", "risk")
+
+
+def _forbidden_import(module: str | None, names: tuple[str, ...] = ()) -> str | None:
+    """The forbidden ``trader`` subtree ``module``/``names`` import, or None."""
+    if module is None:
+        return None
+    parts = module.split(".")
+    if parts[0] != "trader":
+        return None
+    if len(parts) > 1 and parts[1] in FORBIDDEN_ROOTS:
+        return module
+    if len(parts) == 1:
+        hit = next((n for n in names if n in FORBIDDEN_ROOTS), None)
+        if hit is not None:
+            return f"trader.{hit}"
+    return None
+
+
 TRADING_TABLES = (Plan, Order, Fill, Balance, EquitySnapshot, Decision)
 
 
 def test_no_forbidden_imports() -> None:
-    """Parse every file under ``src/trader/shadow/`` and fail on an import
-    of ``trader.plans``, ``trader.execution`` or ``trader.risk``."""
+    """Parse every file under ``src/trader/shadow/`` and fail on any import
+    from the ``trader.plans``, ``trader.execution`` or ``trader.risk``
+    subtrees — including ``from trader import risk`` and submodules."""
     files = [f for f in os.listdir(SHADOW_DIR) if f.endswith(".py")]
     assert files
     for name in files:
         tree = ast.parse(open(os.path.join(SHADOW_DIR, name)).read())
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                assert node.module not in FORBIDDEN, (name, node.module)
+                bad = _forbidden_import(node.module, tuple(a.name for a in node.names))
+                assert bad is None, (name, bad)
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert alias.name not in FORBIDDEN, (name, alias.name)
+                    bad = _forbidden_import(alias.name)
+                    assert bad is None, (name, bad)
 
 
 def _counts(session: Session) -> dict[str, int]:

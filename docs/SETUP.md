@@ -130,6 +130,7 @@ check is late.
 |---|---|
 | Overview | Account value against buy and hold, share invested, drop from the peak against the 35% halt, plans waiting for you, and a line per check explaining why nothing happened. |
 | Approvals | Each waiting plan: reason, entry order, stop, worst case in dollars, fees, expiry. Approve at full, half or quarter size, or deny. Past decisions are listed below. |
+| Rules | What the nine trend rules checked per asset, the level each compared the price with, the last five-minute check, and the fixed settings — why the system is or is not trading. |
 | Positions | Holdings, average cost, the emergency-stop price and resting orders of each. |
 | Activity | Every decision, order, fill, alarm, heartbeat summary and report. |
 | Reports | Return, worst drop, fees, scorecards and the daily digests. |

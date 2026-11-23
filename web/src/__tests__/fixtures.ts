@@ -1,6 +1,8 @@
 import type {
   DecisionOut,
   OpenOrderOut,
+  RuleOut,
+  RulesOut,
   StatusOut,
   WeeklyReportOut,
 } from "../api/client";
@@ -60,6 +62,85 @@ export function makeOpenOrder(overrides: Partial<OpenOrderOut> = {}): OpenOrderO
     status: "open",
     plan_id: 5,
     created_at: iso(3600_000),
+    ...overrides,
+  };
+}
+
+const RULE_FIXTURE: [string, string, boolean | null][] = [
+  ["sma50", "Price above its 50-day average", true],
+  ["sma100", "Price above its 100-day average", false],
+  ["sma200", "Price above its 200-day average", false],
+  ["momentum30", "Price above its level 30 days ago", true],
+  ["momentum90", "Price above its level 90 days ago", false],
+  ["momentum180", "Price above its level 180 days ago", false],
+  [
+    "breakout20",
+    "20-day breakout (on at a 20-day high, off at a 10-day low)",
+    false,
+  ],
+  [
+    "breakout55",
+    "55-day breakout (on at a 55-day high, off at a 27-day low)",
+    false,
+  ],
+  [
+    "breakout100",
+    "100-day breakout (on at a 100-day high, off at a 50-day low)",
+    null,
+  ],
+];
+
+function makeRuleOut(
+  [name, label, positive]: [string, string, boolean | null],
+  i: number,
+): RuleOut {
+  const level = 50000 + i * 100;
+  return {
+    name,
+    label,
+    positive,
+    level,
+    distance: 60000 / level - 1,
+  };
+}
+
+export function makeRulesOut(overrides: Partial<RulesOut> = {}): RulesOut {
+  return {
+    next_daily_decision_at: new Date(Date.now() + 5 * 3600_000).toISOString(),
+    latest_daily: {
+      ran_at: iso(3600_000),
+      action: "none",
+      reason: "Checked. Nothing to do.",
+    },
+    assets: ["BTC-USD", "ETH-USD"].map((symbol) => ({
+      symbol,
+      decided_at: iso(3600_000),
+      action: "none",
+      reason: `Checked ${symbol}. 2 of 9 rules positive. Target 0%, holding 0%.`,
+      last_close: 60000,
+      rules_positive: 2,
+      rules: RULE_FIXTURE.map(makeRuleOut),
+      annual_vol: 0.55,
+      raw_weight: 0.11,
+      target_weight: "0.000000000000000000",
+      current_weight: "0.000000000000000000",
+    })),
+    intraday: {
+      ran_at: iso(60_000),
+      action: "none",
+      reason: "Checked prices. No stop is near. Nothing to do.",
+      assets: ["BTC-USD", "ETH-USD"].map((symbol) => ({
+        symbol,
+        last_price: 60000,
+        nearest_stop_distance: null,
+        drop_bid: 54000,
+        drop_bid_distance: 0.1,
+      })),
+    },
+    parameters: [
+      { name: "Assets", value: "BTC-USD, ETH-USD" },
+      { name: "Volatility target", value: "40%" },
+    ],
     ...overrides,
   };
 }

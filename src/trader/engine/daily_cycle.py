@@ -172,6 +172,7 @@ def run(
             "vol": vol,
             "k": sum(1 for v in rule_values.values() if v == 1.0),
             "last_close": close.iloc[-1],
+            "levels": rules.levels(close),
         }
 
     day = yesterday.date()
@@ -241,6 +242,8 @@ def run(
             reason=reason,
             details={
                 "rules": {n: _finite(v) for n, v in a["rules"].items()},
+                "last_close": _finite(float(a["last_close"])),
+                "levels": {n: _finite(v) for n, v in a["levels"].items()},
                 "annual_vol": _finite(a["vol"]),
                 "raw_weight": _finite(a["signal"] / len(SYMBOLS)),
                 "scaled_weight": target,

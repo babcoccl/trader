@@ -156,6 +156,62 @@ export interface DigestOut {
   stats: Record<string, unknown>;
 }
 
+export interface DailyRunOut {
+  ran_at: string;
+  action: string;
+  reason: string;
+}
+
+export interface RuleOut {
+  name: string;
+  label: string;
+  positive: boolean | null;
+  level: number | null;
+  distance: number | null;
+}
+
+export interface AssetRulesOut {
+  symbol: string;
+  decided_at: string | null;
+  action: string | null;
+  reason: string | null;
+  last_close: number | null;
+  rules_positive: number | null;
+  rules: RuleOut[];
+  annual_vol: number | null;
+  raw_weight: number | null;
+  target_weight: string | null;
+  current_weight: string | null;
+}
+
+export interface IntradayAssetOut {
+  symbol: string;
+  last_price: number | null;
+  nearest_stop_distance: number | null;
+  drop_bid: number | null;
+  drop_bid_distance: number | null;
+}
+
+export interface IntradayRulesOut {
+  ran_at: string;
+  action: string;
+  reason: string;
+  assets: IntradayAssetOut[];
+}
+
+export interface ParameterOut {
+  name: string;
+  value: string;
+}
+
+export interface RulesOut {
+  next_daily_decision_at: string;
+  latest_daily: DailyRunOut | null;
+  assets: AssetRulesOut[];
+  intraday: IntradayRulesOut | null;
+  parameters: ParameterOut[];
+}
+
 export interface SettingOut {
   key: string;
   value: unknown;
@@ -246,6 +302,7 @@ export const api = {
     ),
   digests: (limit?: number) =>
     request<DigestOut[]>(`/api/digests${limit ? `?limit=${limit}` : ""}`),
+  rules: () => request<RulesOut>("/api/rules"),
   settings: () => request<SettingOut[]>("/api/settings"),
   putSetting: (key: string, value: unknown) =>
     request<SettingOut>(`/api/settings/${key}`, {

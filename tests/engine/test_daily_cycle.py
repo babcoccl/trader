@@ -445,3 +445,27 @@ def test_reason_templates(session: Session) -> None:
     btc = next(r for r in rows if r.symbol == "BTC-USD")
     if btc.action == "plan_proposed":
         assert "Proposing a plan to sell the difference." in btc.reason
+
+
+def test_decision_details_carry_last_close_and_levels(session: Session) -> None:
+    """Spec D1: a decision with rules also stores the close it used and the
+    level each rule compared it with; a blocked decision has neither."""
+    clock = FrozenClock(datetime(2026, 11, 20, 0, 5, tzinfo=UTC))
+    rows = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    session.commit()
+    assert len(rows) == 2
+    for r in rows:
+        assert isinstance(r.details["last_close"], float)
+        assert r.details["last_close"] > 0
+        assert set(r.details["levels"].keys()) == set(r.details["rules"].keys())
+        assert len(r.details["levels"]) == 9
+
+    # The fixture ends 2026-11-19, so the next day's run has no yesterday
+    # candle and blocks.
+    clock = FrozenClock(datetime(2026, 11, 21, 0, 5, tzinfo=UTC))
+    blocked = daily_cycle.run(session, clock, daily_cycle.CashOnlyPortfolio())
+    session.commit()
+    assert len(blocked) == 1
+    assert blocked[0].action == "blocked"
+    assert "last_close" not in blocked[0].details
+    assert "levels" not in blocked[0].details

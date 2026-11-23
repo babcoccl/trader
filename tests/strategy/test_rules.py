@@ -121,6 +121,34 @@ def test_target_weights_vol_target_scaling() -> None:
     assert w["A"] == pytest.approx(0.5)  # 1/1 * min(1, 0.40/0.80)
 
 
+def test_levels_sma_and_momentum() -> None:
+    close = pd.Series(range(1, 60), dtype=float)
+    lv = rules.levels(close)
+    assert lv["sma50"] == pytest.approx(close.iloc[-50:].mean())
+    assert lv["momentum30"] == close.iloc[-31]
+
+
+def test_levels_breakout_high_when_off_low_when_on() -> None:
+    # Off: descending series, last breakout value 0.0 -> level is n-day high.
+    down = pd.Series(np.linspace(100.0, 50.0, 30))
+    assert rules.breakout(down, 20).iloc[-1] == 0.0
+    lv = rules.levels(down)
+    assert lv["breakout20"] == pytest.approx(down.iloc[-20:].max())
+    # On: last close held the high -> level is the (n//2)-day low.
+    up = pd.Series(np.linspace(1.0, 30.0, 30))
+    assert rules.breakout(up, 20).iloc[-1] == 1.0
+    lv = rules.levels(up)
+    assert lv["breakout20"] == pytest.approx(up.iloc[-10:].min())
+
+
+def test_levels_short_series_is_nan() -> None:
+    close = pd.Series(range(1, 40), dtype=float)
+    lv = rules.levels(close)
+    assert np.isnan(lv["sma50"])
+    assert np.isnan(lv["momentum90"])
+    assert np.isnan(lv["breakout55"])
+
+
 def test_should_trade() -> None:
     assert not sizing.should_trade(0.5, 0.45)
     assert sizing.should_trade(0.5, 0.3)

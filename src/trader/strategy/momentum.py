@@ -30,9 +30,17 @@ def target_weights(
         vol_target=vol_target,
         lookback_days=lookback_days,
         top_k=top_k,
-        btc_gate=btc_gate,
+        # Gate applied below on BTC's own days: the joined frame can hold a
+        # NaN BTC row where another asset has a date BTC lacks, and a NaN
+        # rolling mean would zero every weight.
+        btc_gate=False,
     )
     if w.empty:
         return {s: 0.0 for s in closes.columns}
+    if btc_gate and "BTC-USD" in closes.columns:
+        btc = closes["BTC-USD"].dropna()
+        gate_ok = bool(btc.iloc[-1] > btc.rolling(50).mean().iloc[-1])
+        if not gate_ok:
+            return {s: 0.0 for s in closes.columns}
     latest = w.iloc[-1]
     return {s: float(latest[s]) for s in closes.columns}

@@ -93,6 +93,19 @@ def test_short_history_and_nan_get_zero() -> None:
     assert w["BTC-USD"] > 0.0
 
 
+def test_btc_gap_does_not_zero_gate() -> None:
+    """A date ETH has but BTC lacks must not break the gate: BTC's SMA is
+    computed on BTC's own days, not the joined frame's NaN rows."""
+    idx = pd.date_range("2026-01-01", periods=DAYS, freq="D")
+    i = np.arange(DAYS)
+    eth = pd.Series(100.0 * 1.005**i, index=idx)
+    btc = pd.Series(100.0 * 1.01**i, index=idx).drop(index=idx[-10])
+    closes = pd.DataFrame({"BTC-USD": btc, "ETH-USD": eth})
+    w = momentum.target_weights(closes, vol_target=10.0)
+    assert w["BTC-USD"] > 0.0
+    assert w["ETH-USD"] > 0.0
+
+
 def test_empty_frame() -> None:
     closes = pd.DataFrame({"BTC-USD": []})
     assert momentum.target_weights(closes) == {"BTC-USD": 0.0}

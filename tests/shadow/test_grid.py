@@ -352,18 +352,74 @@ def _replay_btc_dip(session: Session, now: datetime) -> Decimal:
     return buy.cost_usd
 
 
-def test_same_timestamp_close_prices_a_replayed_buy(engine, session) -> None:
-    # ETH has a candle on the same boundary as the BTC buy: its close
-    # counts even though BTC sorts first alphabetically.
-    qty = _seed_replay_buy(
+def _hold_eth_lot(session: Session) -> Decimal:
+    """Book a $500 ETH level-0 lot at 100; return its quantity."""
+    held = book.buy(
         session,
-        [
-            (NOW - timedelta(minutes=5), 104, 104, 99, 104),
-            (NOW + timedelta(minutes=5), 100, 100, 95, 110),
-        ],
+        "grid",
+        "ETH-USD",
+        NOW - timedelta(minutes=30),
+        Decimal("100"),
+        Decimal("500"),
+        BITSTAMP.maker_fee,
+        0.0,
+        details={"level": 0},
     )
-    spend = _replay_btc_dip(session, NOW + timedelta(minutes=10))
-    expected = (Decimal("9500") + qty * Decimal("110")) / Decimal(2 * LOTS)
+    session.commit()
+    return held.quantity
+
+
+def _btc_level_zero_spend(session: Session) -> Decimal:
+    return next(
+        t.cost_usd
+        for t in session.scalars(
+            select(ShadowTrade).where(ShadowTrade.sleeve == "grid")
+        )
+        if t.symbol == "BTC-USD" and t.details["level"] == 0
+    )
+
+
+def _m(minutes: int) -> datetime:
+    return NOW + timedelta(minutes=minutes)
+
+
+def test_later_shared_boundary_close_prices_a_replayed_buy(engine, session) -> None:
+    # BTC buys on the second replayed boundary, where ETH also closes:
+    # that ETH close (104.5) counts though BTC sorts first.
+    _seed_decisions(session)
+    add_bar(session, "BTC-USD", _m(-15), 100, 100, 100, 100)
+    add_bar(session, "ETH-USD", _m(-15), 100, 100, 100, 100)
+    session.commit()
+    run(session, FrozenClock(_m(-10)))  # both cursors at -15
+    qty = _hold_eth_lot(session)
+    add_bar(session, "BTC-USD", _m(-10), 100, 100, 100, 100)
+    add_bar(session, "BTC-USD", _m(-5), 100, 100, 94, 100)
+    add_bar(session, "ETH-USD", _m(-10), 100, 100, 96, 96)
+    add_bar(session, "ETH-USD", _m(-5), 100, 104.9, 100, 104.5)
+    session.commit()
+    run(session, FrozenClock(NOW))
+    expected = (Decimal("9500") + qty * Decimal("104.5")) / Decimal(2 * LOTS)
+    spend = _btc_level_zero_spend(session)
+    assert float(spend) == pytest.approx(float(expected), rel=1e-9)
+
+
+def test_close_behind_another_cursor_prices_a_replayed_buy(engine, session) -> None:
+    # ETH's cursor already covers -15 (close 96) and -10 (close 102); a
+    # backfilled BTC buy on -10 is sized at 102, not the older 96.
+    _seed_decisions(session)
+    add_bar(session, "BTC-USD", _m(-20), 100, 100, 100, 100)
+    add_bar(session, "ETH-USD", _m(-20), 100, 100, 100, 100)
+    add_bar(session, "ETH-USD", _m(-15), 100, 100, 96, 96)
+    add_bar(session, "ETH-USD", _m(-10), 100, 102, 100, 102)
+    session.commit()
+    run(session, FrozenClock(NOW))  # BTC cursor -20, ETH cursor -10
+    qty = _hold_eth_lot(session)
+    add_bar(session, "BTC-USD", _m(-15), 100, 100, 100, 100)
+    add_bar(session, "BTC-USD", _m(-10), 100, 100, 94, 100)
+    session.commit()
+    run(session, FrozenClock(NOW))
+    expected = (Decimal("9500") + qty * Decimal("102")) / Decimal(2 * LOTS)
+    spend = _btc_level_zero_spend(session)
     assert float(spend) == pytest.approx(float(expected), rel=1e-9)
 
 

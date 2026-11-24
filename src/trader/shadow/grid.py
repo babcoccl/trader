@@ -9,12 +9,11 @@ a note only — never an order.
 ``run`` keeps a cursor in ``shadow_state``; after downtime it replays
 every stored candle since that cursor under the *current* reading, not
 the reading each candle closed under. Both symbols' candles are merged
-in open-time order and each replayed buy is sized from each symbol's
-close as of that bar — candles on the same boundary count together,
-and symbols with no candle in the window are priced at their latest
-close before it; the daily mark still prices the book at the freshest
-closes. A level counts as filled when a bar trades
-``THROUGH`` beyond it, which is more generous than a real order queue.
+in open-time order and each replayed buy is sized at every symbol's
+fresh close as of that bar, whether or not that symbol's cursor already
+covered it; the daily mark still prices the book at the freshest
+closes. A level counts as filled when a bar trades ``THROUGH`` beyond
+it, which is more generous than a real order queue.
 """
 
 import math
@@ -188,43 +187,6 @@ def _save_row(
     session.flush()
 
 
-def _close_at_or_before(
-    session: Session, symbol: str, open_time: datetime
-) -> Decimal | None:
-    """Close of the newest stored 5-minute candle opened at or before
-    ``open_time`` — the as-of seed for candles the cursor skipped."""
-    latest = session.scalar(
-        select(func.max(Candle.open_time)).where(
-            Candle.symbol == symbol,
-            Candle.interval == "5m",
-            Candle.open_time <= open_time,
-        )
-    )
-    if latest is None:
-        return None
-    # Same dedup rule as ``data.price``: the source covering the most
-    # bars wins.
-    rows = session.scalars(
-        select(Candle).where(
-            Candle.symbol == symbol,
-            Candle.interval == "5m",
-            Candle.open_time == latest,
-        )
-    ).all()
-    if len(rows) == 1:
-        return rows[0].close
-    counts = session.execute(
-        select(Candle.source, func.count())
-        .where(Candle.symbol == symbol, Candle.interval == "5m")
-        .group_by(Candle.source)
-    ).all()
-    preferred = max(counts, key=lambda row: row[1])[0]
-    for r in rows:
-        if r.source == preferred:
-            return r.close
-    return rows[0].close
-
-
 def _code(symbol: str) -> str:
     return symbol.split("-")[0]
 
@@ -331,31 +293,34 @@ def run(session: Session, clock: Clock) -> None:
                 )
             )
 
-    # ``asof`` holds each symbol's newest close so far. Seed it with the
-    # latest close at or before the first replayed bar — a symbol can
-    # hold lots while contributing no candle to this replay — then apply
-    # every close of a timestamp before any of its actions: candles on
-    # the same boundary close at the same time.
-    asof: dict[str, Decimal] = {}
+    # Valuation is independent of the cursors: every symbol's closes over
+    # the replay window, plus a MAX_PRICE_AGE lead-in, come from
+    # ``data.bars_after`` even where that symbol's cursor already covered
+    # them. All closes of a timestamp apply before its actions, and a
+    # close counts only while fresh, the rule ``data.price`` uses.
     events.sort(key=lambda event: (event[0], event[1]))
+    period = timedelta(seconds=period_seconds("5m"))
+    by_time: dict[datetime, list[tuple[str, Bar]]] = {}
+    for open_time, symbol, candle in events:
+        by_time.setdefault(open_time, []).append((symbol, candle))
+    closes: dict[datetime, dict[str, Decimal]] = {}
     if events:
-        first = events[0][0]
+        lead_in = events[0][0] - data.MAX_PRICE_AGE - period
+        for s in active:
+            frame = data.bars_after(session, s, lead_in, now)
+            for idx, close in frame["close"].items():
+                closes.setdefault(cast(datetime, idx), {})[s] = Decimal(str(close))
+    last_seen: dict[str, tuple[datetime, Decimal]] = {}
+    for open_time in sorted(closes.keys() | by_time.keys()):
+        for s, close in closes.get(open_time, {}).items():
+            last_seen[s] = (open_time, close)
+        trade_time = open_time + period
         asof = {
             s: close
-            for s in active
-            if (close := _close_at_or_before(session, s, first)) is not None
+            for s, (bar_open, close) in last_seen.items()
+            if bar_open + period >= trade_time - data.MAX_PRICE_AGE
         }
-    i = 0
-    while i < len(events):
-        j = i
-        while j < len(events) and events[j][0] == events[i][0]:
-            j += 1
-        group = events[i:j]
-        i = j
-        for _, group_symbol, group_candle in group:
-            asof[group_symbol] = Decimal(str(group_candle.close))
-        for open_time, symbol, candle in group:
-            trade_time = open_time + timedelta(seconds=period_seconds("5m"))
+        for symbol, candle in by_time.get(open_time, []):
             state = states[symbol]
             lots = open_lots[symbol]
             for action in step(state, lots, candle, on_by_symbol[symbol]):

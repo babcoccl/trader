@@ -109,9 +109,28 @@ def run(
     day t are those of day t-1, 0 if none), so the start date can sit inside
     a longer history.
     """
-    w = _target_weights(closes, vol_target)
+    return run_weights(
+        opens, closes, _target_weights(closes, vol_target), cost, band, start, end
+    )
+
+
+def run_weights(
+    opens: pd.DataFrame,
+    closes: pd.DataFrame,
+    weights: pd.DataFrame,
+    cost: CostModel,
+    band: float = 0.20,
+    start: str = "2018-04-01",
+    end: str = "2026-11-19",
+) -> BacktestResult:
+    """Run the daily backtest with caller-supplied target weights.
+
+    ``weights`` holds one target-weight row per date of ``closes``; the
+    weights used on day t are those of day t-1 (shifted here, 0 if none),
+    so the caller passes unshifted same-day weights.
+    """
     idx = closes.loc[start:end].index
-    tgt = w.shift(1).reindex(idx).fillna(0.0)
+    tgt = weights.shift(1).reindex(idx).fillna(0.0)
 
     symbols = list(closes.columns)
     units = {s: 0.0 for s in symbols}

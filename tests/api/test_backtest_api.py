@@ -180,3 +180,38 @@ def test_run_unknown_fee_tier_400(client: TestClient) -> None:
         json={"assumed_fee_tier": "free_money"},
     )
     assert r.status_code == 400
+
+
+def test_run_cross_sectional_momentum(client: TestClient) -> None:
+    _login(client)
+    r = client.post(
+        "/api/backtests/run",
+        json={
+            "strategy_sleeve": "cross_sectional_momentum",
+            "asset_universe": [
+                "BTC-USD",
+                "ETH-USD",
+                "SOL-USD",
+                "XRP-USD",
+                "DOGE-USD",
+                "ADA-USD",
+            ],
+            "start_date": "2023-01-01",
+            "end_date": "2024-12-31",
+        },
+    )
+    assert r.status_code == 200
+    result = BacktestResult.model_validate(r.json())
+    assert len(result.timeseries_data) > 700
+    m = result.summary_metrics
+    assert -1.0 < m.cagr < 10.0
+    assert 0.0 <= m.max_drawdown <= 1.0
+
+
+def test_run_unknown_strategy_sleeve_400(client: TestClient) -> None:
+    _login(client)
+    r = client.post(
+        "/api/backtests/run",
+        json={"strategy_sleeve": "not_a_sleeve"},
+    )
+    assert r.status_code == 400

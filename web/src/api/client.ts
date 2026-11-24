@@ -262,6 +262,51 @@ export interface SettingOut {
   updated_at: string | null;
 }
 
+export interface BacktestParams {
+  strategy_sleeve?: string;
+  asset_universe?: string[];
+  start_date?: string;
+  end_date?: string;
+  starting_capital?: number | string;
+  assumed_fee_tier?: string;
+  vol_target?: number;
+  drawdown_limit?: number;
+  extra_params?: Record<string, unknown>;
+}
+
+export interface BacktestSummaryMetrics {
+  cagr: number;
+  benchmark_cagr: number;
+  max_drawdown: number;
+  total_trades: number;
+  win_rate: number;
+  total_fees_paid: string;
+}
+
+export interface BacktestPoint {
+  timestamp: string;
+  equity: string;
+  benchmark_equity: string;
+  drawdown: number;
+  asset_price: string;
+}
+
+export interface BacktestTrade {
+  date: string;
+  asset: string;
+  side: "BUY" | "SELL";
+  size: string;
+  price: string;
+  pnl: string;
+  fee: string;
+}
+
+export interface BacktestResult {
+  summary_metrics: BacktestSummaryMetrics;
+  timeseries_data: BacktestPoint[];
+  trade_log: BacktestTrade[];
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -348,6 +393,11 @@ export const api = {
     request<DigestOut[]>(`/api/digests${limit ? `?limit=${limit}` : ""}`),
   rules: () => request<RulesOut>("/api/rules"),
   shadow: () => request<ShadowOut>("/api/shadow"),
+  runBacktest: (params: BacktestParams) =>
+    request<BacktestResult>("/api/backtests/run", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
   settings: () => request<SettingOut[]>("/api/settings"),
   putSetting: (key: string, value: unknown) =>
     request<SettingOut>(`/api/settings/${key}`, {

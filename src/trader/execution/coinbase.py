@@ -373,6 +373,7 @@ class CoinbaseAdvancedAdapter:
                 Decimal(str(row["size"])),
             )
             if key not in seen:
+                seen.add(key)  # also dedupe repeats within this fetch
                 out.append(self._make_fill(order, row))
         return out
 

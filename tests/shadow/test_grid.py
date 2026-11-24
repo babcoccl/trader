@@ -271,6 +271,43 @@ def test_run_marks_once_a_day(engine, session) -> None:
     assert "BTC:" in marks[0].note
 
 
+def test_replayed_buy_is_priced_as_of_its_bar(engine, session) -> None:
+    """A replayed buy sizes from closes as of its bar, not the latest.
+
+    Bar t1 dips through level -1 (buy); bar t2 closes at 200. If the
+    sizing priced the held lot at 200 the spend would be ~525, not ~500.
+    """
+    _seed_decisions(session)
+    t0 = NOW - timedelta(minutes=5)
+    add_bar(session, "BTC-USD", t0, 100, 100, 99, 100)
+    session.commit()
+    run(session, FrozenClock(NOW))  # sets the cursor
+    held = book.buy(
+        session,
+        "grid",
+        "BTC-USD",
+        t0,
+        Decimal("100"),
+        Decimal("500"),
+        BITSTAMP.maker_fee,
+        0.0,
+        details={"level": 0},
+    )
+    add_bar(session, "BTC-USD", NOW + timedelta(minutes=5), 100, 100, 94, 100)
+    add_bar(session, "BTC-USD", NOW + timedelta(minutes=10), 200, 200, 197, 200)
+    session.commit()
+    run(session, FrozenClock(NOW + timedelta(minutes=15)))
+    buy = next(
+        t
+        for t in session.scalars(
+            select(ShadowTrade).where(ShadowTrade.sleeve == "grid")
+        )
+        if t.details["level"] == -1
+    )
+    expected = (Decimal("9500") + held.quantity * Decimal("100")) / Decimal(2 * LOTS)
+    assert float(buy.cost_usd) == pytest.approx(float(expected), rel=1e-9)
+
+
 # --- fee arithmetic of one round trip (spec G5 test 4).
 
 

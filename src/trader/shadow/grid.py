@@ -8,9 +8,11 @@ a note only — never an order.
 
 ``run`` keeps a cursor in ``shadow_state``; after downtime it replays
 every stored candle since that cursor under the *current* reading, not
-the reading each candle closed under. A level counts as filled when a
-bar trades ``THROUGH`` beyond it, which is more generous than a real
-order queue.
+the reading each candle closed under. Both symbols' candles are merged
+in open-time order so a replayed buy is sized from each symbol's close
+as of that bar, never a later one; the daily mark still prices the book
+at the freshest closes. A level counts as filled when a bar trades
+``THROUGH`` beyond it, which is more generous than a real order queue.
 """
 
 import math
@@ -224,14 +226,22 @@ def run(session: Session, clock: Clock) -> None:
     last_close: dict[str, float] = {}
     open_lots: dict[str, list[Lot]] = {}
     states: dict[str, GridState] = {}
-    prices: dict[str, Decimal] = {}
+
+    # Load each symbol's state and its candles to replay. Symbols share
+    # one book, so below the candles are merged in open-time order: a
+    # replayed buy is then sized from closes as of that bar.
+    rows: dict[str, ShadowState | None] = {}
+    cursors: dict[str, datetime] = {}
+    on_by_symbol: dict[str, bool] = {}
+    held: dict[str, dict[int, ShadowTrade]] = {}
+    events: list[tuple[datetime, str, Bar]] = []
     for symbol in active:
         row = _load_row(session, symbol)
         stored = dict(row.state) if row is not None else {}
         regime = data.latest_regime(session, symbol)
-        on = sleeves.allowed(spec, regime)
+        on_by_symbol[symbol] = sleeves.allowed(spec, regime)
         raw_p0 = stored.get("p0")
-        state = GridState(
+        states[symbol] = GridState(
             on=bool(stored.get("on", False)),
             p0=float(raw_p0) if isinstance(raw_p0, int | float) else None,
         )
@@ -254,73 +264,90 @@ def run(session: Session, clock: Clock) -> None:
                 },
                 now,
             )
-            states[symbol] = state
             open_lots[symbol] = []
+            held[symbol] = {}
             continue
-
-        bars = data.bars_after(session, symbol, cursor, now)
-        trades_by_level: dict[int, ShadowTrade] = {}
-        lots: list[Lot] = []
+        rows[symbol] = row
+        cursors[symbol] = cursor
+        open_lots[symbol] = []
+        held[symbol] = {}
         for trade in book.open_trades(session, NAME, symbol):
             level = int(trade.details["level"])
-            lots.append(Lot(level=level, entry_price=float(trade.entry_price)))
-            trades_by_level[level] = trade
-        for idx, r in bars.iterrows():
-            open_time = cast(datetime, idx)  # index is open_time (timestamptz)
-            candle = Bar(
-                open=float(r["open"]),
-                high=float(r["high"]),
-                low=float(r["low"]),
-                close=float(r["close"]),
+            open_lots[symbol].append(
+                Lot(level=level, entry_price=float(trade.entry_price))
             )
-            trade_time = open_time + timedelta(seconds=period_seconds("5m"))
-            for action in step(state, lots, candle, on):
-                if action.kind == "sell":
-                    book.sell(
-                        session,
-                        trades_by_level.pop(action.level),
-                        trade_time,
-                        Decimal(str(action.price)),
-                        action.fee_rate,
-                        action.slippage,
-                        action.reason,
-                    )
-                    lots = [lot for lot in lots if lot.level != action.level]
-                    continue
-                if not prices:
-                    prices = {
-                        s: p
-                        for s in active
-                        if (p := data.price(session, s, now)) is not None
-                    }
-                summary = book.summary(session, NAME, prices)
-                spend = min(summary.equity / (2 * LOTS), summary.cash)
-                if spend < MIN_LOT_USD:
-                    continue
-                trade = book.buy(
-                    session,
-                    NAME,
+            held[symbol][level] = trade
+        for idx, r in data.bars_after(session, symbol, cursor, now).iterrows():
+            open_time = cast(datetime, idx)  # index is open_time (timestamptz)
+            events.append(
+                (
+                    open_time,
                     symbol,
+                    Bar(
+                        open=float(r["open"]),
+                        high=float(r["high"]),
+                        low=float(r["low"]),
+                        close=float(r["close"]),
+                    ),
+                )
+            )
+
+    # ``asof`` holds each symbol's newest close so far: chronological
+    # order makes it the price as of the bar being processed.
+    asof: dict[str, Decimal] = {}
+    events.sort(key=lambda event: (event[0], event[1]))
+    for open_time, symbol, candle in events:
+        trade_time = open_time + timedelta(seconds=period_seconds("5m"))
+        asof[symbol] = Decimal(str(candle.close))
+        state = states[symbol]
+        lots = open_lots[symbol]
+        for action in step(state, lots, candle, on_by_symbol[symbol]):
+            if action.kind == "sell":
+                book.sell(
+                    session,
+                    held[symbol].pop(action.level),
                     trade_time,
                     Decimal(str(action.price)),
-                    spend,
                     action.fee_rate,
                     action.slippage,
-                    details={"level": action.level},
+                    action.reason,
                 )
-                lots.append(Lot(level=action.level, entry_price=action.price))
-                trades_by_level[action.level] = trade
-            cursor = open_time
-            last_close[symbol] = candle.close
+                lots = [lot for lot in lots if lot.level != action.level]
+                open_lots[symbol] = lots
+                continue
+            summary = book.summary(session, NAME, asof)
+            spend = min(summary.equity / (2 * LOTS), summary.cash)
+            if spend < MIN_LOT_USD:
+                continue
+            trade = book.buy(
+                session,
+                NAME,
+                symbol,
+                trade_time,
+                Decimal(str(action.price)),
+                spend,
+                action.fee_rate,
+                action.slippage,
+                details={"level": action.level},
+            )
+            lots.append(Lot(level=action.level, entry_price=action.price))
+            held[symbol][action.level] = trade
+        cursors[symbol] = open_time
+        last_close[symbol] = candle.close
+
+    for symbol, row in rows.items():
+        st = states[symbol]
         _save_row(
             session,
             row,
             symbol,
-            {"on": state.on, "p0": state.p0, "cursor": cursor.isoformat()},
+            {
+                "on": st.on,
+                "p0": st.p0,
+                "cursor": cursors[symbol].isoformat(),
+            },
             now,
         )
-        states[symbol] = state
-        open_lots[symbol] = lots
 
     # Once per UTC day: the first run after every active symbol has
     # today's daily decision writes the mark.
@@ -329,10 +356,11 @@ def run(session: Session, clock: Clock) -> None:
     regimes = {s: data.regime_today(session, s, today) for s in active}
     if any(r is None for r in regimes.values()):
         return
-    if not prices:
-        prices = {
-            s: p for s in active if (p := data.price(session, s, now)) is not None
-        }
+    # The mark always values the book at the freshest closes, kept
+    # separate from the as-of replay prices above.
+    mark_prices = {
+        s: p for s in active if (p := data.price(session, s, now)) is not None
+    }
     notes: list[str] = []
     for symbol in active:
         regime = regimes[symbol]
@@ -360,4 +388,4 @@ def run(session: Session, clock: Clock) -> None:
             notes.append(f"{_code(symbol)}: no sideways reading ({a}), grid is off.")
         else:
             notes.append(_note_on(symbol, adx, gstate, lots, reference))
-    book.mark(session, NAME, today.date(), prices, " ".join(notes))
+    book.mark(session, NAME, today.date(), mark_prices, " ".join(notes))

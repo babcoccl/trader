@@ -60,6 +60,7 @@ def build(
     tick: Decimal,
     lot: Decimal,
     band: float = 0.20,
+    cash_usd: Decimal | None = None,
 ) -> Plan | None:
     """Build the plan that moves ``symbol`` from current to target weight.
 
@@ -75,6 +76,12 @@ def build(
     current = Decimal(str(current_weight))
     side = "buy" if target > current else "sell"
     notional = abs(target - current) * equity_usd
+    if side == "buy" and cash_usd is not None:
+        # Leave room for the fill's fee: a buy sized at the whole account
+        # (e.g. a top-1 momentum pick) would otherwise cost more than the
+        # cash on hand and be rejected at fill time.
+        fee_rate = Decimal(str(cost.taker_fee + cost.slippage))
+        notional = min(notional, cash_usd / (1 + fee_rate))
 
     limit_price = _round_down(price, tick)
     quantity = _round_down(notional / price, lot) if price > 0 else Decimal(0)

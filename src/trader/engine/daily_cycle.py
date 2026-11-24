@@ -246,6 +246,11 @@ def run(
         )
     # Venue-aware fee estimate for proposed plans (spec W1.2a).
     cost = COINBASE_TIER_1 if settings.venue == "coinbase" else BITSTAMP
+    # Cash a buy can spend: equity not already held. Sizes plans so the
+    # notional plus the fill's fee never exceeds it.
+    cash_usd = portfolio.equity_usd * Decimal(
+        str(max(0.0, 1.0 - sum(portfolio.weights.values())))
+    )
     limits = Limits.load(session)
     risk_state = risk_engine.state(session, clock)
 
@@ -323,6 +328,7 @@ def run(
                 tick=ASSETS[symbol].tick,
                 lot=ASSETS[symbol].lot,
                 band=band,
+                cash_usd=cash_usd,
             )
             if plan is not None:
                 verdict = risk_engine.check_plan(plan, portfolio, limits, risk_state)

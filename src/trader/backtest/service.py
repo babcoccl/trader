@@ -1,0 +1,131 @@
+"""API-facing backtest service: params -> engine -> API schema result.
+
+Runs the real daily engine on the committed BTC/ETH fixture, scaled to the
+requested starting capital, with an equal-weight buy-and-hold benchmark.
+"""
+
+from decimal import Decimal
+from pathlib import Path
+
+import pandas as pd
+
+from trader.api.schemas import (
+    BacktestParams,
+    BacktestPoint,
+    BacktestResult,
+    BacktestSummaryMetrics,
+    BacktestTrade,
+)
+from trader.backtest import engine
+from trader.backtest.costs import CostModel
+
+FIXTURE = (
+    Path(__file__).resolve().parents[3] / "research" / "fixtures" / "btc_eth_daily.csv"
+)
+
+# assumed_fee_tier -> per-side fee in basis points (mapped onto the engine's
+# taker_fee; slippage kept at the fixture's standard 1bp).
+FEE_TIER_BPS = {
+    "tier_1_maker": 30,
+    "tier_2_maker": 20,
+    "tier_3_maker": 10,
+    "coinbase_tier_1": 40,
+    "coinbase_tier_2": 25,
+    "coinbase_tier_3": 15,
+}
+SLIPPAGE = 0.0001
+
+
+def _cost_model(tier: str) -> CostModel:
+    if tier not in FEE_TIER_BPS:
+        raise ValueError(
+            f"unknown assumed_fee_tier {tier!r}; expected one of {sorted(FEE_TIER_BPS)}"
+        )
+    fee = FEE_TIER_BPS[tier] / 10_000
+    return CostModel(maker_fee=fee, taker_fee=fee, slippage=SLIPPAGE)
+
+
+def _benchmark(closes: pd.DataFrame, idx: pd.Index) -> pd.Series:
+    """Equal-weight buy-and-hold of the frame's assets, normalized to 1."""
+    rel = closes.loc[idx] / closes.loc[idx].iloc[0]
+    return rel.mean(axis=1)
+
+
+def execute_backtest(params: BacktestParams) -> BacktestResult:
+    opens, closes = engine.load_fixture(str(FIXTURE))
+
+    available = [s for s in params.asset_universe if s in closes.columns]
+    if not available:
+        raise ValueError(
+            f"none of the requested assets exist in the data set: "
+            f"{params.asset_universe!r} (available: {list(closes.columns)})"
+        )
+    opens = opens[available]
+    closes = closes[available]
+
+    if closes.loc[params.start_date : params.end_date].empty:
+        raise ValueError(
+            f"no price data between {params.start_date} and {params.end_date}"
+        )
+
+    cost = _cost_model(params.assumed_fee_tier)
+    result = engine.run(
+        opens,
+        closes,
+        cost,
+        vol_target=params.vol_target,
+        start=params.start_date,
+        end=params.end_date,
+    )
+
+    capital = float(params.starting_capital)
+    equity = result.equity * capital
+    bench = _benchmark(closes, result.equity.index) * capital
+    dd = 1 - equity / equity.cummax()
+
+    primary = available[0]
+    points = [
+        BacktestPoint(
+            timestamp=day.date().isoformat(),
+            equity=Decimal(str(round(equity[day], 2))),
+            benchmark_equity=Decimal(str(round(bench[day], 2))),
+            drawdown=round(float(dd[day]), 6),
+            asset_price=Decimal(str(round(closes.loc[day, primary], 2))),
+        )
+        for day in result.equity.index
+    ]
+
+    years = len(equity) / engine.ANN
+    cagr = (equity.iloc[-1] / equity.iloc[0]) ** (1 / years) - 1
+    benchmark_cagr = (bench.iloc[-1] / bench.iloc[0]) ** (1 / years) - 1
+
+    sells = [t for t in result.trades if t["side"] == "SELL"]
+    wins = sum(1 for t in sells if t["pnl"] > 0)
+
+    trades = [
+        BacktestTrade(
+            date=t["date"].date().isoformat(),
+            asset=t["symbol"],
+            side=t["side"],
+            size=Decimal(str(round(t["size"] * capital, 8))),
+            price=Decimal(str(round(t["price"], 2))),
+            pnl=Decimal(str(round(t["pnl"] * capital, 2))),
+            fee=Decimal(str(round(t["fee"] * capital, 2))),
+        )
+        for t in result.trades
+    ]
+
+    return BacktestResult(
+        summary_metrics=BacktestSummaryMetrics(
+            cagr=round(float(cagr), 6),
+            benchmark_cagr=round(float(benchmark_cagr), 6),
+            max_drawdown=round(float(dd.max()), 6),
+            total_trades=len(trades),
+            win_rate=round(wins / len(sells), 6) if sells else 0.0,
+            total_fees_paid=Decimal(
+                str(round(sum(t["fee"] for t in result.trades) * capital, 2))
+            ),
+        ),
+        timeseries_data=points,
+        trade_log=trades,
+    )

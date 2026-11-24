@@ -9,7 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -304,6 +304,18 @@ class BacktestParams(BaseModel):
     vol_target: float = 0.40
     drawdown_limit: float = 0.35
     extra_params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def _iso_date(cls, v: str) -> str:
+        date.fromisoformat(v)
+        return v
+
+    @model_validator(mode="after")
+    def _ordered_dates(self) -> "BacktestParams":
+        if date.fromisoformat(self.start_date) >= date.fromisoformat(self.end_date):
+            raise ValueError("start_date must be before end_date")
+        return self
 
 
 class BacktestSummaryMetrics(BaseModel):

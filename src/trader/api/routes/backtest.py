@@ -26,19 +26,18 @@ POINTS = 12
 
 def _mock_result(params: BacktestParams) -> BacktestResult:
     capital = params.starting_capital
-    try:
-        start = date.fromisoformat(params.start_date)
-        end = date.fromisoformat(params.end_date)
-    except ValueError:
-        start = end = date(1970, 1, 1)
-    span = max((end - start).days, 0)
+    start = date.fromisoformat(params.start_date)
+    end = date.fromisoformat(params.end_date)
+    span = (end - start).days
 
     points: list[BacktestPoint] = []
+    peak = capital
     for i in range(POINTS):
         frac = i / (POINTS - 1)
         # Fixed path: 8% total growth with a mid-window dip, benchmark 5%.
         dip = 0.10 * frac * (1 - frac) * 4
         equity = capital * (1 + 0.08 * frac - dip)
+        peak = max(peak, equity)
         benchmark = capital * (1 + 0.05 * frac)
         day = start.fromordinal(start.toordinal() + round(span * frac))
         points.append(
@@ -46,7 +45,7 @@ def _mock_result(params: BacktestParams) -> BacktestResult:
                 timestamp=day.isoformat(),
                 equity=equity,
                 benchmark_equity=benchmark,
-                drawdown=dip,
+                drawdown=1 - equity / peak,
                 asset_price=50000.0 * (1 + 0.06 * frac),
             )
         )
@@ -74,8 +73,8 @@ def _mock_result(params: BacktestParams) -> BacktestResult:
 
     return BacktestResult(
         summary_metrics=BacktestSummaryMetrics(
-            cagr=0.08,
-            benchmark_cagr=0.05,
+            cagr=1.08 ** (365 / span) - 1,
+            benchmark_cagr=1.05 ** (365 / span) - 1,
             max_drawdown=max(p.drawdown for p in points),
             total_trades=len(trades),
             win_rate=0.5,

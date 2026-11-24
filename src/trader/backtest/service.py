@@ -5,6 +5,7 @@ the requested starting capital, with an equal-weight buy-and-hold benchmark.
 """
 
 import os
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
@@ -101,12 +102,12 @@ def execute_backtest(params: BacktestParams) -> BacktestResult:
     # the reported window. The engine still sees the full frame above for
     # warmup (weights are computed over all of `closes` before slicing).
     first = cast(pd.Timestamp | None, closes[available[0]].first_valid_index())
-    if first is None or first.strftime("%Y-%m-%d") > params.end_date:
+    if first is None or first.date() > date.fromisoformat(params.end_date):
         raise ValueError(
             f"no price data for {available[0]} between "
             f"{params.start_date} and {params.end_date}"
         )
-    start = max(params.start_date, first.strftime("%Y-%m-%d"))
+    start = max(date.fromisoformat(params.start_date), first.date()).isoformat()
 
     cost = _cost_model(params.assumed_fee_tier)
     result = engine.run(

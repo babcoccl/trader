@@ -584,3 +584,43 @@ def test_four_assets_quarter_weights_and_per_asset_rounding(
     order = plan.entry_orders[0]
     assert Decimal(order["price"]).as_tuple().exponent == -3
     assert Decimal(order["quantity"]).as_tuple().exponent == -5
+
+
+def test_cross_sectional_momentum_coinbase(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec W1.2a: TRADER_STRATEGY=cross_sectional_momentum sizes with the
+    Run 5 parameters and records the strategy; TRADER_VENUE=coinbase makes
+    proposed plans use the Coinbase tier-1 fee estimate."""
+    from trader.core.config import get_settings
+
+    monkeypatch.setenv("TRADER_STRATEGY", "cross_sectional_momentum")
+    monkeypatch.setenv("TRADER_VENUE", "coinbase")
+    get_settings.cache_clear()
+
+    # Ramp both assets so momentum is positive and BTC clears its SMA-50 gate.
+    _ramp_daily_closes(session, "BTC-USD", days=80)
+    _ramp_daily_closes(session, "ETH-USD", days=80)
+    clock = FrozenClock(datetime(2026, 11, 20, 0, 5, tzinfo=UTC))
+    _fresh_5m(session, clock.now())
+    equity = Decimal("10000")
+    portfolio = daily_cycle.CashOnlyPortfolio(
+        equity_usd=equity, weights={"BTC-USD": 0.0, "ETH-USD": 0.0}
+    )
+    try:
+        rows = daily_cycle.run(session, clock, portfolio)
+        session.commit()
+    finally:
+        get_settings.cache_clear()
+
+    assert len(rows) == 2
+    for r in rows:
+        assert r.details["strategy"] == "cross_sectional_momentum"
+    plans = list(session.scalars(select(Plan)))
+    assert plans, "expected at least one proposed plan"
+    for plan in plans:
+        notional = abs(float(plan.target_weight) - 0.0) * float(equity)
+        expected = (Decimal(str(notional)) * Decimal("0.0061") * 2).quantize(
+            Decimal("1e-18")
+        )
+        assert plan.est_fees == expected

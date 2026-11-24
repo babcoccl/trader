@@ -17,18 +17,20 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol
 
+import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from trader.backtest.costs import BITSTAMP
+from trader.backtest.costs import BITSTAMP, COINBASE_TIER_1
 from trader.core.clock import Clock
+from trader.core.config import get_settings
 from trader.data import candles as candles_mod
 from trader.data.sources.base import ASSETS, SYMBOLS
 from trader.ledger.models import Candle, Decision, Signal
 from trader.plans import builder
 from trader.risk import engine as risk_engine
 from trader.risk.limits import Limits
-from trader.strategy import ensemble, regime, rules, sizing, sleeves
+from trader.strategy import ensemble, momentum, regime, rules, sizing, sleeves
 
 log = logging.getLogger(__name__)
 
@@ -133,6 +135,8 @@ def run(
     if existing:
         return existing
 
+    settings = get_settings()
+    strategy = settings.strategy
     per_asset: dict[str, dict[str, Any]] = {}
     for symbol in SYMBOLS:
         df = candles_mod.load(
@@ -154,7 +158,10 @@ def run(
                 symbol=symbol,
                 action="blocked",
                 reason=reason,
-                details={"missing_day": yesterday.date().isoformat()},
+                details={
+                    "missing_day": yesterday.date().isoformat(),
+                    "strategy": strategy,
+                },
             )
             session.add(row)
             session.flush()
@@ -171,6 +178,7 @@ def run(
             "vol": vol,
             "k": sum(1 for v in rule_values.values() if v == 1.0),
             "last_close": close.iloc[-1],
+            "close": close,
             "levels": rules.levels(close),
             # Recorded and shown only (spec G1): never enters sizing,
             # should_trade, the plan builder or the risk check.
@@ -203,17 +211,48 @@ def run(
                 )
             )
 
-    weights = sizing.target_weights(
-        {s: a["signal"] for s, a in per_asset.items()},
-        {s: a["vol"] for s, a in per_asset.items()},
-        vol_target=VOL_TARGET,
-    )
-    # Spec G2: the target is the sum of the sleeves allowed in each asset's
-    # regime. The trend sleeve trades in every regime, so these weights are
-    # the same numbers sizing produced; nothing after `target` changes.
-    combined = sleeves.combine(
-        {"trend": weights},
-        {s: a["regime"] for s, a in per_asset.items()},
+    if strategy == "cross_sectional_momentum":
+        # Spec W1.2a (Run 5): 60d lookback, top 3, 0.55 vol target, 0.30 band,
+        # BTC SMA-50 gate.
+        band = 0.30
+        closes = pd.DataFrame({s: a["close"] for s, a in per_asset.items()})
+        weights = momentum.target_weights(
+            closes, vol_target=0.55, lookback_days=60, top_k=3, btc_gate=True
+        )
+        combined = sleeves.Combined(
+            weights=weights,
+            parts={
+                s: [
+                    sleeves.SleevePart(
+                        name="cross_sectional_momentum",
+                        allowed=True,
+                        proposed=w,
+                        weight=w,
+                    )
+                ]
+                for s, w in weights.items()
+            },
+        )
+    else:
+        band = BAND
+        weights = sizing.target_weights(
+            {s: a["signal"] for s, a in per_asset.items()},
+            {s: a["vol"] for s, a in per_asset.items()},
+            vol_target=VOL_TARGET,
+        )
+        # Spec G2: the target is the sum of the sleeves allowed in each
+        # asset's regime. The trend sleeve trades in every regime, so these
+        # weights are the same numbers sizing produced.
+        combined = sleeves.combine(
+            {"trend": weights},
+            {s: a["regime"] for s, a in per_asset.items()},
+        )
+    # Venue-aware fee estimate for proposed plans (spec W1.2a).
+    cost = COINBASE_TIER_1 if settings.venue == "coinbase" else BITSTAMP
+    # Cash a buy can spend: equity not already held. Sizes plans so the
+    # notional plus the fill's fee never exceeds it.
+    cash_usd = portfolio.equity_usd * Decimal(
+        str(max(0.0, 1.0 - sum(portfolio.weights.values())))
     )
     limits = Limits.load(session)
     risk_state = risk_engine.state(session, clock)
@@ -237,7 +276,7 @@ def run(
             f"{a['regime'].text()}. "
             f"Target {target:.0%}, holding {current:.0%}."
         )
-        if sizing.should_trade(target, current, band=BAND):
+        if sizing.should_trade(target, current, band=band):
             side = "buy" if target > current else "sell"
             action = "plan_proposed"
             reason = f"{prefix} Proposing a plan to {side} the difference."
@@ -246,7 +285,7 @@ def run(
             reason = f"{prefix} No change."
         else:
             action = "none"
-            reason = f"{prefix} Gap is under the 20% trading band, so no trade."
+            reason = f"{prefix} Gap is under the {band:.0%} trading band, so no trade."
         decision = Decision(
             cycle="daily",
             ran_at=now,
@@ -256,6 +295,7 @@ def run(
             action=action,
             reason=reason,
             details={
+                "strategy": strategy,
                 "rules": {n: _finite(v) for n, v in a["rules"].items()},
                 "last_close": _finite(float(a["last_close"])),
                 "levels": {n: _finite(v) for n, v in a["levels"].items()},
@@ -285,11 +325,13 @@ def run(
                 portfolio.equity_usd,
                 plan_price,
                 a["vol"],
-                BITSTAMP,
+                cost,
                 clock,
                 rules_positive=a["k"],
                 tick=ASSETS[symbol].tick,
                 lot=ASSETS[symbol].lot,
+                band=band,
+                cash_usd=cash_usd,
             )
             if plan is not None:
                 verdict = risk_engine.check_plan(plan, portfolio, limits, risk_state)

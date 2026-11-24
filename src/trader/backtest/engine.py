@@ -7,6 +7,7 @@ trading band, with ``taker_fee + slippage`` charged on traded notional.
 
 import math
 from dataclasses import dataclass, field
+from typing import Literal, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -46,6 +47,18 @@ def _target_weights(closes: pd.DataFrame, vol_target: float) -> pd.DataFrame:
     return w
 
 
+class TradeFill(TypedDict):
+    """One executed fill, in normalized (capital=1) units."""
+
+    date: pd.Timestamp
+    symbol: str
+    side: Literal["BUY", "SELL"]
+    size: float
+    price: float
+    pnl: float
+    fee: float
+
+
 @dataclass
 class BacktestResult:
     """Daily series produced by ``run`` plus summary statistics."""
@@ -54,6 +67,9 @@ class BacktestResult:
     weights: pd.DataFrame
     turnover: pd.Series
     exposure: pd.Series = field(repr=False)
+    # Fills captured at the open: date, symbol, side, size (units), price,
+    # realized pnl (avg-cost basis), fee — all in normalized (capital=1) terms.
+    trades: list["TradeFill"] = field(default_factory=list, repr=False)
 
     def stats(
         self, start: str | None = None, end: str | None = None
@@ -104,6 +120,8 @@ def run(
     turnover = pd.Series(0.0, index=idx)
     exposure = pd.Series(index=idx, dtype=float)
     fee_rate = cost.taker_fee + cost.slippage
+    trades: list[TradeFill] = []
+    basis = {s: 0.0 for s in symbols}
 
     for day in idx:
         o = opens.loc[day].astype(float)
@@ -117,8 +135,38 @@ def run(
                 traded += abs(t - cur) * e
                 new_units[s] = t * e / o[s]
         if traded > 0:
+            fee_paid = traded * fee_rate
+            for s in symbols:
+                cur = units[s] * o[s] / e
+                t = float(tgt.loc[day, s])
+                if not sizing.should_trade(t, cur, band):
+                    continue
+                notional = abs(t - cur) * e
+                qty = notional / o[s]
+                side: Literal["BUY", "SELL"]
+                if t > cur:
+                    side, pnl = "BUY", 0.0
+                    prev_units = units[s]
+                    basis[s] = (basis[s] * prev_units + notional) / (prev_units + qty)
+                else:
+                    side = "SELL"
+                    qty = min(qty, units[s])
+                    pnl = (o[s] - basis[s]) * qty
+                    if units[s] - qty <= 1e-12:
+                        basis[s] = 0.0
+                trades.append(
+                    {
+                        "date": day,
+                        "symbol": s,
+                        "side": side,
+                        "size": qty,
+                        "price": o[s],
+                        "pnl": pnl,
+                        "fee": fee_paid * notional / traded,
+                    }
+                )
             units = new_units
-            cash = e - traded * fee_rate - sum(units[s] * o[s] for s in symbols)
+            cash = e - fee_paid - sum(units[s] * o[s] for s in symbols)
             turnover[day] = traded / e
         c = closes.loc[day].astype(float)
         value = sum(units[s] * c[s] for s in symbols)
@@ -126,5 +174,9 @@ def run(
         exposure[day] = value / equity[day] if equity[day] != 0 else np.nan
 
     return BacktestResult(
-        equity=equity, weights=tgt, turnover=turnover, exposure=exposure
+        equity=equity,
+        weights=tgt,
+        turnover=turnover,
+        exposure=exposure,
+        trades=trades,
     )

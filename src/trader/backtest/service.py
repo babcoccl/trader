@@ -55,12 +55,18 @@ def _cost_model(tier: str) -> CostModel:
 def _benchmark(closes: pd.DataFrame, idx: pd.Index) -> pd.Series:
     """Equal-weight buy-and-hold of the frame's assets, normalized to 1.
 
-    Daily-rebalanced equal weight: each day compounds the mean return of
-    the assets with prices that day, so a late listing joins via its own
-    returns instead of jumping the level.
+    Each asset is bought at its own first listed close with an equal share
+    of the starting capital; its allocation sits as cash (1.0) until then.
     """
-    ret = closes.loc[idx].pct_change(fill_method=None)
-    return (1.0 + ret.mean(axis=1).fillna(0.0)).cumprod()
+    frame = closes.loc[idx]
+    base = frame.apply(
+        lambda c: (
+            c.loc[c.first_valid_index()]
+            if c.first_valid_index() is not None
+            else float("nan")
+        )
+    )
+    return (frame / base).fillna(1.0).mean(axis=1)
 
 
 def execute_backtest(params: BacktestParams) -> BacktestResult:
@@ -90,24 +96,27 @@ def execute_backtest(params: BacktestParams) -> BacktestResult:
             f"no price data between {params.start_date} and {params.end_date}"
         )
 
+    # The run starts at the primary asset's first listed day, so every
+    # reported point has a finite asset_price and no fills happen outside
+    # the reported window. The engine still sees the full frame above for
+    # warmup (weights are computed over all of `closes` before slicing).
+    first = cast(pd.Timestamp | None, closes[available[0]].first_valid_index())
+    if first is None or first.strftime("%Y-%m-%d") > params.end_date:
+        raise ValueError(
+            f"no price data for {available[0]} between "
+            f"{params.start_date} and {params.end_date}"
+        )
+    start = max(params.start_date, first.strftime("%Y-%m-%d"))
+
     cost = _cost_model(params.assumed_fee_tier)
     result = engine.run(
         opens,
         closes,
         cost,
         vol_target=params.vol_target,
-        start=params.start_date,
+        start=start,
         end=params.end_date,
     )
-
-    # Report only days where the primary asset trades, so every point's
-    # asset_price is finite. Pre-primary days still fed the engine's
-    # warmup above.
-    first_idx = closes[available[0]].first_valid_index()
-    if first_idx is not None:
-        first = cast(pd.Timestamp, first_idx)
-        result.equity = result.equity.loc[first:]
-        result.trades = [t for t in result.trades if t["date"] >= first]
 
     capital = float(params.starting_capital)
     equity = result.equity * capital

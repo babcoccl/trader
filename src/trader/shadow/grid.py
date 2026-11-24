@@ -235,7 +235,6 @@ def run(session: Session, clock: Clock) -> None:
     cursors: dict[str, datetime] = {}
     on_by_symbol: dict[str, bool] = {}
     held: dict[str, dict[int, ShadowTrade]] = {}
-    events: list[tuple[datetime, str, Bar]] = []
     for symbol in active:
         row = _load_row(session, symbol)
         stored = dict(row.state) if row is not None else {}
@@ -278,38 +277,35 @@ def run(session: Session, clock: Clock) -> None:
                 Lot(level=level, entry_price=float(trade.entry_price))
             )
             held[symbol][level] = trade
-        for idx, r in data.bars_after(session, symbol, cursor, now).iterrows():
-            open_time = cast(datetime, idx)  # index is open_time (timestamptz)
-            events.append(
-                (
-                    open_time,
-                    symbol,
-                    Bar(
-                        open=float(r["open"]),
-                        high=float(r["high"]),
-                        low=float(r["low"]),
-                        close=float(r["close"]),
-                    ),
-                )
-            )
 
-    # Valuation is independent of the cursors: every symbol's closes over
-    # the replay window, plus a MAX_PRICE_AGE lead-in, come from
-    # ``data.bars_after`` even where that symbol's cursor already covered
-    # them. All closes of a timestamp apply before its actions, and a
-    # close counts only while fresh, the rule ``data.price`` uses.
-    events.sort(key=lambda event: (event[0], event[1]))
+    # One ``data.bars_after`` frame per symbol feeds both the actions
+    # (bars after that symbol's cursor) and the valuation (every close
+    # from the earliest cursor, plus a MAX_PRICE_AGE lead-in), so both
+    # read the same de-duplicated candle. Valuation ignores the cursors:
+    # a close another run already processed still prices that symbol.
+    # All closes of a timestamp apply before its actions, and a close
+    # counts only while fresh, the rule ``data.price`` uses.
     period = timedelta(seconds=period_seconds("5m"))
     by_time: dict[datetime, list[tuple[str, Bar]]] = {}
-    for open_time, symbol, candle in events:
-        by_time.setdefault(open_time, []).append((symbol, candle))
     closes: dict[datetime, dict[str, Decimal]] = {}
-    if events:
-        lead_in = events[0][0] - data.MAX_PRICE_AGE - period
+    if cursors:
+        lead_in = min(cursors.values()) - data.MAX_PRICE_AGE - period
         for s in active:
-            frame = data.bars_after(session, s, lead_in, now)
-            for idx, close in frame["close"].items():
-                closes.setdefault(cast(datetime, idx), {})[s] = Decimal(str(close))
+            for idx, r in data.bars_after(session, s, lead_in, now).iterrows():
+                open_time = cast(datetime, idx)  # index is open_time
+                closes.setdefault(open_time, {})[s] = Decimal(str(r["close"]))
+                if s in cursors and open_time > cursors[s]:
+                    by_time.setdefault(open_time, []).append(
+                        (
+                            s,
+                            Bar(
+                                open=float(r["open"]),
+                                high=float(r["high"]),
+                                low=float(r["low"]),
+                                close=float(r["close"]),
+                            ),
+                        )
+                    )
     last_seen: dict[str, tuple[datetime, Decimal]] = {}
     for open_time in sorted(closes.keys() | by_time.keys()):
         for s, close in closes.get(open_time, {}).items():

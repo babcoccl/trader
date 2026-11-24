@@ -106,8 +106,10 @@ def execute_backtest(params: BacktestParams) -> BacktestResult:
     ]
 
     years = len(equity) / engine.ANN
-    cagr = (equity.iloc[-1] / equity.iloc[0]) ** (1 / years) - 1
-    benchmark_cagr = (bench.iloc[-1] / bench.iloc[0]) ** (1 / years) - 1
+    # Baseline is cash at the first open (normalized 1.0): the first fill can
+    # trade at that open, so day-1 P&L belongs inside the CAGR.
+    cagr = result.equity.iloc[-1] ** (1 / years) - 1
+    benchmark_cagr = (bench.iloc[-1] / capital) ** (1 / years) - 1
 
     sells = [t for t in result.trades if t["side"] == "SELL"]
     wins = sum(1 for t in sells if t["pnl"] > 0)

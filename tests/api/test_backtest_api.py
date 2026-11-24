@@ -134,13 +134,18 @@ def test_run_partial_universe_graceful(client: TestClient) -> None:
 
 def test_run_duplicate_assets_ok(client: TestClient) -> None:
     _login(client)
-    r = client.post(
+    dup = client.post(
         "/api/backtests/run",
         json={"asset_universe": ["BTC-USD", "BTC-USD", "ETH-USD"]},
     )
-    assert r.status_code == 200
-    result = BacktestResult.model_validate(r.json())
-    assert all(t.asset in ("BTC-USD", "ETH-USD") for t in result.trade_log)
+    assert dup.status_code == 200
+    deduped = client.post(
+        "/api/backtests/run",
+        json={"asset_universe": ["BTC-USD", "ETH-USD"]},
+    )
+    assert deduped.status_code == 200
+    # Dedupe makes the requests identical end to end
+    assert dup.json() == deduped.json()
 
 
 def test_run_nonpositive_vol_target_400(client: TestClient) -> None:

@@ -52,9 +52,21 @@ def _cost_model(tier: str) -> CostModel:
 
 
 def _benchmark(closes: pd.DataFrame, idx: pd.Index) -> pd.Series:
-    """Equal-weight buy-and-hold of the frame's assets, normalized to 1."""
-    rel = closes.loc[idx] / closes.loc[idx].iloc[0]
-    return rel.mean(axis=1)
+    """Equal-weight buy-and-hold of the frame's assets, normalized to 1.
+
+    Each column is scaled by its own first listed close, so an asset that
+    lists mid-run joins the benchmark at its listing day instead of being
+    dropped by a NaN day-0 base.
+    """
+    frame = closes.loc[idx]
+    base = frame.apply(
+        lambda c: (
+            c.loc[c.first_valid_index()]
+            if c.first_valid_index() is not None
+            else float("nan")
+        )
+    )
+    return (frame / base).mean(axis=1)
 
 
 def execute_backtest(params: BacktestParams) -> BacktestResult:
@@ -72,10 +84,11 @@ def execute_backtest(params: BacktestParams) -> BacktestResult:
     opens = opens[available]
     closes = closes[available]
 
-    # Drop leading rows where every requested asset lacks a price.
-    # Per-asset pre-listing NaNs stay NaN: the engine gives them weight 0,
+    # Keep only days where the primary asset has a price (also drops any
+    # leading all-NaN rows): every returned point reports its close. Other
+    # assets' pre-listing NaNs stay NaN — the engine gives them weight 0,
     # never trades them, and warmup accrues only on real prices.
-    has_price = closes.notna().any(axis=1)
+    has_price = closes[available[0]].notna()
     opens = opens[has_price]
     closes = closes[has_price]
 

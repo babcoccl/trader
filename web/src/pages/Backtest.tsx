@@ -12,6 +12,15 @@ import {
 } from "recharts";
 import { pct, usd } from "../lib/time";
 
+function usdCents(value: number): string {
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 interface BacktestSummaryMetrics {
   cagr: number;
   benchmark_cagr: number;
@@ -148,7 +157,7 @@ export function Backtest() {
               value={String(s.total_trades)}
               sub={`win rate ${pct(s.win_rate)}`}
             />
-            <StatCard title="Total Fees Paid" value={usd(s.total_fees_paid)} />
+            <StatCard title="Total Fees Paid" value={usdCents(s.total_fees_paid)} />
           </div>
 
           <div className="card">
@@ -220,8 +229,8 @@ export function Backtest() {
                       <td>{t.side}</td>
                       <td>{t.size}</td>
                       <td>{usd(t.price)}</td>
-                      <td>{usd(t.pnl)}</td>
-                      <td>${t.fee.toFixed(2)}</td>
+                      <td>{usdCents(t.pnl)}</td>
+                      <td>{usdCents(t.fee)}</td>
                     </tr>
                   ))}
                 </tbody>

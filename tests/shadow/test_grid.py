@@ -308,6 +308,74 @@ def test_replayed_buy_is_priced_as_of_its_bar(engine, session) -> None:
     assert float(buy.cost_usd) == pytest.approx(float(expected), rel=1e-9)
 
 
+def _seed_replay_buy(
+    session: Session, eth_bars: list[tuple[datetime, float, float, float, float]]
+) -> Decimal:
+    """Seed decisions and candles, set the cursors, then hold a $500
+    ETH lot. ``eth_bars`` are (open_time, open, high, low, close) bars.
+    Returns the lot's quantity."""
+    _seed_decisions(session)
+    t0 = NOW - timedelta(minutes=5)
+    add_bar(session, "BTC-USD", t0, 100, 100, 99, 100)
+    for open_time, open_, high, low, close in eth_bars:
+        add_bar(session, "ETH-USD", open_time, open_, high, low, close)
+    session.commit()
+    run(session, FrozenClock(NOW))  # sets the cursors
+    held = book.buy(
+        session,
+        "grid",
+        "ETH-USD",
+        t0,
+        Decimal("100"),
+        Decimal("500"),
+        BITSTAMP.maker_fee,
+        0.0,
+        details={"level": 0},
+    )
+    session.commit()
+    return held.quantity
+
+
+def _replay_btc_dip(session: Session, now: datetime) -> Decimal:
+    """Replay one BTC bar dipping through the grid; return the spend
+    of the level-0 buy it books (the first buy, sized on full cash)."""
+    add_bar(session, "BTC-USD", now - timedelta(minutes=5), 100, 100, 94, 100)
+    session.commit()
+    run(session, FrozenClock(now))
+    buy = next(
+        t
+        for t in session.scalars(
+            select(ShadowTrade).where(ShadowTrade.sleeve == "grid")
+        )
+        if t.symbol == "BTC-USD" and t.details["level"] == 0
+    )
+    return buy.cost_usd
+
+
+def test_same_timestamp_close_prices_a_replayed_buy(engine, session) -> None:
+    # ETH has a candle on the same boundary as the BTC buy: its close
+    # counts even though BTC sorts first alphabetically.
+    qty = _seed_replay_buy(
+        session,
+        [
+            (NOW - timedelta(minutes=5), 104, 104, 99, 104),
+            (NOW + timedelta(minutes=5), 100, 100, 95, 110),
+        ],
+    )
+    spend = _replay_btc_dip(session, NOW + timedelta(minutes=10))
+    expected = (Decimal("9500") + qty * Decimal("110")) / Decimal(2 * LOTS)
+    assert float(spend) == pytest.approx(float(expected), rel=1e-9)
+
+
+def test_pre_replay_close_prices_a_replayed_buy(engine, session) -> None:
+    # ETH's only candle is at or before its cursor: the buy is still
+    # sized at its close, not the lot's entry price.
+    qty = _seed_replay_buy(session, [(NOW - timedelta(minutes=5), 104, 104, 99, 104)])
+    spend = _replay_btc_dip(session, NOW + timedelta(minutes=10))
+    expected = (Decimal("9500") + qty * Decimal("104")) / Decimal(2 * LOTS)
+    assert float(spend) == pytest.approx(float(expected), rel=1e-9)
+
+
 # --- fee arithmetic of one round trip (spec G5 test 4).
 
 

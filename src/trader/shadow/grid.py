@@ -9,9 +9,11 @@ a note only — never an order.
 ``run`` keeps a cursor in ``shadow_state``; after downtime it replays
 every stored candle since that cursor under the *current* reading, not
 the reading each candle closed under. Both symbols' candles are merged
-in open-time order so a replayed buy is sized from each symbol's close
-as of that bar, never a later one; the daily mark still prices the book
-at the freshest closes. A level counts as filled when a bar trades
+in open-time order and each replayed buy is sized from each symbol's
+close as of that bar — candles on the same boundary count together,
+and symbols with no candle in the window are priced at their latest
+close before it; the daily mark still prices the book at the freshest
+closes. A level counts as filled when a bar trades
 ``THROUGH`` beyond it, which is more generous than a real order queue.
 """
 
@@ -186,6 +188,43 @@ def _save_row(
     session.flush()
 
 
+def _close_at_or_before(
+    session: Session, symbol: str, open_time: datetime
+) -> Decimal | None:
+    """Close of the newest stored 5-minute candle opened at or before
+    ``open_time`` — the as-of seed for candles the cursor skipped."""
+    latest = session.scalar(
+        select(func.max(Candle.open_time)).where(
+            Candle.symbol == symbol,
+            Candle.interval == "5m",
+            Candle.open_time <= open_time,
+        )
+    )
+    if latest is None:
+        return None
+    # Same dedup rule as ``data.price``: the source covering the most
+    # bars wins.
+    rows = session.scalars(
+        select(Candle).where(
+            Candle.symbol == symbol,
+            Candle.interval == "5m",
+            Candle.open_time == latest,
+        )
+    ).all()
+    if len(rows) == 1:
+        return rows[0].close
+    counts = session.execute(
+        select(Candle.source, func.count())
+        .where(Candle.symbol == symbol, Candle.interval == "5m")
+        .group_by(Candle.source)
+    ).all()
+    preferred = max(counts, key=lambda row: row[1])[0]
+    for r in rows:
+        if r.source == preferred:
+            return r.close
+    return rows[0].close
+
+
 def _code(symbol: str) -> str:
     return symbol.split("-")[0]
 
@@ -292,48 +331,66 @@ def run(session: Session, clock: Clock) -> None:
                 )
             )
 
-    # ``asof`` holds each symbol's newest close so far: chronological
-    # order makes it the price as of the bar being processed.
+    # ``asof`` holds each symbol's newest close so far. Seed it with the
+    # latest close at or before the first replayed bar — a symbol can
+    # hold lots while contributing no candle to this replay — then apply
+    # every close of a timestamp before any of its actions: candles on
+    # the same boundary close at the same time.
     asof: dict[str, Decimal] = {}
     events.sort(key=lambda event: (event[0], event[1]))
-    for open_time, symbol, candle in events:
-        trade_time = open_time + timedelta(seconds=period_seconds("5m"))
-        asof[symbol] = Decimal(str(candle.close))
-        state = states[symbol]
-        lots = open_lots[symbol]
-        for action in step(state, lots, candle, on_by_symbol[symbol]):
-            if action.kind == "sell":
-                book.sell(
+    if events:
+        first = events[0][0]
+        asof = {
+            s: close
+            for s in active
+            if (close := _close_at_or_before(session, s, first)) is not None
+        }
+    i = 0
+    while i < len(events):
+        j = i
+        while j < len(events) and events[j][0] == events[i][0]:
+            j += 1
+        group = events[i:j]
+        i = j
+        for _, group_symbol, group_candle in group:
+            asof[group_symbol] = Decimal(str(group_candle.close))
+        for open_time, symbol, candle in group:
+            trade_time = open_time + timedelta(seconds=period_seconds("5m"))
+            state = states[symbol]
+            lots = open_lots[symbol]
+            for action in step(state, lots, candle, on_by_symbol[symbol]):
+                if action.kind == "sell":
+                    book.sell(
+                        session,
+                        held[symbol].pop(action.level),
+                        trade_time,
+                        Decimal(str(action.price)),
+                        action.fee_rate,
+                        action.slippage,
+                        action.reason,
+                    )
+                    lots = [lot for lot in lots if lot.level != action.level]
+                    open_lots[symbol] = lots
+                    continue
+                summary = book.summary(session, NAME, asof)
+                spend = min(summary.equity / (2 * LOTS), summary.cash)
+                if spend < MIN_LOT_USD:
+                    continue
+                trade = book.buy(
                     session,
-                    held[symbol].pop(action.level),
+                    NAME,
+                    symbol,
                     trade_time,
                     Decimal(str(action.price)),
+                    spend,
                     action.fee_rate,
                     action.slippage,
-                    action.reason,
+                    details={"level": action.level},
                 )
-                lots = [lot for lot in lots if lot.level != action.level]
-                open_lots[symbol] = lots
-                continue
-            summary = book.summary(session, NAME, asof)
-            spend = min(summary.equity / (2 * LOTS), summary.cash)
-            if spend < MIN_LOT_USD:
-                continue
-            trade = book.buy(
-                session,
-                NAME,
-                symbol,
-                trade_time,
-                Decimal(str(action.price)),
-                spend,
-                action.fee_rate,
-                action.slippage,
-                details={"level": action.level},
-            )
-            lots.append(Lot(level=action.level, entry_price=action.price))
-            held[symbol][action.level] = trade
-        cursors[symbol] = open_time
-        last_close[symbol] = candle.close
+                lots.append(Lot(level=action.level, entry_price=action.price))
+                held[symbol][action.level] = trade
+            cursors[symbol] = open_time
+            last_close[symbol] = candle.close
 
     for symbol, row in rows.items():
         st = states[symbol]

@@ -7,6 +7,7 @@ the requested starting capital, with an equal-weight buy-and-hold benchmark.
 import os
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 
@@ -54,19 +55,12 @@ def _cost_model(tier: str) -> CostModel:
 def _benchmark(closes: pd.DataFrame, idx: pd.Index) -> pd.Series:
     """Equal-weight buy-and-hold of the frame's assets, normalized to 1.
 
-    Each column is scaled by its own first listed close, so an asset that
-    lists mid-run joins the benchmark at its listing day instead of being
-    dropped by a NaN day-0 base.
+    Daily-rebalanced equal weight: each day compounds the mean return of
+    the assets with prices that day, so a late listing joins via its own
+    returns instead of jumping the level.
     """
-    frame = closes.loc[idx]
-    base = frame.apply(
-        lambda c: (
-            c.loc[c.first_valid_index()]
-            if c.first_valid_index() is not None
-            else float("nan")
-        )
-    )
-    return (frame / base).mean(axis=1)
+    ret = closes.loc[idx].pct_change(fill_method=None)
+    return (1.0 + ret.mean(axis=1).fillna(0.0)).cumprod()
 
 
 def execute_backtest(params: BacktestParams) -> BacktestResult:
@@ -84,11 +78,10 @@ def execute_backtest(params: BacktestParams) -> BacktestResult:
     opens = opens[available]
     closes = closes[available]
 
-    # Keep only days where the primary asset has a price (also drops any
-    # leading all-NaN rows): every returned point reports its close. Other
-    # assets' pre-listing NaNs stay NaN — the engine gives them weight 0,
-    # never trades them, and warmup accrues only on real prices.
-    has_price = closes[available[0]].notna()
+    # Drop only leading rows where every requested asset lacks a price —
+    # the engine still needs the full history for warmup. Pre-listing NaNs
+    # stay NaN: weight 0, never traded, warmup on real prices only.
+    has_price = closes.notna().any(axis=1)
     opens = opens[has_price]
     closes = closes[has_price]
 
@@ -106,6 +99,15 @@ def execute_backtest(params: BacktestParams) -> BacktestResult:
         start=params.start_date,
         end=params.end_date,
     )
+
+    # Report only days where the primary asset trades, so every point's
+    # asset_price is finite. Pre-primary days still fed the engine's
+    # warmup above.
+    first_idx = closes[available[0]].first_valid_index()
+    if first_idx is not None:
+        first = cast(pd.Timestamp, first_idx)
+        result.equity = result.equity.loc[first:]
+        result.trades = [t for t in result.trades if t["date"] >= first]
 
     capital = float(params.starting_capital)
     equity = result.equity * capital

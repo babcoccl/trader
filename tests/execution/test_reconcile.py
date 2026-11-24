@@ -211,6 +211,69 @@ def test_crypto_difference_without_price_alarms(db) -> None:
     assert [a.key for a in alarms] == ["ledger_vs_venue"]
 
 
+def test_coinbase_venue_uses_coinbase_adapter(db, monkeypatch) -> None:
+    """TRADER_VENUE=coinbase routes the default adapter to Coinbase."""
+    from trader.execution import reconcile
+
+    monkeypatch.setenv("TRADER_VENUE", "coinbase")
+    get_settings.cache_clear()
+    calls: list[str] = []
+    fake = FakeAdapter({}, [])
+
+    def coinbase_from_env(*args: Any, **kwargs: Any) -> FakeAdapter:
+        calls.append("coinbase")
+        return fake
+
+    def bitstamp_from_env(*args: Any, **kwargs: Any) -> FakeAdapter:
+        calls.append("bitstamp")
+        return fake
+
+    monkeypatch.setattr(
+        reconcile.CoinbaseAdvancedAdapter, "from_env", coinbase_from_env
+    )
+    monkeypatch.setattr(reconcile.BitstampAdapter, "from_env", bitstamp_from_env)
+    assert run(db, _clock(), mode="live") == []
+    assert calls == ["coinbase"]
+
+
+def test_bitstamp_venue_uses_bitstamp_adapter(db, monkeypatch) -> None:
+    """Default/bitstamp venue still routes to BitstampAdapter."""
+    from trader.execution import reconcile
+
+    monkeypatch.delenv("TRADER_VENUE", raising=False)
+    get_settings.cache_clear()
+    calls: list[str] = []
+    fake = FakeAdapter({}, [])
+    monkeypatch.setattr(
+        reconcile.CoinbaseAdvancedAdapter,
+        "from_env",
+        lambda *args, **kwargs: calls.append("coinbase") or fake,
+    )
+    monkeypatch.setattr(
+        reconcile.BitstampAdapter,
+        "from_env",
+        lambda *args, **kwargs: calls.append("bitstamp") or fake,
+    )
+    assert run(db, _clock(), mode="live") == []
+    assert calls == ["bitstamp"]
+
+
+def test_coinbase_from_env_failure_is_venue_unreachable(db, monkeypatch) -> None:
+    """A CoinbaseAdvancedAdapter.from_env failure alarms venue_unreachable."""
+    from trader.execution import reconcile
+
+    monkeypatch.setenv("TRADER_VENUE", "coinbase")
+    get_settings.cache_clear()
+
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("missing TRADER_COINBASE_KEY")
+
+    monkeypatch.setattr(reconcile.CoinbaseAdvancedAdapter, "from_env", broken)
+    alarms = run(db, _clock(), mode="live")
+    assert [a.key for a in alarms] == ["venue_unreachable"]
+    assert "missing TRADER_COINBASE_KEY" in alarms[0].message
+
+
 def test_venue_unreachable_alarms(db) -> None:
     class DeadAdapter(FakeAdapter):
         def __init__(self) -> None:

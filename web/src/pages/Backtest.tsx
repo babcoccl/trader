@@ -145,6 +145,7 @@ export function Backtest() {
         </div>
 
         <div className="backtest-layout__results">
+          <p className="muted">Sample results: placeholder data until the backtest API is wired up.</p>
           <div className="stat-grid">
             <StatCard
               title="Net CAGR"

@@ -324,6 +324,15 @@ Each spec lists: Goal, Depends on, Files, Interfaces, Steps, Tests, Done when, O
 - **Tests:** flatten is impossible without the typed word; a settings edit calls `PUT` and shows the audited value.
 - **Done when:** tests pass; halt and flatten work end to end in paper mode in the running stack; screenshots in the PR.
 
+### 3.5b Backtest screen
+
+- **Goal:** a Backtest tab where the user pastes backtest parameters as JSON and reviews results; the UI shell lands before the backtest API exists, so results come from a bundled `MOCK_BACKTEST_RESULT` clearly labeled as sample data.
+- **Depends on:** 3.1, 3.2. **Files:** `web/src/pages/Backtest.tsx`, tests, shared layout classes in `web/src/styles.css`.
+- **Interfaces:** a "Backtest" tab in `App.tsx`. Left panel (~30%): JSON `<textarea>` prefilled with `DEFAULT_PARAMS_JSON` and a "Run Backtest" button that validates JSON syntax — invalid input shows an inline error, valid input reloads the mock result. Right panel (~70%): four stat cards (Net CAGR with benchmark subtitle, Max Drawdown, Total Trades with win-rate subtitle, Total Fees Paid), a recharts `LineChart` of `equity` vs `benchmark_equity` over `timestamp`, an `AreaChart` of `drawdown`, and a trade-log table (Date, Asset, Side, Size, Price, PnL, Fee). Typed `BacktestResult` interfaces (`summary_metrics`, `timeseries_data`, `trade_log`) match the shape the backtest engine will return. Money fields render to cents.
+- **Tests:** the page renders the textarea, run button, KPI cards and trade log; invalid JSON shows an inline error.
+- **Done when:** tests pass; `npm run build` is clean.
+- **Out of scope:** calling the real backtest API (spec 1.3), running a backtest, editing parameters beyond raw JSON.
+
 ### 3.6 Mobile-width pass
 
 - **Depends on:** 3.2 to 3.5. **Files:** CSS and layout changes only.

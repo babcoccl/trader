@@ -208,6 +208,28 @@ def test_run_cross_sectional_momentum(client: TestClient) -> None:
     assert 0.0 <= m.max_drawdown <= 1.0
 
 
+def test_run_ping_pong_subsidy(client: TestClient) -> None:
+    _login(client)
+    r = client.post(
+        "/api/backtests/run",
+        json={
+            "strategy_sleeve": "ping_pong_subsidy",
+            "asset_universe": ["BTC-USD", "ETH-USD", "SOL-USD"],
+            "start_date": "2023-01-01",
+            "end_date": "2024-12-31",
+            "starting_capital": 10000.0,
+            "extra_params": {"target_tier_volume": 10000.0},
+        },
+    )
+    assert r.status_code == 200
+    result = BacktestResult.model_validate(r.json())
+    assert len(result.timeseries_data) > 700
+    m = result.summary_metrics
+    assert -1.0 < m.cagr < 10.0
+    assert 0.0 <= m.max_drawdown <= 1.0
+    assert m.total_fees_paid >= 0
+
+
 def test_run_unknown_strategy_sleeve_400(client: TestClient) -> None:
     _login(client)
     r = client.post(

@@ -19,7 +19,7 @@ from trader.api.schemas import (
     BacktestSummaryMetrics,
     BacktestTrade,
 )
-from trader.backtest import engine
+from trader.backtest import engine, subsidy
 from trader.backtest.costs import CostModel
 from trader.backtest.sleeves import cross_sectional_momentum_weights
 
@@ -43,6 +43,20 @@ FEE_TIER_BPS = {
     "coinbase_tier_3": 15,
 }
 SLIPPAGE = 0.0001
+
+
+def _load_fixture_ohlc(
+    path: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load the fixture's opens, highs, lows and closes indexed by date."""
+    d = pd.read_csv(path, parse_dates=["date"]).set_index("date")
+    symbols = [c[: -len("_open")] for c in d.columns if c.endswith("_open")]
+    frames = []
+    for field in ("open", "high", "low", "close"):
+        f = d[[f"{s}_{field}" for s in symbols]]
+        f.columns = symbols
+        frames.append(f)
+    return frames[0], frames[1], frames[2], frames[3]
 
 
 def _cost_model(tier: str) -> CostModel:
@@ -149,6 +163,42 @@ def execute_backtest(params: BacktestParams) -> BacktestResult:
             band=band,
             start=start,
             end=params.end_date,
+        )
+    elif params.strategy_sleeve == "ping_pong_subsidy":
+        try:
+            band = float(extra.get("band", 0.20))
+            target_tier_volume = float(extra.get("target_tier_volume", 10_000.0))
+            daily_booster_cap_usd = float(extra.get("daily_booster_cap_usd", 2_000.0))
+            spread_capture_bps = float(extra.get("spread_capture_bps", 10.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid extra_params override: {exc}") from exc
+        o, h, low, c = _load_fixture_ohlc(str(FIXTURE))
+        o, h, low, c = o[available], h[available], low[available], c[available]
+        has_price = c.notna().any(axis=1)
+        o, h, low, c = o[has_price], h[has_price], low[has_price], c[has_price]
+        alpha_sleeve = extra.get("alpha_sleeve", "cross_sectional_momentum")
+        if alpha_sleeve == "cross_sectional_momentum":
+            alpha_weights = cross_sectional_momentum_weights(
+                c, vol_target=params.vol_target
+            )
+        elif alpha_sleeve == "trend_momentum":
+            alpha_weights = engine._target_weights(c, params.vol_target)
+        else:
+            raise ValueError(f"unknown alpha_sleeve {alpha_sleeve!r}")
+        result = subsidy.run_with_ping_pong_subsidy(
+            o,
+            h,
+            low,
+            c,
+            alpha_weights,
+            float(params.starting_capital),
+            start,
+            params.end_date,
+            band=band,
+            slippage=SLIPPAGE,
+            target_tier_volume=target_tier_volume,
+            daily_booster_cap_usd=daily_booster_cap_usd,
+            spread_capture_bps=spread_capture_bps,
         )
     else:
         raise ValueError(f"unknown strategy_sleeve {params.strategy_sleeve!r}")

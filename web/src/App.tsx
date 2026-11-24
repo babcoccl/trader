@@ -4,6 +4,7 @@ import { ApiError, api } from "./api/client";
 import { StatusStrip } from "./components/StatusStrip";
 import { Activity } from "./pages/Activity";
 import { Approvals } from "./pages/Approvals";
+import { Backtest } from "./pages/Backtest";
 import { Controls } from "./pages/Controls";
 import { Overview } from "./pages/Overview";
 import { Positions } from "./pages/Positions";
@@ -11,7 +12,7 @@ import { Reports } from "./pages/Reports";
 import { Rules } from "./pages/Rules";
 import { Shadow } from "./pages/Shadow";
 
-const TABS = ["Overview", "Approvals", "Rules", "Shadow", "Positions", "Activity", "Reports", "Controls"] as const;
+const TABS = ["Overview", "Approvals", "Rules", "Shadow", "Positions", "Activity", "Reports", "Backtest", "Controls"] as const;
 type Tab = (typeof TABS)[number];
 
 function ComingSoon({ name }: { name: string }) {
@@ -106,6 +107,8 @@ export function App() {
           <Activity />
         ) : tab === "Reports" ? (
           <Reports />
+        ) : tab === "Backtest" ? (
+          <Backtest />
         ) : tab === "Controls" ? (
           <Controls />
         ) : (

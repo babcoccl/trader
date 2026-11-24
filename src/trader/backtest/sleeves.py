@@ -22,6 +22,8 @@ def cross_sectional_momentum_weights(
     BTC trades at or below its 50-day SMA. Selected assets share weight
     equally, scaled by ``min(1, vol_target / vol)``, gross capped at 1.
     """
+    if lookback_days <= 0:
+        raise ValueError(f"lookback_days must be positive, got {lookback_days}")
     symbols = list(closes.columns)
     rets = closes / closes.shift(lookback_days) - 1.0
     vols = pd.DataFrame(

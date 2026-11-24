@@ -61,6 +61,38 @@ ASSETS: dict[str, Asset] = {
         Decimal("0.00000001"),
         datetime(2019, 1, 1, tzinfo=UTC),
     ),
+    "DOGE-USD": Asset(
+        "DOGE-USD",
+        "dogeusd",
+        "DOGE-USD",
+        Decimal("0.00001"),
+        Decimal("1"),
+        datetime(2022, 12, 21, tzinfo=UTC),
+    ),
+    "ADA-USD": Asset(
+        "ADA-USD",
+        "adausd",
+        "ADA-USD",
+        Decimal("0.0001"),
+        Decimal("0.1"),
+        datetime(2021, 1, 1, tzinfo=UTC),
+    ),
+    "AVAX-USD": Asset(
+        "AVAX-USD",
+        "avaxusd",
+        "AVAX-USD",
+        Decimal("0.01"),
+        Decimal("0.01"),
+        datetime(2022, 1, 1, tzinfo=UTC),
+    ),
+    "LINK-USD": Asset(
+        "LINK-USD",
+        "linkusd",
+        "LINK-USD",
+        Decimal("0.001"),
+        Decimal("0.01"),
+        datetime(2021, 1, 1, tzinfo=UTC),
+    ),
 }
 
 

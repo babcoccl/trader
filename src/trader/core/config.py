@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BASELINE_SYMBOLS = ("BTC-USD", "ETH-USD")
@@ -21,12 +21,17 @@ class Settings(BaseSettings):
     live_enabled: bool = False
     log_level: str = "INFO"
     dashboard_password: str = ""
-    # Comma-separated assets, e.g. "BTC-USD,ETH-USD,SOL-USD,XRP-USD".
+    # Comma-separated assets, e.g. "BTC-USD,ETH-USD,SOL-USD,XRP-USD"; eight
+    # assets are supported (see data.sources.base.ASSETS).
     symbols: str = "BTC-USD,ETH-USD"
     # Live venue credentials (spec 5.2); read-only until live_enabled.
+    venue: Literal["bitstamp", "coinbase"] = "bitstamp"
     bitstamp_key: str = ""
     bitstamp_secret: str = ""
     bitstamp_base_url: str = "https://www.bitstamp.net/api/v2"
+    coinbase_key: str = Field(default="", repr=False)
+    coinbase_secret: str = Field(default="", repr=False)
+    coinbase_base_url: str = "https://api.coinbase.com"
 
     @property
     def symbol_list(self) -> tuple[str, ...]:
@@ -41,14 +46,6 @@ class Settings(BaseSettings):
                 "(the comparison baselines)"
             )
         return parts
-
-    @model_validator(mode="after")
-    def _live_supports_baseline_only(self) -> "Settings":
-        if self.mode == "live" and any(
-            s not in _BASELINE_SYMBOLS for s in self.symbol_list
-        ):
-            raise ValueError("live mode supports only BTC-USD and ETH-USD")
-        return self
 
 
 @lru_cache

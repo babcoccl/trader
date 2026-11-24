@@ -32,6 +32,10 @@ services:
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LOG_LEVEL: INFO
       TRADER_SYMBOLS: ${TRADER_SYMBOLS:-BTC-USD,ETH-USD}
+      TRADER_VENUE: ${TRADER_VENUE:-bitstamp}
+      TRADER_COINBASE_KEY: ${TRADER_COINBASE_KEY:-}
+      TRADER_COINBASE_SECRET: ${TRADER_COINBASE_SECRET:-}
+      TRADER_COINBASE_BASE_URL: ${TRADER_COINBASE_BASE_URL:-https://api.coinbase.com}
       # Dashboard password; comes from the host environment or .env.
       TRADER_DASHBOARD_PASSWORD: ${TRADER_DASHBOARD_PASSWORD:-}
     ports:
@@ -78,6 +82,10 @@ services:
       TRADER_MODE: ${TRADER_MODE:-paper}
       TRADER_LOG_LEVEL: INFO
       TRADER_SYMBOLS: ${TRADER_SYMBOLS:-BTC-USD,ETH-USD}
+      TRADER_VENUE: ${TRADER_VENUE:-bitstamp}
+      TRADER_COINBASE_KEY: ${TRADER_COINBASE_KEY:-}
+      TRADER_COINBASE_SECRET: ${TRADER_COINBASE_SECRET:-}
+      TRADER_COINBASE_BASE_URL: ${TRADER_COINBASE_BASE_URL:-https://api.coinbase.com}
     depends_on:
       db:
         condition: service_healthy

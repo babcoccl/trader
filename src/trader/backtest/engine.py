@@ -125,10 +125,12 @@ def run(
 
     for day in idx:
         o = opens.loc[day].astype(float)
-        e = cash + sum(units[s] * o[s] for s in symbols)
+        e = cash + sum(units[s] * o[s] for s in symbols if not math.isnan(o[s]))
         traded = 0.0
         new_units = dict(units)
         for s in symbols:
+            if math.isnan(o[s]):  # not yet listed: weight 0, never traded
+                continue
             cur = units[s] * o[s] / e
             t = float(tgt.loc[day, s])
             if sizing.should_trade(t, cur, band):
@@ -137,6 +139,8 @@ def run(
         if traded > 0:
             fee_paid = traded * fee_rate
             for s in symbols:
+                if math.isnan(o[s]):
+                    continue
                 cur = units[s] * o[s] / e
                 t = float(tgt.loc[day, s])
                 if not sizing.should_trade(t, cur, band):
@@ -166,10 +170,14 @@ def run(
                     }
                 )
             units = new_units
-            cash = e - fee_paid - sum(units[s] * o[s] for s in symbols)
+            cash = (
+                e
+                - fee_paid
+                - sum(units[s] * o[s] for s in symbols if not math.isnan(o[s]))
+            )
             turnover[day] = traded / e
         c = closes.loc[day].astype(float)
-        value = sum(units[s] * c[s] for s in symbols)
+        value = sum(units[s] * c[s] for s in symbols if not math.isnan(c[s]))
         equity[day] = cash + value
         exposure[day] = value / equity[day] if equity[day] != 0 else np.nan
 

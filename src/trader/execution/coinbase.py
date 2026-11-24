@@ -209,8 +209,17 @@ class CoinbaseAdvancedAdapter:
             except CoinbaseError as e:
                 if "POST_ONLY" in str(e) and order.type == "limit":
                     # Post-only rejection: the limit would have crossed.
-                    # Re-quote at the new best bid (buy) or ask (sell).
+                    # Re-quote at the new best bid (buy) or ask (sell),
+                    # never past the submitted limit price.
+                    assert order.price is not None
+                    limit = _round_down(order.price, rules.tick)
                     price = self._maker_price(order, product)
+                    if (order.side == "buy" and price > limit) or (
+                        order.side == "sell" and price < limit
+                    ):
+                        raise CoinbaseError(
+                            "post-only re-quote would cross the submitted limit price"
+                        ) from e
                     continue
                 raise
             break
@@ -368,12 +377,22 @@ class CoinbaseAdvancedAdapter:
         return out
 
     def _fills_for_order(self, order: Order) -> list[dict[str, Any]]:
-        payload = self._request(
-            "GET",
-            "/api/v3/brokerage/orders/historical/fills",
-            {"order_ids": order.venue_order_id},
-        )
-        return list(payload.get("fills") or [])
+        """Every fill the venue reports for the order, paging until the
+        cursor is exhausted — a terminal order may hold more than one
+        page and never polls again once closed."""
+        rows: list[dict[str, Any]] = []
+        params: dict[str, Any] = {"order_ids": order.venue_order_id}
+        while True:
+            payload = self._request(
+                "GET",
+                "/api/v3/brokerage/orders/historical/fills",
+                params,
+            )
+            rows.extend(payload.get("fills") or [])
+            cursor = payload.get("cursor")
+            if not cursor:
+                return rows
+            params["cursor"] = cursor
 
     def _make_fill(self, order: Order, row: dict[str, Any]) -> Fill:
         quote = order.symbol.split("-", 1)[1]

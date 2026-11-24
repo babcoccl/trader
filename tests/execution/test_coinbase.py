@@ -357,6 +357,37 @@ def test_place_post_only_rejection_gives_up(live_env) -> None:
         adapter.place(_order(price=Decimal("49501.50")))
 
 
+def test_place_post_only_requote_never_crosses_limit(live_env) -> None:
+    """If the book moves so the best bid sits above the submitted limit,
+    the re-quote is refused instead of buying higher than approved."""
+    rejected = {
+        "success": False,
+        "error_response": {"error": "INVALID_LIMIT_PRICE_POST_ONLY"},
+    }
+
+    def http_call(method, url, headers, body):
+        if method == "POST":
+            return rejected
+        path = url.split("?")[0]
+        if path.endswith("products/BTC-USD"):
+            return PRODUCT
+        return {
+            "pricebooks": [
+                {"bids": [{"price": "99999.00"}], "asks": [{"price": "99999.50"}]}
+            ]
+        }
+
+    adapter = CoinbaseAdvancedAdapter(
+        _SessionStub(),
+        "organizations/test-org/apiKeys/test-key-id",
+        _ec_private_key_pem(),
+        clock=FrozenClock(NOW),
+        http=http_call,
+    )
+    with pytest.raises(CoinbaseError, match="cross the submitted limit"):
+        adapter.place(_order(price=Decimal("49000")))
+
+
 def test_place_error_raises(live_env) -> None:
     http = FakeHttp(
         gets={"products/BTC-USD": PRODUCT},
@@ -679,6 +710,43 @@ def test_poll_fills_marks_cancelled(db) -> None:
     adapter = _adapter(http, session=db)
     assert adapter.poll_fills(NOW) == []
     assert order.status == "cancelled"
+
+
+def test_poll_fills_pages_until_cursor_exhausted(db) -> None:
+    order = _db_order(db, quantity=Decimal("0.004"))
+    pages = iter(
+        [
+            {"fills": [FILLS["fills"][0]], "cursor": "page2"},
+            {
+                "fills": [
+                    dict(
+                        FILLS["fills"][0],
+                        trade_time="2026-11-24T10:02:00Z",
+                    )
+                ]
+            },
+        ]
+    )
+
+    def http_call(method, url, headers, body):
+        http.calls.append((method, url, headers, body))
+        if "historical/fills" in url:
+            return next(pages)
+        if "historical/batch" in url:
+            return BATCH_FILLED
+        raise AssertionError(url)
+
+    http = FakeHttp()
+    adapter = CoinbaseAdvancedAdapter(
+        db,
+        "organizations/test-org/apiKeys/test-key-id",
+        _ec_private_key_pem(),
+        clock=FrozenClock(NOW),
+        http=http_call,
+    )
+    out = adapter.poll_fills(NOW)
+    assert len(out) == 2
+    assert order.status == "filled"
 
 
 def test_poll_fills_cancelled_with_partial_fill(db) -> None:

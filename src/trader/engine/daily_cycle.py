@@ -135,6 +135,8 @@ def run(
     if existing:
         return existing
 
+    settings = get_settings()
+    strategy = settings.strategy
     per_asset: dict[str, dict[str, Any]] = {}
     for symbol in SYMBOLS:
         df = candles_mod.load(
@@ -156,7 +158,10 @@ def run(
                 symbol=symbol,
                 action="blocked",
                 reason=reason,
-                details={"missing_day": yesterday.date().isoformat()},
+                details={
+                    "missing_day": yesterday.date().isoformat(),
+                    "strategy": strategy,
+                },
             )
             session.add(row)
             session.flush()
@@ -206,8 +211,6 @@ def run(
                 )
             )
 
-    settings = get_settings()
-    strategy = settings.strategy
     if strategy == "cross_sectional_momentum":
         # Spec W1.2a (Run 5): 60d lookback, top 3, 0.55 vol target, 0.30 band,
         # BTC SMA-50 gate.

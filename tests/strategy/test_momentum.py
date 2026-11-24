@@ -106,6 +106,20 @@ def test_btc_gap_does_not_zero_gate() -> None:
     assert w["ETH-USD"] > 0.0
 
 
+def test_all_nan_btc_returns_zeros() -> None:
+    """A BTC column that is all NaN (or NaN at the latest close) leaves the
+    gate unevaluable: every weight is 0.0, not an exception."""
+    closes = _closes({"BTC-USD": 0.004, "ETH-USD": 0.003})
+    closes["BTC-USD"] = np.nan
+    w = momentum.target_weights(closes)
+    assert w == {"BTC-USD": 0.0, "ETH-USD": 0.0}
+
+    closes = _closes({"BTC-USD": 0.004, "ETH-USD": 0.003})
+    closes.iloc[-1, closes.columns.get_loc("BTC-USD")] = np.nan
+    w = momentum.target_weights(closes)
+    assert w == {"BTC-USD": 0.0, "ETH-USD": 0.0}
+
+
 def test_empty_frame() -> None:
     closes = pd.DataFrame({"BTC-USD": []})
     assert momentum.target_weights(closes) == {"BTC-USD": 0.0}

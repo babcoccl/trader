@@ -38,9 +38,15 @@ def target_weights(
     if w.empty:
         return {s: 0.0 for s in closes.columns}
     if btc_gate and "BTC-USD" in closes.columns:
-        btc = closes["BTC-USD"].dropna()
-        gate_ok = bool(btc.iloc[-1] > btc.rolling(50).mean().iloc[-1])
-        if not gate_ok:
+        raw = closes["BTC-USD"]
+        btc = raw.dropna()
+        # All-NaN column, NaN latest close, or too few days for the SMA:
+        # the gate cannot be evaluated, so hold nothing.
+        if (
+            btc.empty
+            or pd.isna(raw.iloc[-1])
+            or not btc.iloc[-1] > btc.rolling(50).mean().iloc[-1]
+        ):
             return {s: 0.0 for s in closes.columns}
     latest = w.iloc[-1]
     return {s: float(latest[s]) for s in closes.columns}

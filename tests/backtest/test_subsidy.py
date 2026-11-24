@@ -147,6 +147,21 @@ def test_booster_cannot_bankrupt() -> None:
     assert (result.equity >= 0).all()
     assert math.isfinite(result.equity.iloc[-1])
 
+    # Even a $5 bankroll keeps equity strictly positive (NaN-safe drawdowns).
+    tiny = run_with_ping_pong_subsidy(
+        opens,
+        highs,
+        lows,
+        closes,
+        _zero_weights(closes),
+        5.0,
+        "2024-01-01",
+        "2024-04-30",
+        target_tier_volume=10_000.0,
+        daily_booster_cap_usd=2_000.0,
+    )
+    assert (tiny.equity > 0).all()
+
 
 def test_result_is_normalized() -> None:
     opens, highs, lows, closes = _sideways()

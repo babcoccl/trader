@@ -150,7 +150,9 @@ def run_with_ping_pong_subsidy(
             # portfolio cannot be driven below zero.
             edge = (spread_capture_bps / 10_000) - maker_fee
             if edge < 0:
-                boost_usd = min(boost_usd, cash * starting_capital / -edge)
+                # 99% cap: cash stays strictly positive even after rounding,
+                # so equity never reaches 0 (NaN drawdown/CAGR downstream).
+                boost_usd = min(boost_usd, 0.99 * cash * starting_capital / -edge)
             if boost_usd > 0:
                 net_booster_pnl = boost_usd * edge
                 cash += net_booster_pnl / starting_capital

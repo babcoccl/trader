@@ -115,7 +115,7 @@ def test_run_unavailable_asset_400(client: TestClient) -> None:
     _login(client)
     r = client.post(
         "/api/backtests/run",
-        json={"asset_universe": ["DOGE-USD", "SOL-USD"]},
+        json={"asset_universe": ["FAKE-USD", "NOPE-USD"]},
     )
     assert r.status_code == 400
     assert "assets" in r.json()["detail"]
@@ -146,6 +146,24 @@ def test_run_duplicate_assets_ok(client: TestClient) -> None:
     assert deduped.status_code == 200
     # Dedupe makes the requests identical end to end
     assert dup.json() == deduped.json()
+
+
+def test_run_multi_asset_2023_2024(client: TestClient) -> None:
+    _login(client)
+    r = client.post(
+        "/api/backtests/run",
+        json={
+            "asset_universe": ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD"],
+            "start_date": "2023-01-01",
+            "end_date": "2024-12-31",
+        },
+    )
+    assert r.status_code == 200
+    result = BacktestResult.model_validate(r.json())
+    assert len(result.timeseries_data) > 700
+    assets = {t.asset for t in result.trade_log}
+    assert assets <= {"BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD"}
+    assert len(assets) > 1
 
 
 def test_run_nonpositive_vol_target_400(client: TestClient) -> None:

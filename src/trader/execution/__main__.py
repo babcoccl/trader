@@ -45,6 +45,7 @@ from trader.core.logging import setup as setup_logging
 from trader.data.sources.base import SYMBOLS
 from trader.execution.base import LIMIT_TTL, ExecutionAdapter
 from trader.execution.bitstamp import BitstampAdapter
+from trader.execution.coinbase import CoinbaseAdvancedAdapter
 from trader.execution.paper import PRIMARY_SOURCE, PaperAdapter
 from trader.ledger import accounting
 from trader.ledger.models import (
@@ -121,6 +122,8 @@ class Executor:
             return PaperAdapter(session, self._cost, self._clock, mode)
         if self._live_adapter is not None:
             return self._live_adapter(session, mode)
+        if get_settings().venue == "coinbase":
+            return CoinbaseAdvancedAdapter.from_env(session, self._clock, mode)
         return BitstampAdapter.from_env(session, self._clock, mode)
 
     # -- loop ---------------------------------------------------------------

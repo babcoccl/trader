@@ -13,7 +13,7 @@ import {
 } from "recharts";
 import { ApiError, api } from "../api/client";
 import type { BacktestParams } from "../api/client";
-import { pct, usd } from "../lib/time";
+import { pct } from "../lib/time";
 
 function usdCents(value: number): string {
   return value.toLocaleString("en-US", {
@@ -198,7 +198,7 @@ export function Backtest() {
                           <td>{t.asset}</td>
                           <td>{t.side}</td>
                           <td>{Number(t.size)}</td>
-                          <td>{usd(Number(t.price))}</td>
+                          <td>{usdCents(Number(t.price))}</td>
                           <td>{usdCents(Number(t.pnl))}</td>
                           <td>{usdCents(Number(t.fee))}</td>
                         </tr>

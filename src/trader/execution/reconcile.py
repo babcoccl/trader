@@ -22,6 +22,7 @@ from trader.core.config import get_settings
 from trader.data.sources.base import SYMBOLS
 from trader.execution.base import ExecutionAdapter
 from trader.execution.bitstamp import BitstampAdapter
+from trader.execution.coinbase import CoinbaseAdvancedAdapter
 from trader.ledger import accounting
 from trader.ledger.models import Candle, Order
 from trader.ops.watchdog import Alarm
@@ -61,11 +62,13 @@ def run(
     mode: str | None = None,
 ) -> list[Alarm]:
     """One reconcile pass; returns the alarms that hold right now."""
-    del clock  # kept for symmetry with the watchdog's call signature
     mode = mode or get_settings().mode
     if adapter is None:
         try:
-            adapter = BitstampAdapter.from_env(session, mode=mode)
+            if get_settings().venue == "coinbase":
+                adapter = CoinbaseAdvancedAdapter.from_env(session, clock, mode=mode)
+            else:
+                adapter = BitstampAdapter.from_env(session, mode=mode)
         except Exception as exc:
             return [
                 Alarm(
@@ -134,14 +137,18 @@ def run(
         o.venue_order_id
         for o in session.scalars(
             select(Order)
-            .where(Order.venue == "bitstamp", Order.mode == mode)
+            .where(
+                Order.venue == getattr(adapter, "venue", "bitstamp"),
+                Order.mode == mode,
+            )
             .where(Order.status.in_(_OPEN_STATUSES), Order.shadow.is_(False))
         )
         if o.venue_order_id
     }
     try:
         theirs = {
-            str(o["id"]) for o in getattr(adapter, "venue_open_orders", lambda: [])()
+            str(o.get("order_id") or o["id"])
+            for o in getattr(adapter, "venue_open_orders", lambda: [])()
         }
     except Exception as exc:
         return alarms + [

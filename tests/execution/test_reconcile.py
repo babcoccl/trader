@@ -140,10 +140,10 @@ def _order(session: Session, **kw: Any) -> Order:
     )
     session.add(plan)
     session.flush()
+    defaults = {"venue": "bitstamp", "venue_order_id": "1458532827766784"}
+    defaults.update(kw)
     order = Order(
         plan_id=plan.id,
-        venue="bitstamp",
-        venue_order_id="1458532827766784",
         client_order_id="1-1",
         symbol="BTC-USD",
         side="buy",
@@ -152,7 +152,7 @@ def _order(session: Session, **kw: Any) -> Order:
         quantity=Decimal("0.002"),
         status="open",
         mode="live",
-        **kw,
+        **defaults,
     )
     session.add(order)
     session.commit()
@@ -209,6 +209,78 @@ def test_crypto_difference_without_price_alarms(db) -> None:
     adapter = FakeAdapter({"USD": Decimal("1000"), "BTC": Decimal("0.00000001")}, [])
     alarms = run(db, _clock(), adapter=adapter, mode="live")
     assert [a.key for a in alarms] == ["ledger_vs_venue"]
+
+
+def test_coinbase_venue_uses_coinbase_adapter(db, monkeypatch) -> None:
+    """TRADER_VENUE=coinbase routes the default adapter to Coinbase."""
+    from trader.execution import reconcile
+
+    monkeypatch.setenv("TRADER_VENUE", "coinbase")
+    get_settings.cache_clear()
+    calls: list[str] = []
+    fake = FakeAdapter({}, [])
+
+    def coinbase_from_env(*args: Any, **kwargs: Any) -> FakeAdapter:
+        calls.append("coinbase")
+        return fake
+
+    def bitstamp_from_env(*args: Any, **kwargs: Any) -> FakeAdapter:
+        calls.append("bitstamp")
+        return fake
+
+    monkeypatch.setattr(
+        reconcile.CoinbaseAdvancedAdapter, "from_env", coinbase_from_env
+    )
+    monkeypatch.setattr(reconcile.BitstampAdapter, "from_env", bitstamp_from_env)
+    assert run(db, _clock(), mode="live") == []
+    assert calls == ["coinbase"]
+
+
+def test_bitstamp_venue_uses_bitstamp_adapter(db, monkeypatch) -> None:
+    """Default/bitstamp venue still routes to BitstampAdapter."""
+    from trader.execution import reconcile
+
+    monkeypatch.delenv("TRADER_VENUE", raising=False)
+    get_settings.cache_clear()
+    calls: list[str] = []
+    fake = FakeAdapter({}, [])
+    monkeypatch.setattr(
+        reconcile.CoinbaseAdvancedAdapter,
+        "from_env",
+        lambda *args, **kwargs: calls.append("coinbase") or fake,
+    )
+    monkeypatch.setattr(
+        reconcile.BitstampAdapter,
+        "from_env",
+        lambda *args, **kwargs: calls.append("bitstamp") or fake,
+    )
+    assert run(db, _clock(), mode="live") == []
+    assert calls == ["bitstamp"]
+
+
+def test_coinbase_from_env_failure_is_venue_unreachable(db, monkeypatch) -> None:
+    """A CoinbaseAdvancedAdapter.from_env failure alarms venue_unreachable."""
+    from trader.execution import reconcile
+
+    monkeypatch.setenv("TRADER_VENUE", "coinbase")
+    get_settings.cache_clear()
+
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("missing TRADER_COINBASE_KEY")
+
+    monkeypatch.setattr(reconcile.CoinbaseAdvancedAdapter, "from_env", broken)
+    alarms = run(db, _clock(), mode="live")
+    assert [a.key for a in alarms] == ["venue_unreachable"]
+    assert "missing TRADER_COINBASE_KEY" in alarms[0].message
+
+
+def test_coinbase_orders_compared_by_venue_and_order_id(db) -> None:
+    """Coinbase adapter orders match on order_id, not id."""
+    accounting.deposit(db, "live", Decimal("1000"), FrozenClock(NOW))
+    _order(db, venue="coinbase", venue_order_id="cb-123")
+    adapter = FakeAdapter({"USD": Decimal("1000")}, [{"order_id": "cb-123"}])
+    adapter.venue = "coinbase"
+    assert run(db, _clock(), adapter=adapter, mode="live") == []
 
 
 def test_venue_unreachable_alarms(db) -> None:

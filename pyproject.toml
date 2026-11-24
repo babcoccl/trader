@@ -37,6 +37,9 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"trader.backtest" = ["data/*.csv"]
+
 [tool.ruff]
 target-version = "py312"
 src = ["src"]

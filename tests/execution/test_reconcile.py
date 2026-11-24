@@ -140,10 +140,10 @@ def _order(session: Session, **kw: Any) -> Order:
     )
     session.add(plan)
     session.flush()
+    defaults = {"venue": "bitstamp", "venue_order_id": "1458532827766784"}
+    defaults.update(kw)
     order = Order(
         plan_id=plan.id,
-        venue="bitstamp",
-        venue_order_id="1458532827766784",
         client_order_id="1-1",
         symbol="BTC-USD",
         side="buy",
@@ -152,7 +152,7 @@ def _order(session: Session, **kw: Any) -> Order:
         quantity=Decimal("0.002"),
         status="open",
         mode="live",
-        **kw,
+        **defaults,
     )
     session.add(order)
     session.commit()
@@ -272,6 +272,15 @@ def test_coinbase_from_env_failure_is_venue_unreachable(db, monkeypatch) -> None
     alarms = run(db, _clock(), mode="live")
     assert [a.key for a in alarms] == ["venue_unreachable"]
     assert "missing TRADER_COINBASE_KEY" in alarms[0].message
+
+
+def test_coinbase_orders_compared_by_venue_and_order_id(db) -> None:
+    """Coinbase adapter orders match on order_id, not id."""
+    accounting.deposit(db, "live", Decimal("1000"), FrozenClock(NOW))
+    _order(db, venue="coinbase", venue_order_id="cb-123")
+    adapter = FakeAdapter({"USD": Decimal("1000")}, [{"order_id": "cb-123"}])
+    adapter.venue = "coinbase"
+    assert run(db, _clock(), adapter=adapter, mode="live") == []
 
 
 def test_venue_unreachable_alarms(db) -> None:

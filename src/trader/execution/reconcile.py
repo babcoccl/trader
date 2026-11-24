@@ -137,14 +137,18 @@ def run(
         o.venue_order_id
         for o in session.scalars(
             select(Order)
-            .where(Order.venue == "bitstamp", Order.mode == mode)
+            .where(
+                Order.venue == getattr(adapter, "venue", "bitstamp"),
+                Order.mode == mode,
+            )
             .where(Order.status.in_(_OPEN_STATUSES), Order.shadow.is_(False))
         )
         if o.venue_order_id
     }
     try:
         theirs = {
-            str(o["id"]) for o in getattr(adapter, "venue_open_orders", lambda: [])()
+            str(o.get("order_id") or o["id"])
+            for o in getattr(adapter, "venue_open_orders", lambda: [])()
         }
     except Exception as exc:
         return alarms + [

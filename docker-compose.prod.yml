@@ -87,6 +87,8 @@ services:
       TRADER_LIVE_ENABLED: ${TRADER_LIVE_ENABLED:-false}
       TRADER_LOG_LEVEL: ${TRADER_LOG_LEVEL:-INFO}
       TRADER_SYMBOLS: ${TRADER_SYMBOLS:-BTC-USD,ETH-USD}
+      TRADER_STRATEGY: ${TRADER_STRATEGY:-trend}
+      TRADER_VENUE: ${TRADER_VENUE:-bitstamp}
     depends_on:
       db:
         condition: service_healthy

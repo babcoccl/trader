@@ -59,15 +59,16 @@ def build(
     rules_positive: int,
     tick: Decimal,
     lot: Decimal,
+    band: float = 0.20,
 ) -> Plan | None:
     """Build the plan that moves ``symbol`` from current to target weight.
 
     ``price`` is the current best bid for a buy (the limit price), the
     reference market price for a sell. ``rules_positive`` and ``annual_vol``
     go into the rationale. Returns ``None`` when ``sizing.should_trade``
-    is false.
+    is false at ``band``.
     """
-    if not sizing.should_trade(target_weight, current_weight):
+    if not sizing.should_trade(target_weight, current_weight, band=band):
         return None
 
     target = Decimal(str(target_weight))

@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # Comma-separated assets, e.g. "BTC-USD,ETH-USD,SOL-USD,XRP-USD"; eight
     # assets are supported (see data.sources.base.ASSETS).
     symbols: str = "BTC-USD,ETH-USD"
+    # Strategy the daily cycle sizes: the default "trend" keeps the existing
+    # 9-rule ensemble; "cross_sectional_momentum" is the validated Run 5
+    # strategy (spec W1.2a).
+    strategy: Literal["trend", "cross_sectional_momentum"] = "trend"
     # Live venue credentials (spec 5.2); read-only until live_enabled.
     venue: Literal["bitstamp", "coinbase"] = "bitstamp"
     bitstamp_key: str = ""

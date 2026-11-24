@@ -27,28 +27,27 @@ POINTS = 12
 
 def _mock_result(params: BacktestParams) -> BacktestResult:
     capital = params.starting_capital
-    curve = float(capital)
     start = date.fromisoformat(params.start_date)
     end = date.fromisoformat(params.end_date)
     span = (end - start).days
 
     points: list[BacktestPoint] = []
-    peak = curve
+    peak = capital
     for i in range(POINTS):
-        frac = i / (POINTS - 1)
+        frac = Decimal(i) / (POINTS - 1)
         # Fixed path: 8% total growth with a mid-window dip, benchmark 5%.
-        dip = 0.10 * frac * (1 - frac) * 4
-        equity = curve * (1 + 0.08 * frac - dip)
+        dip = Decimal("0.10") * frac * (1 - frac) * 4
+        equity = capital * (1 + Decimal("0.08") * frac - dip)
         peak = max(peak, equity)
-        benchmark = curve * (1 + 0.05 * frac)
+        benchmark = capital * (1 + Decimal("0.05") * frac)
         day = start.fromordinal(start.toordinal() + round(span * frac))
         points.append(
             BacktestPoint(
                 timestamp=day.isoformat(),
-                equity=Decimal(str(equity)),
-                benchmark_equity=Decimal(str(benchmark)),
-                drawdown=1 - equity / peak,
-                asset_price=Decimal(str(50000.0 * (1 + 0.06 * frac))),
+                equity=equity,
+                benchmark_equity=benchmark,
+                drawdown=float(1 - equity / peak),
+                asset_price=Decimal("50000") * (1 + Decimal("0.06") * frac),
             )
         )
 

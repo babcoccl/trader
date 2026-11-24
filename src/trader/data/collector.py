@@ -18,6 +18,7 @@ from apscheduler.schedulers.blocking import (  # type: ignore[import-untyped]
     BlockingScheduler,
 )
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from trader.core.clock import Clock, SystemClock
@@ -34,12 +35,14 @@ from trader.data.sources.base import (
 )
 from trader.data.sources.bitstamp import BitstampSource
 from trader.data.sources.coinbase import CoinbaseSource
-from trader.ledger.models import Event, Order, Plan
+from trader.data.sources.coinbase_funding import PRODUCTS, CoinbaseFundingSource
+from trader.ledger.models import Event, FundingRate, Order, Plan
 from trader.ops.heartbeat import beat
 
 log = logging.getLogger(__name__)
 
 FIVEM_BACKFILL_DAYS = 30
+FUNDING_FETCH_EVERY = timedelta(minutes=10)
 
 _OPEN_ORDER_STATUSES = ("new", "open", "partially_filled")
 
@@ -55,6 +58,7 @@ class Collector:
         sources: list[CandleSource] | None = None,
         clock: Clock | None = None,
         session_factory: Callable[[], AbstractContextManager[Session]] = session_scope,
+        funding_source: CoinbaseFundingSource | None = None,
     ) -> None:
         self._sources: list[CandleSource] = (
             list(sources) if sources else [BitstampSource(), CoinbaseSource()]
@@ -63,6 +67,9 @@ class Collector:
         self._clock = clock or SystemClock()
         self._session = session_factory
         self._outage = False
+        self._funding = funding_source or CoinbaseFundingSource()
+        self._funding_tried_at: datetime | None = None
+        self._funding_failing = False
 
     def _event(self, session: Session, severity: str, message: str) -> None:
         session.add(
@@ -116,6 +123,81 @@ class Collector:
         got = self._fetch(session, symbol, interval, start, end)
         return candles_mod.upsert(session, got, now=self._clock.now())
 
+    def _funding_event(
+        self, session: Session, kind: str, severity: str, message: str
+    ) -> None:
+        session.add(
+            Event(
+                time=self._clock.now(),
+                kind=kind,
+                severity=severity,
+                message=message,
+                details={},
+            )
+        )
+
+    def _collect_funding(self, session: Session, now: datetime) -> None:
+        """Store the perp funding rate of every configured product.
+
+        At most one fetch pass per ``FUNDING_FETCH_EVERY``; a failure is not
+        a candle outage: the heartbeat is untouched and one ``events`` row
+        marks the start of the failures and one the recovery (spec G4).
+        """
+        if (
+            self._funding_tried_at is not None
+            and now - self._funding_tried_at < FUNDING_FETCH_EVERY
+        ):
+            return
+        self._funding_tried_at = now
+        rows = []
+        failed: list[str] = []
+        for symbol in PRODUCTS:
+            if symbol not in SYMBOLS:
+                continue
+            try:
+                obs = self._funding.fetch(symbol)
+            except Exception as exc:
+                log.warning("funding fetch failed for %s: %s", symbol, exc)
+                failed.append(f"{symbol}: {exc}")
+                continue
+            rows.append(
+                {
+                    "symbol": obs.symbol,
+                    "venue": obs.venue,
+                    "time": obs.time,
+                    "rate": obs.rate,
+                    "interval_hours": obs.interval_hours,
+                }
+            )
+        if rows:
+            try:
+                # Own savepoint: a rejected funding row rolls back only the
+                # funding insert, never this loop's candles.
+                with session.begin_nested():
+                    session.execute(
+                        insert(FundingRate).values(rows).on_conflict_do_nothing()
+                    )
+            except Exception as exc:
+                log.warning("funding rows rejected: %s", exc)
+                failed.append(f"store: {exc}")
+        if failed:
+            if not self._funding_failing:
+                self._funding_failing = True
+                self._funding_event(
+                    session,
+                    "funding_source_failed",
+                    "warning",
+                    "; ".join(failed),
+                )
+        elif self._funding_failing:
+            self._funding_failing = False
+            self._funding_event(
+                session,
+                "funding_source_recovered",
+                "info",
+                "funding source recovered",
+            )
+
     def _heartbeat(self, session: Session, status: str, detail: str) -> None:
         beat(session, "collector", status, detail, clock=self._clock)
 
@@ -161,6 +243,7 @@ class Collector:
                 written += self._store(
                     session, symbol, "1d", today - timedelta(days=1), today
                 )
+        self._collect_funding(session, now)
         status = "error" if self._outage else "ok"
         detail = f"stored {written} candles"
         if self._outage:

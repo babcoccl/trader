@@ -23,7 +23,7 @@ State of the application at the time of writing (after spec 5.2, see
 | Service | What it does | How often |
 |---|---|---|
 | `db` | PostgreSQL 16. All state lives here. | always |
-| `collector` | Stores Bitstamp BTC/USD and ETH/USD candles (Coinbase as backup). | every minute |
+| `collector` | Stores Bitstamp BTC/USD and ETH/USD candles (Coinbase as backup), and reads Coinbase's public perpetual funding rate — no key needed. | every minute |
 | `engine` | Daily decision (nine trend rules, sizing, plan). Five-minute price check. | 00:05 UTC, and every 5 minutes |
 | `executor` | Emergency stop, places approved orders, collects fills, updates the account. | every 30 seconds |
 | `watchdog` | Alarms when a part goes quiet, daily digest, weekly paper report. Seeds the paper account. | every minute |
@@ -36,7 +36,8 @@ State of the application at the time of writing (after spec 5.2, see
   Engine on Ubuntu.
 - Git.
 - About 2 GB of disk for images and the database.
-- Outbound HTTPS to `www.bitstamp.net` and `api.exchange.coinbase.com`.
+- Outbound HTTPS to `www.bitstamp.net`, `api.exchange.coinbase.com` and
+  `api.coinbase.com` (the public funding rate).
 - Only for development (running the tests): Python 3.12.
 
 You do **not** need a Bitstamp account, an API key or any funds for

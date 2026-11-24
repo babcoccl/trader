@@ -54,6 +54,18 @@ def test_dip_sleeve_is_shadow_only() -> None:
     assert spec not in sleeves.active()
 
 
+def test_funding_sleeve_is_shadow_only() -> None:
+    """Spec G4 registers the funding sleeve in shadow mode: allowed only
+    in a downtrend, never in ``active()``."""
+    spec = sleeves.get("funding")
+    assert spec.mode == "shadow"
+    assert spec.title == "Negative funding while the trend is off"
+    assert spec.trends == frozenset({"downtrend"})
+    assert spec.needs_sideways is False
+    assert spec.max_weight == 0.25
+    assert spec not in sleeves.active()
+
+
 def test_combine_returns_fixture_targets_unchanged() -> None:
     """For every row of expected_signals.csv, combining the trend sleeve's
     proposal returns the stored target_weight exactly."""

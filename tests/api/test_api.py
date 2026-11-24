@@ -999,7 +999,8 @@ def test_shadow(seeded) -> None:
     with Session(engine) as s:
         _seed_shadow(s)
     body = client.get("/api/shadow").json()
-    assert [s["name"] for s in body["sleeves"]] == ["dip"]
+    # The funding sleeve joined the runner in spec G4.
+    assert [s["name"] for s in body["sleeves"]] == ["dip", "funding"]
     slv = body["sleeves"][0]
     assert slv["title"] == "Dip-buying in a mixed regime"
     assert "25%" in slv["description"]

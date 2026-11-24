@@ -37,6 +37,15 @@ SLEEVES: tuple[SleeveSpec, ...] = (
         False,
         0.25,
     ),
+    # Spec G4: shadow mode — records a hypothetical book, never trades.
+    SleeveSpec(
+        "funding",
+        "Negative funding while the trend is off",
+        "shadow",
+        frozenset({"downtrend"}),
+        False,
+        0.25,
+    ),
 )
 
 

@@ -284,9 +284,12 @@ class CoinbaseAdvancedAdapter:
     def poll_fills(self, since: datetime) -> list[Fill]:
         """Fetch each working order's fills and emit new Fill rows.
 
-        Fills for an order are cumulative; entries past the stored fill
-        count are new, so replays never duplicate. Order status is
-        refreshed on the same pass.
+        Fills for an order are cumulative; a venue row is new when its
+        (time, price, quantity) is not among the order's stored fills —
+        within one fetch repeats are deduped by the venue's ``trade_id`` —
+        so replays never duplicate and a fill that lands ahead of a
+        recorded one is still emitted. Order status is refreshed on the
+        same pass.
         """
         del since  # dedupe is by stored fills, not a time window
         orders = [o for o in self.open_orders() if o.venue_order_id]

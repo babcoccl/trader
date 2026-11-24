@@ -7,6 +7,7 @@ ever committed. DB tests need TEST_DATABASE_URL (Compose Postgres).
 
 import json
 import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -108,7 +109,7 @@ class _EmptyResult:
     def first(self) -> None:
         return None
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[None]:
         return iter(())
 
 
@@ -122,7 +123,7 @@ class _SessionStub:
     def commit(self) -> None:
         pass
 
-    def scalars(self, *_args: Any, **_kw: Any):
+    def scalars(self, *_args: Any, **_kw: Any) -> list[Order]:
         return self._orders
 
     def scalar(self, *_args: Any, **_kw: Any) -> int:
@@ -147,14 +148,14 @@ def _order(**kw: Any) -> Order:
 
 
 @pytest.fixture(autouse=True)
-def _fresh_products_cache():
+def _fresh_products_cache() -> Iterator[None]:
     _products_cache.clear()
     yield
     _products_cache.clear()
 
 
 @pytest.fixture()
-def live_env(monkeypatch):
+def live_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("TRADER_MODE", "live")
     monkeypatch.setenv("TRADER_LIVE_ENABLED", "true")
     get_settings.cache_clear()
@@ -196,9 +197,14 @@ def test_jwt_signature_verifies() -> None:
     )
     public_key = private_key.public_key()
     claims = jwt.decode(
-        token, public_key, algorithms=["ES256"], options={"verify_exp": False}
+        token,
+        public_key,
+        algorithms=["ES256"],
+        options={"verify_nbf": False, "verify_exp": False},
     )
     assert claims["iss"] == "cdp"
+    assert claims["nbf"] == int(NOW.timestamp())
+    assert claims["exp"] == int(NOW.timestamp()) + 120
 
 
 # -- place safety gate -----------------------------------------------------
@@ -210,7 +216,7 @@ def test_place_refuses_in_paper_mode() -> None:
         adapter.place(_order())
 
 
-def test_place_refuses_when_live_disabled(monkeypatch) -> None:
+def test_place_refuses_when_live_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRADER_MODE", "live")
     monkeypatch.setenv("TRADER_LIVE_ENABLED", "false")
     get_settings.cache_clear()
@@ -223,7 +229,7 @@ def test_place_refuses_when_live_disabled(monkeypatch) -> None:
 # -- place ----------------------------------------------------------------
 
 
-def test_place_limit_posts_post_only_and_rounds(live_env) -> None:
+def test_place_limit_posts_post_only_and_rounds(live_env: None) -> None:
     http = FakeHttp(
         gets={"products/BTC-USD": PRODUCT},
         posts={"brokerage/orders": PLACE_OK},
@@ -247,7 +253,7 @@ def test_place_limit_posts_post_only_and_rounds(live_env) -> None:
     assert order.status == "open"
 
 
-def test_place_market_order(live_env) -> None:
+def test_place_market_order(live_env: None) -> None:
     http = FakeHttp(
         gets={"products/BTC-USD": PRODUCT},
         posts={"brokerage/orders": PLACE_OK},
@@ -261,20 +267,20 @@ def test_place_market_order(live_env) -> None:
     assert "limit_limit_gtc" not in sent["order_configuration"]
 
 
-def test_place_refuses_below_minimum(live_env) -> None:
+def test_place_refuses_below_minimum(live_env: None) -> None:
     http = _product_http()
     adapter = _adapter(http)
     with pytest.raises(ValueError, match="minimum"):
         adapter.place(_order(price=Decimal("49000"), quantity=Decimal("0.00000001")))
 
 
-def test_place_refuses_stop_order(live_env) -> None:
+def test_place_refuses_stop_order(live_env: None) -> None:
     adapter = _adapter(_product_http())
     with pytest.raises(ValueError, match="stop"):
         adapter.place(_order(type="stop", stop_price=Decimal("40000")))
 
 
-def test_place_post_only_rejection_requotes_at_best_bid(live_env) -> None:
+def test_place_post_only_rejection_requotes_at_best_bid(live_env: None) -> None:
     http = FakeHttp(
         gets={
             "products/BTC-USD": PRODUCT,
@@ -302,7 +308,9 @@ def test_place_post_only_rejection_requotes_at_best_bid(live_env) -> None:
     # Pop the first response, then serve the second.
     responses = http.posts["brokerage/orders"]
 
-    def http_call(method, url, headers, body):
+    def http_call(
+        method: str, url: str, headers: dict[str, str], body: str | None
+    ) -> Any:
         http.calls.append((method, url, headers, body))
         if method == "POST":
             return responses.pop(0)
@@ -326,14 +334,16 @@ def test_place_post_only_rejection_requotes_at_best_bid(live_env) -> None:
     assert cfg["limit_price"] == "49500.50"  # re-quoted at the best bid
 
 
-def test_place_post_only_rejection_gives_up(live_env) -> None:
+def test_place_post_only_rejection_gives_up(live_env: None) -> None:
     rejected = {
         "success": False,
         "error_response": {"error": "INVALID_LIMIT_PRICE_POST_ONLY"},
     }
     calls = []
 
-    def http_call(method, url, headers, body):
+    def http_call(
+        method: str, url: str, headers: dict[str, str], body: str | None
+    ) -> Any:
         calls.append((method, url))
         if method == "POST":
             return rejected
@@ -357,7 +367,7 @@ def test_place_post_only_rejection_gives_up(live_env) -> None:
         adapter.place(_order(price=Decimal("49501.50")))
 
 
-def test_place_post_only_requote_never_crosses_limit(live_env) -> None:
+def test_place_post_only_requote_never_crosses_limit(live_env: None) -> None:
     """If the book moves so the best bid sits above the submitted limit,
     the re-quote is refused instead of buying higher than approved."""
     rejected = {
@@ -365,7 +375,9 @@ def test_place_post_only_requote_never_crosses_limit(live_env) -> None:
         "error_response": {"error": "INVALID_LIMIT_PRICE_POST_ONLY"},
     }
 
-    def http_call(method, url, headers, body):
+    def http_call(
+        method: str, url: str, headers: dict[str, str], body: str | None
+    ) -> Any:
         if method == "POST":
             return rejected
         path = url.split("?")[0]
@@ -388,7 +400,7 @@ def test_place_post_only_requote_never_crosses_limit(live_env) -> None:
         adapter.place(_order(price=Decimal("49000")))
 
 
-def test_place_error_raises(live_env) -> None:
+def test_place_error_raises(live_env: None) -> None:
     http = FakeHttp(
         gets={"products/BTC-USD": PRODUCT},
         posts={
@@ -519,7 +531,7 @@ pytestmark_db = pytest.mark.skipif(
 _engine = None
 
 
-def _shared_engine():
+def _shared_engine() -> Any:
     global _engine
     if _engine is None:
         from alembic import command
@@ -539,7 +551,7 @@ def _shared_engine():
 
 
 @pytest.fixture()
-def db(monkeypatch):
+def db(monkeypatch: pytest.MonkeyPatch) -> Iterator[Session]:
     if not TEST_URL:
         pytest.skip("TEST_DATABASE_URL not set")
     monkeypatch.setenv("TRADER_MODE", "live")
@@ -622,7 +634,7 @@ FILLS = {
 BATCH_FILLED = {"orders": [{"order_id": "0000-aaaa-1111", "status": "FILLED"}]}
 
 
-def test_poll_fills_emits_fills(db) -> None:
+def test_poll_fills_emits_fills(db: Session) -> None:
     order = _db_order(db, quantity=Decimal("0.002"))
     http = FakeHttp(
         gets={
@@ -643,12 +655,16 @@ def test_poll_fills_emits_fills(db) -> None:
     assert order.status == "filled"
 
 
-def test_poll_fills_is_idempotent(db) -> None:
+def test_poll_fills_is_idempotent(db: Session) -> None:
+    # The order stays partially filled: the second poll re-fetches the
+    # same venue rows and must deduplicate them, not skip the call.
     _db_order(db)
     http = FakeHttp(
         gets={
             "brokerage/orders/historical/fills": FILLS,
-            "brokerage/orders/historical/batch": BATCH_FILLED,
+            "brokerage/orders/historical/batch": {
+                "orders": [{"order_id": "0000-aaaa-1111", "status": "OPEN"}]
+            },
         }
     )
     adapter = _adapter(http, session=db)
@@ -658,7 +674,7 @@ def test_poll_fills_is_idempotent(db) -> None:
     assert adapter.poll_fills(NOW) == []
 
 
-def test_poll_fills_new_fill_before_recorded_one(db) -> None:
+def test_poll_fills_new_fill_before_recorded_one(db: Session) -> None:
     """A fill that lands ahead of a recorded one is still emitted; the
     recorded one is not emitted again (dedupe by fill identity)."""
     order = _db_order(db, quantity=Decimal("0.003"))
@@ -702,7 +718,7 @@ def test_poll_fills_new_fill_before_recorded_one(db) -> None:
     assert order.status == "partially_filled"
 
 
-def test_poll_fills_marks_cancelled(db) -> None:
+def test_poll_fills_marks_cancelled(db: Session) -> None:
     order = _db_order(db)
     http = FakeHttp(
         gets={
@@ -717,32 +733,29 @@ def test_poll_fills_marks_cancelled(db) -> None:
     assert order.status == "cancelled"
 
 
-def test_poll_fills_pages_until_cursor_exhausted(db) -> None:
-    order = _db_order(db, quantity=Decimal("0.004"))
-    pages = iter(
-        [
-            {"fills": [FILLS["fills"][0]], "cursor": "page2"},
-            {
-                "fills": [
-                    dict(
-                        FILLS["fills"][0],
-                        trade_id="t2",
-                        trade_time="2026-11-24T10:02:00Z",
-                    )
-                ]
-            },
-        ]
-    )
+def test_poll_fills_pages_until_cursor_exhausted(db: Session) -> None:
+    order = _db_order(db, quantity=Decimal("0.008"))
+    urls: list[str] = []
 
-    def http_call(method, url, headers, body):
-        http.calls.append((method, url, headers, body))
+    def http_call(
+        method: str, url: str, headers: dict[str, str], body: str | None
+    ) -> Any:
         if "historical/fills" in url:
-            return next(pages)
+            urls.append(url)
+            if "cursor=page2" in url:
+                return {
+                    "fills": [
+                        # A repeat of the page-1 row, and a distinct fill
+                        # with identical time/price/size but a new id.
+                        FILLS["fills"][0],
+                        dict(FILLS["fills"][0], trade_id="t2"),
+                    ]
+                }
+            return {"fills": [FILLS["fills"][0]], "cursor": "page2"}
         if "historical/batch" in url:
-            return BATCH_FILLED
+            return {"orders": [{"order_id": "0000-aaaa-1111", "status": "OPEN"}]}
         raise AssertionError(url)
 
-    http = FakeHttp()
     adapter = CoinbaseAdvancedAdapter(
         db,
         "organizations/test-org/apiKeys/test-key-id",
@@ -751,11 +764,15 @@ def test_poll_fills_pages_until_cursor_exhausted(db) -> None:
         http=http_call,
     )
     out = adapter.poll_fills(NOW)
+    assert len(urls) == 2
+    assert "cursor=page2" in urls[1]
+    assert "order_ids=0000-aaaa-1111" in urls[1]
+    # Three rows across two pages, one repeated: two distinct fills.
     assert len(out) == 2
-    assert order.status == "filled"
+    assert order.status == "partially_filled"
 
 
-def test_poll_fills_cancelled_with_partial_fill(db) -> None:
+def test_poll_fills_cancelled_with_partial_fill(db: Session) -> None:
     """A venue-cancelled partially filled order is marked cancelled, not
     left working — and its last fills are still emitted."""
     order = _db_order(db, quantity=Decimal("0.004"))

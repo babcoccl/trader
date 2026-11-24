@@ -20,13 +20,12 @@ from trader.api.schemas import (
 from trader.backtest import engine
 from trader.backtest.costs import CostModel
 
+# Packaged copy of research/fixtures/btc_eth_daily.csv — keeps the deployed
+# image self-contained (research/ is .dockerignore'd). Sync: same file.
 FIXTURE = Path(
     os.environ.get(
         "TRADER_BACKTEST_FIXTURE",
-        Path(__file__).resolve().parents[3]
-        / "research"
-        / "fixtures"
-        / "btc_eth_daily.csv",
+        Path(__file__).resolve().parent / "data" / "btc_eth_daily.csv",
     )
 )
 

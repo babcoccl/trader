@@ -677,7 +677,12 @@ def test_poll_fills_new_fill_before_recorded_one(db) -> None:
     fills = {
         "fills": [
             # Earlier-time fill that arrived after the recorded one.
-            dict(FILLS["fills"][0], trade_time="2026-11-24T10:01:00Z", size="0.001"),
+            dict(
+                FILLS["fills"][0],
+                trade_id="t0",
+                trade_time="2026-11-24T10:01:00Z",
+                size="0.001",
+            ),
             dict(FILLS["fills"][0], trade_time="2026-11-24T10:02:00Z", size="0.001"),
         ]
     }
@@ -721,6 +726,7 @@ def test_poll_fills_pages_until_cursor_exhausted(db) -> None:
                 "fills": [
                     dict(
                         FILLS["fills"][0],
+                        trade_id="t2",
                         trade_time="2026-11-24T10:02:00Z",
                     )
                 ]

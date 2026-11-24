@@ -365,6 +365,7 @@ class CoinbaseAdvancedAdapter:
 
     def _new_fills(self, order: Order, rows: list[dict[str, Any]]) -> list[Fill]:
         seen = self._seen_fills(order)
+        seen_ids: set[str] = set()
         out = []
         for row in rows:
             key = (
@@ -372,9 +373,19 @@ class CoinbaseAdvancedAdapter:
                 Decimal(str(row["price"])),
                 Decimal(str(row["size"])),
             )
-            if key not in seen:
-                seen.add(key)  # also dedupe repeats within this fetch
-                out.append(self._make_fill(order, row))
+            if key in seen:
+                continue  # recorded on an earlier poll
+            # Within one fetch, dedupe repeats by the venue's fill id when
+            # present (distinct fills may share time/price/size), else by
+            # the fill's values.
+            trade_id = row.get("trade_id") or row.get("entry_id")
+            if trade_id is not None:
+                if str(trade_id) in seen_ids:
+                    continue
+                seen_ids.add(str(trade_id))
+            else:
+                seen.add(key)
+            out.append(self._make_fill(order, row))
         return out
 
     def _fills_for_order(self, order: Order) -> list[dict[str, Any]]:

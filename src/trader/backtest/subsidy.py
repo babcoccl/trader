@@ -145,10 +145,14 @@ def run_with_ping_pong_subsidy(
             and rolling_vol < target_tier_volume
         ):
             boost_usd = min(daily_booster_cap_usd, target_tier_volume - rolling_vol)
+            # A negative-edge booster burns cash to buy the tier: cap the
+            # day's boost at what remaining cash can pay for, so the
+            # portfolio cannot be driven below zero.
+            edge = (spread_capture_bps / 10_000) - maker_fee
+            if edge < 0:
+                boost_usd = min(boost_usd, cash * starting_capital / -edge)
             if boost_usd > 0:
-                net_booster_pnl = boost_usd * (
-                    (spread_capture_bps / 10_000) - maker_fee
-                )
+                net_booster_pnl = boost_usd * edge
                 cash += net_booster_pnl / starting_capital
                 day_vol_usd += boost_usd
                 trades.append(

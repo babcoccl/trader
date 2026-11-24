@@ -128,6 +128,26 @@ def test_booster_stops_once_tier_reached() -> None:
     assert t["pnl"] == (1_500.0 * (0.0010 - 0.0040)) / CAPITAL
 
 
+def test_booster_cannot_bankrupt() -> None:
+    # A negative-edge booster spends cash to buy the tier: with tiny capital
+    # it must scale down and stop, never drive equity below zero.
+    opens, highs, lows, closes = _sideways()
+    result = run_with_ping_pong_subsidy(
+        opens,
+        highs,
+        lows,
+        closes,
+        _zero_weights(closes),
+        100.0,
+        "2024-01-01",
+        "2024-04-30",
+        target_tier_volume=10_000.0,
+        daily_booster_cap_usd=2_000.0,
+    )
+    assert (result.equity >= 0).all()
+    assert math.isfinite(result.equity.iloc[-1])
+
+
 def test_result_is_normalized() -> None:
     opens, highs, lows, closes = _sideways()
     result = run_with_ping_pong_subsidy(

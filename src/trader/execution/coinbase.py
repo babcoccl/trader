@@ -28,7 +28,7 @@ from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 import jwt
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from trader.core.clock import Clock, SystemClock
@@ -39,6 +39,7 @@ from trader.ledger.models import Fill, Order
 
 BASE_URL = "https://api.coinbase.com"
 _OPEN_STATUSES = ("new", "open", "partially_filled")
+_POST_ONLY_RETRIES = 3
 _PRODUCTS_TTL_SECONDS = 3600
 # Public product metadata, keyed by (base URL, product id) and shared
 # across adapters: the executor builds a fresh adapter every pass.
@@ -181,7 +182,7 @@ class CoinbaseAdvancedAdapter:
         product = PRODUCTS[order.symbol]
         rules = self.symbol_rules(order.symbol)
         quantity = _round_down(order.quantity, rules.lot)
-        configuration: dict[str, Any]
+        price: Decimal | None = None
         if order.type == "limit":
             assert order.price is not None
             price = _round_down(order.price, rules.tick)
@@ -190,32 +191,39 @@ class CoinbaseAdvancedAdapter:
                     f"order notional {quantity * price} under minimum "
                     f"{rules.min_notional}"
                 )
-            configuration = {
-                "limit_limit_gtc": {
-                    "base_size": str(quantity),
-                    "limit_price": str(price),
-                    "post_only": True,
-                }
-            }
+        attempts = 1 if order.type == "market" else _POST_ONLY_RETRIES
+        for _ in range(attempts):
+            try:
+                payload = self._request(
+                    "POST",
+                    "/api/v3/brokerage/orders",
+                    body={
+                        "client_order_id": order.client_order_id,
+                        "product_id": product,
+                        "side": order.side.upper(),
+                        "order_configuration": self._configuration(
+                            order, quantity, price
+                        ),
+                    },
+                )
+            except CoinbaseError as e:
+                if "POST_ONLY" in str(e) and order.type == "limit":
+                    # Post-only rejection: the limit would have crossed.
+                    # Re-quote at the new best bid (buy) or ask (sell).
+                    price = self._maker_price(order, product)
+                    continue
+                raise
+            break
         else:
-            configuration = {"market_market_ioc": {"base_size": str(quantity)}}
-        payload = self._request(
-            "POST",
-            "/api/v3/brokerage/orders",
-            body={
-                "client_order_id": order.client_order_id,
-                "product_id": product,
-                "side": order.side.upper(),
-                "order_configuration": configuration,
-            },
-        )
+            raise CoinbaseError(
+                f"order rejected by venue {attempts} times (post-only cross)"
+            )
         if not isinstance(payload, dict) or not payload.get("success"):
             raise CoinbaseError(f"unexpected place response: {payload!r}")
         venue_id = str(payload["success_response"]["order_id"])
         order.venue = self.venue
         order.venue_order_id = venue_id
-        if order.type == "limit":
-            order.price = price
+        order.price = price
         order.quantity = quantity
         order.status = "open"
         # The venue holds the order now: persist its id at once so a later
@@ -271,15 +279,15 @@ class CoinbaseAdvancedAdapter:
         count are new, so replays never duplicate. Order status is
         refreshed on the same pass.
         """
-        del since  # dedupe is by stored fill count, not a time window
+        del since  # dedupe is by stored fills, not a time window
+        orders = [o for o in self.open_orders() if o.venue_order_id]
+        # One batch call gives every working order's venue status.
+        statuses = self._venue_statuses([o.venue_order_id or "" for o in orders])
         new_fills: list[Fill] = []
-        for order in self.open_orders():
-            if not order.venue_order_id:
-                continue
+        for order in orders:
             rows = self._fills_for_order(order)
-            for row in rows[int(self._fill_count(order)) :]:
-                new_fills.append(self._make_fill(order, row))
-            self._apply_status(order, rows)
+            new_fills.extend(self._new_fills(order, rows))
+            self._apply_status(order, rows, statuses.get(order.venue_order_id or ""))
         self._session.flush()
         return new_fills
 
@@ -317,13 +325,47 @@ class CoinbaseAdvancedAdapter:
 
     # -- internals ----------------------------------------------------------
 
-    def _fill_count(self, order: Order) -> int:
-        return int(
-            self._session.scalar(
-                select(func.count()).select_from(Fill).where(Fill.order_id == order.id)
+    def _seen_fills(self, order: Order) -> set[tuple[datetime, Decimal, Decimal]]:
+        """Stored fills for the order as (time, price, quantity) keys.
+
+        Coinbase's fill list is cumulative but not guaranteed to stay in
+        order, so dedupe is by fill identity rather than position: a new
+        fill that lands before a recorded one is still emitted, and a
+        recorded one is never emitted twice.
+        """
+        return {
+            (f.time, f.price, f.quantity)
+            for f in self._session.scalars(
+                select(Fill).where(Fill.order_id == order.id)
             )
-            or 0
+        }
+
+    def _venue_statuses(self, order_ids: list[str]) -> dict[str, str]:
+        """order_id -> venue status for every working order, one batch call."""
+        if not order_ids:
+            return {}
+        payload = self._request(
+            "GET",
+            "/api/v3/brokerage/orders/historical/batch",
+            {"order_ids": ",".join(order_ids)},
         )
+        return {
+            str(row["order_id"]): str(row.get("status", "")).upper()
+            for row in payload.get("orders") or []
+        }
+
+    def _new_fills(self, order: Order, rows: list[dict[str, Any]]) -> list[Fill]:
+        seen = self._seen_fills(order)
+        out = []
+        for row in rows:
+            key = (
+                _dt(str(row["trade_time"])),
+                Decimal(str(row["price"])),
+                Decimal(str(row["size"])),
+            )
+            if key not in seen:
+                out.append(self._make_fill(order, row))
+        return out
 
     def _fills_for_order(self, order: Order) -> list[dict[str, Any]]:
         payload = self._request(
@@ -349,23 +391,50 @@ class CoinbaseAdvancedAdapter:
             ),
         )
 
-    def _apply_status(self, order: Order, rows: list[dict[str, Any]]) -> None:
+    def _apply_status(
+        self,
+        order: Order,
+        rows: list[dict[str, Any]],
+        venue_status: str | None,
+    ) -> None:
         filled = sum(Decimal(str(r["size"])) for r in rows)
-        if filled >= order.quantity:
+        if venue_status == "FILLED" or filled >= order.quantity:
             order.status = "filled"
+        elif venue_status == "CANCELLED":
+            order.status = "cancelled"
         elif filled > 0:
             order.status = "partially_filled"
-        else:
-            # No fills: the venue order may have been cancelled.
-            payload = self._request(
-                "GET",
-                "/api/v3/brokerage/orders/historical/batch",
-                {"order_ids": order.venue_order_id},
-            )
-            venue_rows = payload.get("orders") or []
-            status = str(venue_rows[0].get("status", "")).upper() if venue_rows else ""
-            if status == "CANCELLED":
-                order.status = "cancelled"
+
+    @staticmethod
+    def _configuration(
+        order: Order, quantity: Decimal, price: Decimal | None
+    ) -> dict[str, Any]:
+        if order.type == "limit":
+            assert price is not None
+            return {
+                "limit_limit_gtc": {
+                    "base_size": str(quantity),
+                    "limit_price": str(price),
+                    "post_only": True,
+                }
+            }
+        return {"market_market_ioc": {"base_size": str(quantity)}}
+
+    def _maker_price(self, order: Order, product: str) -> Decimal:
+        """The maker-side quote for a re-priced limit order: best bid for a
+        buy, best ask for a sell (both join the book without crossing)."""
+        payload = self._request(
+            "GET",
+            "/api/v3/brokerage/best_bid_ask",
+            {"product_ids": product},
+        )
+        books = payload.get("pricebooks") or []
+        if not books:
+            raise CoinbaseError(f"unexpected best_bid_ask response: {payload!r}")
+        book = books[0]
+        side = "bids" if order.side == "buy" else "asks"
+        price = Decimal(str(book[side][0]["price"]))
+        return _round_down(price, self.symbol_rules(order.symbol).tick)
 
     def _product_info(self, symbol: str) -> dict[str, Any]:
         product = PRODUCTS[symbol]

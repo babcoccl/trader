@@ -274,6 +274,89 @@ def test_place_refuses_stop_order(live_env) -> None:
         adapter.place(_order(type="stop", stop_price=Decimal("40000")))
 
 
+def test_place_post_only_rejection_requotes_at_best_bid(live_env) -> None:
+    http = FakeHttp(
+        gets={
+            "products/BTC-USD": PRODUCT,
+            "brokerage/best_bid_ask": {
+                "pricebooks": [
+                    {
+                        "product_id": "BTC-USD",
+                        "bids": [{"price": "49500.50", "size": "1"}],
+                        "asks": [{"price": "49501.00", "size": "1"}],
+                    }
+                ]
+            },
+        },
+        posts={
+            "brokerage/orders": [
+                {
+                    "success": False,
+                    "error_response": {"error": "INVALID_LIMIT_PRICE_POST_ONLY"},
+                },
+                PLACE_OK,
+            ]
+        },
+    )
+
+    # Pop the first response, then serve the second.
+    responses = http.posts["brokerage/orders"]
+
+    def http_call(method, url, headers, body):
+        http.calls.append((method, url, headers, body))
+        if method == "POST":
+            return responses.pop(0)
+        path = url.split("?")[0]
+        for suffix, payload in http.gets.items():
+            if path.endswith(suffix):
+                return payload
+        raise AssertionError(url)
+
+    adapter = CoinbaseAdvancedAdapter(
+        _SessionStub(),
+        "organizations/test-org/apiKeys/test-key-id",
+        _ec_private_key_pem(),
+        clock=FrozenClock(NOW),
+        http=http_call,
+    )
+    venue_id = adapter.place(_order(price=Decimal("49501.50")))
+    assert venue_id == "0000-aaaa-1111"
+    sent = json.loads(http.calls[-1][3] or "{}")
+    cfg = sent["order_configuration"]["limit_limit_gtc"]
+    assert cfg["limit_price"] == "49500.50"  # re-quoted at the best bid
+
+
+def test_place_post_only_rejection_gives_up(live_env) -> None:
+    rejected = {
+        "success": False,
+        "error_response": {"error": "INVALID_LIMIT_PRICE_POST_ONLY"},
+    }
+    calls = []
+
+    def http_call(method, url, headers, body):
+        calls.append((method, url))
+        if method == "POST":
+            return rejected
+        path = url.split("?")[0]
+        if path.endswith("products/BTC-USD"):
+            return PRODUCT
+        return {
+            "pricebooks": [
+                {"bids": [{"price": "49500.50"}], "asks": [{"price": "49501"}]}
+            ]
+        }
+
+    adapter = CoinbaseAdvancedAdapter(
+        _SessionStub(),
+        "organizations/test-org/apiKeys/test-key-id",
+        _ec_private_key_pem(),
+        clock=FrozenClock(NOW),
+        http=http_call,
+    )
+    with pytest.raises(CoinbaseError, match="post-only"):
+        adapter.place(_order(price=Decimal("49501.50")))
+
+
 def test_place_error_raises(live_env) -> None:
     http = FakeHttp(
         gets={"products/BTC-USD": PRODUCT},
@@ -505,9 +588,17 @@ FILLS = {
 }
 
 
+BATCH_FILLED = {"orders": [{"order_id": "0000-aaaa-1111", "status": "FILLED"}]}
+
+
 def test_poll_fills_emits_fills(db) -> None:
     order = _db_order(db, quantity=Decimal("0.002"))
-    http = FakeHttp(gets={"brokerage/orders/historical/fills": FILLS})
+    http = FakeHttp(
+        gets={
+            "brokerage/orders/historical/fills": FILLS,
+            "brokerage/orders/historical/batch": BATCH_FILLED,
+        }
+    )
     adapter = _adapter(http, session=db)
     fills = adapter.poll_fills(NOW)
     assert len(fills) == 1
@@ -523,12 +614,56 @@ def test_poll_fills_emits_fills(db) -> None:
 
 def test_poll_fills_is_idempotent(db) -> None:
     _db_order(db)
-    http = FakeHttp(gets={"brokerage/orders/historical/fills": FILLS})
+    http = FakeHttp(
+        gets={
+            "brokerage/orders/historical/fills": FILLS,
+            "brokerage/orders/historical/batch": BATCH_FILLED,
+        }
+    )
     adapter = _adapter(http, session=db)
     first = adapter.poll_fills(NOW)
     db.add_all(first)
     db.commit()
     assert adapter.poll_fills(NOW) == []
+
+
+def test_poll_fills_new_fill_before_recorded_one(db) -> None:
+    """A fill that lands ahead of a recorded one is still emitted; the
+    recorded one is not emitted again (dedupe by fill identity)."""
+    order = _db_order(db, quantity=Decimal("0.003"))
+    db.add(
+        Fill(
+            order_id=order.id,
+            time=datetime(2026, 11, 24, 10, 2, tzinfo=UTC),
+            price=Decimal("50000.00"),
+            quantity=Decimal("0.001"),
+            fee=Decimal("0.05"),
+            fee_currency="USD",
+            liquidity="maker",
+        )
+    )
+    db.commit()
+    fills = {
+        "fills": [
+            # Earlier-time fill that arrived after the recorded one.
+            dict(FILLS["fills"][0], trade_time="2026-11-24T10:01:00Z", size="0.001"),
+            dict(FILLS["fills"][0], trade_time="2026-11-24T10:02:00Z", size="0.001"),
+        ]
+    }
+    http = FakeHttp(
+        gets={
+            "brokerage/orders/historical/fills": fills,
+            "brokerage/orders/historical/batch": {
+                "orders": [{"order_id": "0000-aaaa-1111", "status": "OPEN"}]
+            },
+        }
+    )
+    adapter = _adapter(http, session=db)
+    out = adapter.poll_fills(NOW)
+    assert len(out) == 1
+    assert out[0].time == datetime(2026, 11, 24, 10, 1, tzinfo=UTC)
+    assert out[0].quantity == Decimal("0.001")
+    assert order.status == "partially_filled"
 
 
 def test_poll_fills_marks_cancelled(db) -> None:
@@ -543,4 +678,23 @@ def test_poll_fills_marks_cancelled(db) -> None:
     )
     adapter = _adapter(http, session=db)
     assert adapter.poll_fills(NOW) == []
+    assert order.status == "cancelled"
+
+
+def test_poll_fills_cancelled_with_partial_fill(db) -> None:
+    """A venue-cancelled partially filled order is marked cancelled, not
+    left working — and its last fills are still emitted."""
+    order = _db_order(db, quantity=Decimal("0.004"))
+    http = FakeHttp(
+        gets={
+            "brokerage/orders/historical/fills": FILLS,
+            "brokerage/orders/historical/batch": {
+                "orders": [{"order_id": "0000-aaaa-1111", "status": "CANCELLED"}]
+            },
+        }
+    )
+    adapter = _adapter(http, session=db)
+    (fill,) = adapter.poll_fills(NOW)
+    assert fill.order_id == order.id
+    assert fill.quantity == Decimal("0.002")
     assert order.status == "cancelled"

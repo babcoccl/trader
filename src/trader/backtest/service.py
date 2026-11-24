@@ -122,19 +122,31 @@ def execute_backtest(params: BacktestParams) -> BacktestResult:
             end=params.end_date,
         )
     elif params.strategy_sleeve == "cross_sectional_momentum":
+        try:
+            lookback_days = int(extra.get("lookback_days", 30))
+            top_k = int(extra.get("top_k", 3))
+            band = float(extra.get("band", 0.20))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid extra_params override: {exc}") from exc
+        gate = extra.get("btc_gate", True)
+        btc_gate = (
+            gate.strip().lower() in ("1", "true", "yes", "on")
+            if isinstance(gate, str)
+            else bool(gate)
+        )
         weights = cross_sectional_momentum_weights(
             closes,
             vol_target=params.vol_target,
-            lookback_days=int(extra.get("lookback_days", 30)),
-            top_k=int(extra.get("top_k", 3)),
-            btc_gate=bool(extra.get("btc_gate", True)),
+            lookback_days=lookback_days,
+            top_k=top_k,
+            btc_gate=btc_gate,
         )
         result = engine.run_weights(
             opens,
             closes,
             weights,
             cost,
-            band=float(extra.get("band", 0.20)),
+            band=band,
             start=start,
             end=params.end_date,
         )

@@ -107,6 +107,6 @@ def test_shadow_run_writes_no_trading_rows(engine, session) -> None:
         from trader.ledger.models import ShadowMark, ShadowTrade
 
         assert s.scalar(select(func.count()).select_from(ShadowTrade)) == 4
-        # Two marks per run day: the dip sleeve plus the funding sleeve
-        # (spec G4, in the runner but never trading).
-        assert s.scalar(select(func.count()).select_from(ShadowMark)) == 4
+        # Three marks per run day: dip, funding and the grid sleeve
+        # (spec G5, in the runner but never trading).
+        assert s.scalar(select(func.count()).select_from(ShadowMark)) == 6

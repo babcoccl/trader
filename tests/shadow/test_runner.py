@@ -59,6 +59,33 @@ def test_failure_isolated_and_recorded(engine, monkeypatch) -> None:
         )
 
 
+def test_grid_is_the_intraday_sleeve() -> None:
+    """Spec G5: the grid sleeve is the runner's intraday entry."""
+    assert [m.NAME for m in runner.INTRADAY] == ["grid"]
+
+
+def test_intraday_failure_isolated_and_recorded(engine, monkeypatch) -> None:
+    ran: list[str] = []
+
+    def boom(session, clock):
+        raise RuntimeError("grid exploded")
+
+    def ok(session, clock):
+        ran.append("ok")
+
+    monkeypatch.setattr(
+        runner, "INTRADAY", (_module("badgrid", boom), _module("okgrid", ok))
+    )
+    runner.run(_factory(engine), FrozenClock(NOW))
+    assert ran == ["ok"]
+
+    with Session(engine) as s:
+        events = s.scalars(select(Event).where(Event.kind == "shadow_error")).all()
+        assert len(events) == 1
+        assert events[0].details["sleeve"] == "badgrid"
+        assert "grid exploded" in events[0].message
+
+
 def _factory(engine):
     from contextlib import contextmanager
 

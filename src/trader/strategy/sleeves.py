@@ -46,6 +46,15 @@ SLEEVES: tuple[SleeveSpec, ...] = (
         False,
         0.25,
     ),
+    # Spec G5: shadow mode — records a hypothetical book, never trades.
+    SleeveSpec(
+        "grid",
+        "Grid while the market reads sideways",
+        "shadow",
+        ALL_TRENDS,
+        True,
+        0.5,
+    ),
 )
 
 

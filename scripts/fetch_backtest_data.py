@@ -24,7 +24,8 @@ OUT = (
     Path(__file__).resolve().parents[1]
     / "src/trader/backtest/data/multi_asset_daily.csv"
 )
-START = datetime(2019, 1, 1, tzinfo=UTC)
+# Same start as research/fixtures/btc_eth_daily.csv so SMA-200 warmup is kept.
+START = datetime(2017, 8, 17, tzinfo=UTC)
 
 PAIRS = {
     "BTCUSDT": "BTC-USD",

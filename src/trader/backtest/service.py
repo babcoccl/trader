@@ -8,7 +8,6 @@ import os
 from decimal import Decimal
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from trader.api.schemas import (
@@ -74,22 +73,11 @@ def execute_backtest(params: BacktestParams) -> BacktestResult:
     closes = closes[available]
 
     # Drop leading rows where every requested asset lacks a price.
+    # Per-asset pre-listing NaNs stay NaN: the engine gives them weight 0,
+    # never trades them, and warmup accrues only on real prices.
     has_price = closes.notna().any(axis=1)
     opens = opens[has_price]
     closes = closes[has_price]
-
-    # Pre-listing NaNs: fill with a ramp declining to the first real price,
-    # so every trend rule reads 0 and the target weight is exactly 0.0.
-    # (Raw NaNs would poison the engine's cash + units * price sums.)
-    for s in available:
-        first = closes[s].first_valid_index()
-        if first is None:
-            continue
-        pre = closes.index < first
-        if pre.any():
-            ramp = closes[s].loc[first] * np.linspace(2.0, 1.0, int(pre.sum()))
-            closes.loc[pre, s] = ramp
-            opens.loc[pre, s] = ramp
 
     if closes.loc[params.start_date : params.end_date].empty:
         raise ValueError(

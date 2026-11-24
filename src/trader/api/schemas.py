@@ -9,7 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -292,6 +292,65 @@ class ShadowSleeveOut(BaseModel):
 
 class ShadowOut(BaseModel):
     sleeves: list[ShadowSleeveOut]
+
+
+class BacktestParams(BaseModel):
+    strategy_sleeve: str = "trend_momentum"
+    asset_universe: list[str] = ["BTC-USD", "ETH-USD"]
+    start_date: str = "2024-01-01"
+    end_date: str = "2024-12-31"
+    starting_capital: Decimal = Field(
+        default=Decimal("10000.0"), gt=0, allow_inf_nan=False
+    )
+    assumed_fee_tier: str = "tier_1_maker"
+    vol_target: float = 0.40
+    drawdown_limit: float = 0.35
+    extra_params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def _iso_date(cls, v: str) -> str:
+        date.fromisoformat(v)
+        return v
+
+    @model_validator(mode="after")
+    def _ordered_dates(self) -> "BacktestParams":
+        if date.fromisoformat(self.start_date) >= date.fromisoformat(self.end_date):
+            raise ValueError("start_date must be before end_date")
+        return self
+
+
+class BacktestSummaryMetrics(BaseModel):
+    cagr: float
+    benchmark_cagr: float
+    max_drawdown: float
+    total_trades: int
+    win_rate: float
+    total_fees_paid: Decimal
+
+
+class BacktestPoint(BaseModel):
+    timestamp: str
+    equity: Decimal
+    benchmark_equity: Decimal
+    drawdown: float
+    asset_price: Decimal
+
+
+class BacktestTrade(BaseModel):
+    date: str
+    asset: str
+    side: Literal["BUY", "SELL"]
+    size: Decimal
+    price: Decimal
+    pnl: Decimal
+    fee: Decimal
+
+
+class BacktestResult(BaseModel):
+    summary_metrics: BacktestSummaryMetrics
+    timeseries_data: list[BacktestPoint]
+    trade_log: list[BacktestTrade]
 
 
 class OkOut(BaseModel):

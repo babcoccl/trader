@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from trader.api import auth, sse
 from trader.api.routes import (
     activity,
+    backtest,
     controls,
     decisions,
     funding,
@@ -73,6 +74,7 @@ for r in (
     activity.router,
     funding.router,
     reports.router,
+    backtest.router,
     rules.router,
     shadow.router,
     settings.router,

@@ -519,6 +519,37 @@ button.link {
   overflow-x: auto;
 }
 
+.backtest-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.backtest-layout__params {
+  flex: 0 0 30%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.backtest-layout__results {
+  flex: 1 1 70%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.backtest-params {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid rgb(0 0 0 / 0.15);
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
 @media (max-width: 560px) {
   .shell {
     padding: 12px;
@@ -573,5 +604,15 @@ button.link {
 
   .activity-filters input {
     flex-basis: 100%;
+  }
+
+  .backtest-layout {
+    flex-direction: column;
+  }
+
+  .backtest-layout__params,
+  .backtest-layout__results {
+    flex: 1 1 auto;
+    width: 100%;
   }
 }

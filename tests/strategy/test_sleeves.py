@@ -66,6 +66,23 @@ def test_funding_sleeve_is_shadow_only() -> None:
     assert spec not in sleeves.active()
 
 
+def test_grid_sleeve_is_shadow_only() -> None:
+    """Spec G5 registers the grid sleeve in shadow mode: allowed in any
+    trend but only while the regime has a sideways reading."""
+    spec = sleeves.get("grid")
+    assert spec.mode == "shadow"
+    assert spec.title == "Grid while the market reads sideways"
+    assert spec.trends == sleeves.ALL_TRENDS
+    assert spec.needs_sideways is True
+    assert spec.max_weight == 0.5
+    assert spec not in sleeves.active()
+    for trend in sleeves.ALL_TRENDS:
+        assert sleeves.allowed(spec, _regime(trend, sideways=True)) is True
+        assert sleeves.allowed(spec, _regime(trend, sideways=False)) is False
+        assert sleeves.allowed(spec, _regime(trend, sideways=None)) is False
+    assert sleeves.allowed(spec, None) is False
+
+
 def test_combine_returns_fixture_targets_unchanged() -> None:
     """For every row of expected_signals.csv, combining the trend sleeve's
     proposal returns the stored target_weight exactly."""

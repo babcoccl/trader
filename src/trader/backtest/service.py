@@ -4,6 +4,7 @@ Runs the real daily engine on the committed BTC/ETH fixture, scaled to the
 requested starting capital, with an equal-weight buy-and-hold benchmark.
 """
 
+import os
 from decimal import Decimal
 from pathlib import Path
 
@@ -19,8 +20,14 @@ from trader.api.schemas import (
 from trader.backtest import engine
 from trader.backtest.costs import CostModel
 
-FIXTURE = (
-    Path(__file__).resolve().parents[3] / "research" / "fixtures" / "btc_eth_daily.csv"
+FIXTURE = Path(
+    os.environ.get(
+        "TRADER_BACKTEST_FIXTURE",
+        Path(__file__).resolve().parents[3]
+        / "research"
+        / "fixtures"
+        / "btc_eth_daily.csv",
+    )
 )
 
 # assumed_fee_tier -> per-side fee in basis points (mapped onto the engine's
@@ -52,9 +59,12 @@ def _benchmark(closes: pd.DataFrame, idx: pd.Index) -> pd.Series:
 
 
 def execute_backtest(params: BacktestParams) -> BacktestResult:
+    if params.vol_target <= 0:
+        raise ValueError(f"vol_target must be positive, got {params.vol_target}")
+
     opens, closes = engine.load_fixture(str(FIXTURE))
 
-    available = [s for s in params.asset_universe if s in closes.columns]
+    available = [s for s in dict.fromkeys(params.asset_universe) if s in closes.columns]
     if not available:
         raise ValueError(
             f"none of the requested assets exist in the data set: "

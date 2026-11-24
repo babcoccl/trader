@@ -66,7 +66,7 @@ ASSETS: dict[str, Asset] = {
         "dogeusd",
         "DOGE-USD",
         Decimal("0.00001"),
-        Decimal("1"),
+        Decimal("0.01"),
         datetime(2022, 12, 21, tzinfo=UTC),
     ),
     "ADA-USD": Asset(

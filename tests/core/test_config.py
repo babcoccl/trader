@@ -38,12 +38,18 @@ def test_symbol_list_repeated_raises() -> None:
 
 
 def test_live_mode_accepts_all_eight_assets() -> None:
+    from trader.data.sources.base import ASSETS
+
     settings = Settings(
         _env_file=None,
         mode="live",
         symbols="BTC-USD,ETH-USD,SOL-USD,XRP-USD,DOGE-USD,ADA-USD,AVAX-USD,LINK-USD",
     )
     assert len(settings.symbol_list) == 8
+    for symbol in settings.symbol_list:
+        asset = ASSETS[symbol]
+        assert asset.tick > 0
+        assert asset.lot > 0
 
 
 def test_live_mode_allows_default() -> None:

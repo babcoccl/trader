@@ -226,7 +226,9 @@ def execute_backtest(params: BacktestParams) -> BacktestResult:
     cagr = result.equity.iloc[-1] ** (1 / years) - 1
     benchmark_cagr = (bench.iloc[-1] / capital) ** (1 / years) - 1
 
-    sells = [t for t in result.trades if t["side"] == "SELL"]
+    # Booster summary rows (size 0) count toward fees but are not alpha
+    # sells, so they stay out of the win-rate denominator.
+    sells = [t for t in result.trades if t["side"] == "SELL" and t["size"] > 0]
     wins = sum(1 for t in sells if t["pnl"] > 0)
 
     trades = [

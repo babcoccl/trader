@@ -228,6 +228,11 @@ def test_run_ping_pong_subsidy(client: TestClient) -> None:
     assert -1.0 < m.cagr < 10.0
     assert 0.0 <= m.max_drawdown <= 1.0
     assert m.total_fees_paid >= 0
+    # Booster summary rows (size 0) stay in the trade log and fees, but do
+    # not enter the win-rate denominator.
+    sells = [t for t in result.trade_log if t.side == "SELL" and t.size > 0]
+    wins = sum(1 for t in sells if t.pnl > 0)
+    assert m.win_rate == (round(wins / len(sells), 6) if sells else 0.0)
 
 
 def test_run_unknown_strategy_sleeve_400(client: TestClient) -> None:

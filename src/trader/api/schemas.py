@@ -294,6 +294,51 @@ class ShadowOut(BaseModel):
     sleeves: list[ShadowSleeveOut]
 
 
+class BacktestParams(BaseModel):
+    strategy_sleeve: str = "trend_momentum"
+    asset_universe: list[str] = ["BTC-USD", "ETH-USD"]
+    start_date: str = "2024-01-01"
+    end_date: str = "2024-12-31"
+    starting_capital: float = 10000.0
+    assumed_fee_tier: str = "tier_1_maker"
+    vol_target: float = 0.40
+    drawdown_limit: float = 0.35
+    extra_params: dict[str, Any] = Field(default_factory=dict)
+
+
+class BacktestSummaryMetrics(BaseModel):
+    cagr: float
+    benchmark_cagr: float
+    max_drawdown: float
+    total_trades: int
+    win_rate: float
+    total_fees_paid: float
+
+
+class BacktestPoint(BaseModel):
+    timestamp: str
+    equity: float
+    benchmark_equity: float
+    drawdown: float
+    asset_price: float
+
+
+class BacktestTrade(BaseModel):
+    date: str
+    asset: str
+    side: Literal["BUY", "SELL"]
+    size: float
+    price: float
+    pnl: float
+    fee: float
+
+
+class BacktestResult(BaseModel):
+    summary_metrics: BacktestSummaryMetrics
+    timeseries_data: list[BacktestPoint]
+    trade_log: list[BacktestTrade]
+
+
 class OkOut(BaseModel):
     status: str = "ok"
     detail: dict[str, Any] = Field(default_factory=dict)

@@ -49,5 +49,13 @@ def test_run_defaults(client: TestClient) -> None:
 
 def test_run_bad_payload_422(client: TestClient) -> None:
     _login(client)
-    r = client.post("/api/backtests/run", json={"starting_capital": "lots"})
-    assert r.status_code == 422
+    for body in (
+        {"starting_capital": "lots"},
+        {"starting_capital": 0},
+        {"starting_capital": -100},
+        {"starting_capital": "Infinity"},
+        {"start_date": "not-a-date"},
+        {"start_date": "2024-12-31", "end_date": "2024-01-01"},
+    ):
+        r = client.post("/api/backtests/run", json=body)
+        assert r.status_code == 422, body

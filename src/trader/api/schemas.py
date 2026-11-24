@@ -299,7 +299,9 @@ class BacktestParams(BaseModel):
     asset_universe: list[str] = ["BTC-USD", "ETH-USD"]
     start_date: str = "2024-01-01"
     end_date: str = "2024-12-31"
-    starting_capital: float = 10000.0
+    starting_capital: Decimal = Field(
+        default=Decimal("10000.0"), gt=0, allow_inf_nan=False
+    )
     assumed_fee_tier: str = "tier_1_maker"
     vol_target: float = 0.40
     drawdown_limit: float = 0.35
@@ -324,25 +326,25 @@ class BacktestSummaryMetrics(BaseModel):
     max_drawdown: float
     total_trades: int
     win_rate: float
-    total_fees_paid: float
+    total_fees_paid: Decimal
 
 
 class BacktestPoint(BaseModel):
     timestamp: str
-    equity: float
-    benchmark_equity: float
+    equity: Decimal
+    benchmark_equity: Decimal
     drawdown: float
-    asset_price: float
+    asset_price: Decimal
 
 
 class BacktestTrade(BaseModel):
     date: str
     asset: str
     side: Literal["BUY", "SELL"]
-    size: float
-    price: float
-    pnl: float
-    fee: float
+    size: Decimal
+    price: Decimal
+    pnl: Decimal
+    fee: Decimal
 
 
 class BacktestResult(BaseModel):

@@ -47,7 +47,7 @@ export function Overview() {
     queryKey: ["decisions", "recent"],
     queryFn: () => api.decisions({ limit: 10 }),
   });
-  const subsidy = useQuery({ queryKey: ["subsidy"], queryFn: api.subsidy });
+  const subsidy = useQuery({ queryKey: ["subsidy"], queryFn: api.subsidy, refetchInterval: 15_000 });
 
   if (status.isLoading) return <p>Loading…</p>;
   if (status.isError || !status.data) return <p>Could not load status.</p>;

@@ -293,6 +293,42 @@ def test_throttled_when_daily_cap_hit(session, monkeypatch) -> None:
     assert snap.booster_fees_30d_usd == Decimal("10")
 
 
+def test_throttled_when_daily_cap_within_min_order(session, monkeypatch) -> None:
+    """Spec W1.3h: $4.85 of cap room left cannot fund the $10-minimum
+    paper order, so the sleeve reports throttled, not active."""
+    _enable(monkeypatch)
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    _fill(
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("1995.15"),
+        at=NOW - timedelta(hours=1),
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "throttled"
+    assert snap.reason == "Daily booster cap reached."
+    assert snap.today_booster_volume_usd == Decimal("1995.15")
+
+
+def test_throttled_when_target_within_min_order(session, monkeypatch) -> None:
+    """Spec W1.3h: under $10 of remaining target volume throttles too;
+    the remaining-to-target label still reports the exact $4.85."""
+    _enable(monkeypatch)
+    _fill(
+        session,
+        sleeve="trend",
+        notional=Decimal("9995.15"),
+        at=NOW - timedelta(days=1),
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "throttled"
+    assert snap.reason == "Target fee tier volume reached."
+    assert snap.remaining_to_target_usd == Decimal("4.85")
+
+
 def test_active_and_maker_only_plan(session, monkeypatch) -> None:
     _enable(monkeypatch)
     for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):

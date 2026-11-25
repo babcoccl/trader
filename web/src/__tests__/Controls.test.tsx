@@ -44,6 +44,9 @@ function defaultSettings() {
     { key: "subsidy_daily_cap_usd", value: 2000, updated_at: null },
     { key: "subsidy_adx_max", value: 20, updated_at: null },
     { key: "subsidy_order_notional_usd", value: 250, updated_at: null },
+    { key: "subsidy_order_levels", value: 3, updated_at: null },
+    { key: "subsidy_spread_bps", value: 8.5, updated_at: null },
+    { key: "subsidy_refresh_seconds", value: 15, updated_at: null },
     { key: "auto_approve_enabled", value: false, updated_at: null },
     { key: "auto_approve_max_notional_usd", value: 750, updated_at: null },
     { key: "auto_approve_max_loss_pct", value: 0.015, updated_at: null },
@@ -221,6 +224,65 @@ describe("Controls", () => {
     await userEvent.type(lossInput, "2");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(putSettingMock).toHaveBeenCalledWith("auto_approve_max_loss_pct", 0.02);
+
+    // Ping-pong ladder settings render with formatted values.
+    const levelsRow = screen.getByText("Ping-pong order levels").closest("tr")!;
+    expect(levelsRow).toHaveTextContent("3 per side");
+    const spreadRow = screen.getByText("Ping-pong spread").closest("tr")!;
+    expect(spreadRow).toHaveTextContent("8.5 bps");
+    const refreshRow = screen.getByText("Ping-pong refresh").closest("tr")!;
+    expect(refreshRow).toHaveTextContent("15s");
+
+    // Order levels saves as a parsed integer.
+    putSettingMock.mockResolvedValue({
+      key: "subsidy_order_levels",
+      value: 4,
+      updated_at: "2026-11-21T12:03:00Z",
+    });
+    await userEvent.click(
+      Array.from(levelsRow.querySelectorAll("button")).find(
+        (b) => b.textContent === "Edit",
+      )!,
+    );
+    const levelsInput = screen.getByLabelText("Ping-pong order levels value");
+    await userEvent.clear(levelsInput);
+    await userEvent.type(levelsInput, "4");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(putSettingMock).toHaveBeenCalledWith("subsidy_order_levels", 4);
+
+    // Spread saves as a parsed float.
+    putSettingMock.mockResolvedValue({
+      key: "subsidy_spread_bps",
+      value: 12.5,
+      updated_at: "2026-11-21T12:04:00Z",
+    });
+    await userEvent.click(
+      Array.from(spreadRow.querySelectorAll("button")).find(
+        (b) => b.textContent === "Edit",
+      )!,
+    );
+    const spreadInput = screen.getByLabelText("Ping-pong spread value");
+    await userEvent.clear(spreadInput);
+    await userEvent.type(spreadInput, "12.5");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(putSettingMock).toHaveBeenCalledWith("subsidy_spread_bps", 12.5);
+
+    // Refresh saves as a parsed integer.
+    putSettingMock.mockResolvedValue({
+      key: "subsidy_refresh_seconds",
+      value: 30,
+      updated_at: "2026-11-21T12:05:00Z",
+    });
+    await userEvent.click(
+      Array.from(refreshRow.querySelectorAll("button")).find(
+        (b) => b.textContent === "Edit",
+      )!,
+    );
+    const refreshInput = screen.getByLabelText("Ping-pong refresh value");
+    await userEvent.clear(refreshInput);
+    await userEvent.type(refreshInput, "30");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(putSettingMock).toHaveBeenCalledWith("subsidy_refresh_seconds", 30);
   });
 
   it("shows read-only limits; autonomy and approval expiry have no edit button", async () => {

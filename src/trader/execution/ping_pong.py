@@ -217,7 +217,15 @@ class PingPongWorker:
                 with session.begin_nested():
                     session.add(fill)
                     accounting.apply_fill(session, fill)
-                    booked += fill.price * fill.quantity
+                    # Only ping-pong fills spend booster budget; other
+                    # sleeves' fills must still be booked but not deducted.
+                    plan = (
+                        session.get(Plan, filled_order.plan_id)
+                        if filled_order is not None
+                        else None
+                    )
+                    if plan is not None and plan.sleeve == subsidy.SLEEVE:
+                        booked += fill.price * fill.quantity
             except ValueError as exc:
                 if filled_order is not None:
                     filled_order.status = "rejected"

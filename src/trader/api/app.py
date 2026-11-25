@@ -26,6 +26,7 @@ from trader.api.routes import (
     settings,
     shadow,
     status,
+    subsidy,
 )
 from trader.core.config import get_settings
 from trader.core.db import session_scope
@@ -77,6 +78,7 @@ for r in (
     backtest.router,
     rules.router,
     shadow.router,
+    subsidy.router,
     settings.router,
     controls.router,
     sse.router,

@@ -294,6 +294,26 @@ class ShadowOut(BaseModel):
     sleeves: list[ShadowSleeveOut]
 
 
+class SubsidyOut(BaseModel):
+    mode: str
+    status: Literal["active", "throttled", "disabled"]
+    reason: str
+    trailing_30d_volume_usd: Decimal
+    today_booster_volume_usd: Decimal
+    booster_trades_30d: int
+    booster_volume_30d_usd: Decimal
+    booster_fees_30d_usd: Decimal
+    tier: str
+    maker_bps: float
+    taker_bps: float
+    target_volume_usd: Decimal
+    remaining_to_target_usd: Decimal
+    progress_pct: float
+    daily_cap_usd: Decimal
+    adx: float | None
+    adx_max: float
+
+
 class BacktestParams(BaseModel):
     strategy_sleeve: str = "trend_momentum"
     asset_universe: list[str] = ["BTC-USD", "ETH-USD"]

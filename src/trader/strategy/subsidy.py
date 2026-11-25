@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Literal
 
+import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -47,6 +48,8 @@ TRAILING_WINDOW = timedelta(days=30)
 # the rolling volume never drops out of the target fee tier (spec W1.4b).
 EXPIRY_LOOKAHEAD = timedelta(days=5)
 ADX_LOOKBACK_DAYS = 120
+# 15 days of 5m candles yield ~90 4h bars, covering Wilder ADX(14) warmup.
+ADX_4H_LOOKBACK_DAYS = 15
 _OPEN_PLAN_STATUSES = ("pending", "approved")
 _OPEN_ORDER_STATUSES = ("new", "open", "partially_filled")
 RECENT_FILLS_LIMIT = 25
@@ -252,8 +255,43 @@ def _recent_fills(
     ]
 
 
+def _one_source(df: pd.DataFrame) -> pd.DataFrame:
+    """One row per open_time, from the source covering the most candles
+    (same rule as daily_cycle)."""
+    if df["source"].nunique() <= 1:
+        return df
+    preferred = df["source"].value_counts().idxmax()
+    df = df.assign(_primary=(df["source"] != preferred))
+    df = df.sort_values("_primary", kind="stable")
+    df = df[~df.index.duplicated(keep="first")].drop(columns="_primary")
+    return df.sort_index()
+
+
 def _latest_adx(session: Session, now: datetime) -> float | None:
-    """ADX of the last daily BTC-USD candle; None when undefined."""
+    """BTC-USD ADX(14) on 4h bars resampled from stored 5m candles (fresh
+    every 5 minutes); falls back to the daily-candle ADX when 5m history
+    is too short for Wilder warmup. None when undefined."""
+    df = candles_mod.load(
+        session,
+        SYMBOL,
+        "5m",
+        now - timedelta(days=ADX_4H_LOOKBACK_DAYS),
+        now + timedelta(minutes=5),
+    )
+    if not df.empty:
+        df = _one_source(df)
+        df.index = pd.to_datetime(df.index, utc=True)
+        bars = (
+            df.resample("4h")
+            .agg({"high": "max", "low": "min", "close": "last"})
+            .dropna()
+        )
+        if not bars.empty:
+            a = regime.adx(bars["high"], bars["low"], bars["close"]).iloc[-1]
+            if a == a:  # noqa: PLR0124 (NaN != NaN)
+                return float(a)
+    # Cold start (under ~28 four-hour bars of 5m data): keep the gate on
+    # the previous daily-candle reading rather than degrading to None.
     df = candles_mod.load(
         session,
         SYMBOL,
@@ -263,14 +301,7 @@ def _latest_adx(session: Session, now: datetime) -> float | None:
     )
     if df.empty:
         return None
-    # One day may exist from several venues: keep one row per open_time,
-    # from the source covering the most days (same rule as daily_cycle).
-    if df["source"].nunique() > 1:
-        preferred = df["source"].value_counts().idxmax()
-        df = df.assign(_primary=(df["source"] != preferred))
-        df = df.sort_values("_primary", kind="stable")
-        df = df[~df.index.duplicated(keep="first")].drop(columns="_primary")
-        df = df.sort_index()
+    df = _one_source(df)
     a = regime.adx(df["high"], df["low"], df["close"]).iloc[-1]
     return None if a != a else float(a)  # noqa: PLR0124 (NaN != NaN)
 

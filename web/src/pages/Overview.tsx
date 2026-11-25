@@ -116,7 +116,7 @@ export function Overview() {
                 {subsidy.data.tier} ({subsidy.data.maker_bps} / {subsidy.data.taker_bps} bps)
               </span>
               <span>
-                BTC ADX {subsidy.data.adx === null ? "—" : subsidy.data.adx.toFixed(1)}
+                BTC ADX (4h) {subsidy.data.adx === null ? "—" : subsidy.data.adx.toFixed(1)}
               </span>
             </div>
             <div

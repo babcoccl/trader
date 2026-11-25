@@ -73,6 +73,39 @@ def _daily_candles(symbol: str, n: int, base: float, drift: float) -> list[Candl
     return candles
 
 
+def _five_min_candles(symbol: str, n: int, base: float, drift: float) -> list[Candle]:
+    """``n`` 5m candles ending at NOW. ``drift`` 0 is a daily sine-wave
+    sideways tape (4h ADX < 20); a positive drift is a steady climb
+    (4h ADX > 20)."""
+    i = np.arange(n)
+    if drift == 0:
+        rng = np.random.default_rng(3)
+        closes = base * (
+            1 + 0.005 * np.sin(2 * np.pi * i / 288) + rng.normal(0, 0.0005, n)
+        )
+    else:
+        rng = np.random.default_rng(7)
+        closes = base * np.exp(np.cumsum(rng.normal(drift, 0.001, n)))
+    candles: list[Candle] = []
+    for k in range(n):
+        open_time = NOW - timedelta(minutes=5 * (n - k))
+        c = Decimal(str(round(float(closes[k]), 2)))
+        candles.append(
+            Candle(
+                symbol=symbol,
+                interval="5m",
+                open_time=open_time,
+                open=c,
+                high=c * Decimal("1.0005"),
+                low=c * Decimal("0.9995"),
+                close=c,
+                volume=Decimal("0"),
+                source="fixture",
+            )
+        )
+    return candles
+
+
 def _five_min_close(symbol: str, price: str) -> Candle:
     return Candle(
         symbol=symbol,
@@ -271,6 +304,48 @@ def test_throttled_when_adx_missing_or_high(session, monkeypatch) -> None:
     assert snap.status == "throttled"
     assert "ADX" in snap.reason
     assert snap.adx is not None and snap.adx >= 20
+
+
+def test_adx_prefers_4h_bars_from_5m_candles(session, monkeypatch) -> None:
+    """Spec W1.4c: with enough 5m history the gate reads a 4h ADX, which
+    wins over a contradictory 1d reading in both directions."""
+    _enable(monkeypatch)
+    # Trending 1d candles (ADX > 20) but a sideways 4h tape -> active.
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.02):
+        session.add(candle)
+    for candle in _five_min_candles("BTC-USD", 2400, 60000, drift=0.0):
+        session.add(candle)
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "active"
+    assert snap.adx is not None and snap.adx < 20
+
+
+def test_adx_4h_throttles_when_5m_tape_trends(session, monkeypatch) -> None:
+    """Sideways 1d candles but a trending 4h tape -> throttled."""
+    _enable(monkeypatch)
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    for candle in _five_min_candles("BTC-USD", 2400, 60000, drift=0.0005):
+        session.add(candle)
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "throttled"
+    assert "ADX" in snap.reason
+    assert snap.adx is not None and snap.adx >= 20
+
+
+def test_adx_falls_back_to_1d_when_5m_history_short(session, monkeypatch) -> None:
+    """One 5m candle is too few for a 4h ADX(14); the daily reading
+    keeps the gate defined instead of degrading to None."""
+    _enable(monkeypatch)
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    session.add(_five_min_close("BTC-USD", "60000"))
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "active"
+    assert snap.adx is not None and snap.adx < 20
 
 
 def test_throttled_when_daily_cap_hit(session, monkeypatch) -> None:

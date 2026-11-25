@@ -17,10 +17,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from trader.core.clock import Clock
+from trader.core.config import get_settings
 from trader.data import candles as candles_mod
 from trader.data.sources.base import SYMBOLS
 from trader.ledger.models import Decision, Plan, Signal
-from trader.strategy import dip_bid
+from trader.risk import engine as risk_engine
+from trader.strategy import dip_bid, subsidy
 
 log = logging.getLogger(__name__)
 
@@ -200,4 +202,15 @@ def run(session: Session, clock: Clock) -> Decision:
     )
     session.add(row)
     session.flush()
+
+    # Spec W1.2b: the ping-pong subsidy may add one plan per pass. It is
+    # isolated so a subsidy failure can never break stop/dip-bid checks,
+    # and it never proposes while trading is halted.
+    settings = get_settings()
+    if settings.subsidy_enabled:
+        try:
+            if not risk_engine.state(session, clock).halted:
+                subsidy.propose_ping_pong_plan(session, clock, settings.mode)
+        except Exception:
+            log.exception("ping-pong subsidy check failed")
     return row

@@ -1,5 +1,6 @@
 """Application settings, loaded from environment variables prefixed TRADER_."""
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
@@ -36,6 +37,13 @@ class Settings(BaseSettings):
     coinbase_key: str = Field(default="", repr=False)
     coinbase_secret: str = Field(default="", repr=False)
     coinbase_base_url: str = "https://api.coinbase.com"
+    # Ping-pong subsidy sleeve (spec W1.2b): capped maker-only BTC-USD
+    # volume booster aimed at the next Coinbase fee tier. Off by default.
+    subsidy_enabled: bool = False
+    subsidy_target_volume_usd: Decimal = Decimal("10000")
+    subsidy_daily_cap_usd: Decimal = Decimal("2000")
+    subsidy_adx_max: float = 20.0
+    subsidy_order_notional_usd: Decimal = Decimal("250")
 
     @property
     def symbol_list(self) -> tuple[str, ...]:

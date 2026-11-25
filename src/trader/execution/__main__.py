@@ -358,16 +358,25 @@ class Executor:
             if order.status not in ("new", "open", "partially_filled"):
                 continue  # settled by a fill collected earlier in this loop
             plan = plans[order.plan_id]
+            # Maker-or-cancel orders (spec W1.2b) never convert to a taker
+            # fill: at TTL they cancel, and they are never repriced into a
+            # quote that could lift the ask.
+            maker_only = any(
+                isinstance(spec, dict)
+                and spec.get("maker_or_cancel")
+                and not spec.get("market_after_seconds")
+                for spec in plan.entry_orders
+            )
             if now > _approved_at(plan) + LIMIT_TTL:
                 remaining = self._cancel_for_replace(session, adapter, order, now)
-                if remaining > 0:
+                if not maker_only and remaining > 0:
                     adapter.place(
                         self._new_order(
                             session, plan, type="market", quantity=remaining
                         )
                     )
                 continue
-            if order.side == "buy":
+            if order.side == "buy" and not maker_only:
                 candle = _newest_candle(session, order.symbol)
                 if (
                     candle is not None

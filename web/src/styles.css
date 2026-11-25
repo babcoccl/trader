@@ -550,6 +550,79 @@ button.link {
   resize: vertical;
 }
 
+.subsidy-card__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.subsidy-card__badge--active {
+  background: rgb(62 237 155 / 0.2);
+  color: #00a558;
+}
+
+.subsidy-card__badge--throttled {
+  background: rgb(245 158 11 / 0.15);
+  color: #b45309;
+}
+
+.subsidy-card__badge--disabled {
+  background: rgb(245 59 58 / 0.12);
+  color: #f53b3a;
+}
+
+.subsidy-card__reason {
+  margin: 0 0 10px;
+}
+
+.subsidy-card__tier,
+.subsidy-card__progress-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.subsidy-card__tier {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.08);
+  overflow: hidden;
+}
+
+.progress__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+}
+
+.subsidy-card__progress-labels {
+  color: rgb(25 25 25 / 0.56);
+  margin-top: 6px;
+}
+
+.subsidy-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  border-top: 1px solid rgb(0 0 0 / 0.06);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.subsidy-stats__value {
+  font-size: 16px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
 @media (max-width: 560px) {
   .shell {
     padding: 12px;

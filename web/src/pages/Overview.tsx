@@ -12,6 +12,15 @@ import {
 import { api } from "../api/client";
 import { pct, timeAgo, usd } from "../lib/time";
 
+function usdCents(value: string | number): string {
+  return Number(value).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function StatCard({ title, value, sub }: { title: string; value: string; sub?: string }) {
   return (
     <div className="card stat-card">
@@ -37,6 +46,7 @@ export function Overview() {
     queryKey: ["decisions", "recent"],
     queryFn: () => api.decisions({ limit: 10 }),
   });
+  const subsidy = useQuery({ queryKey: ["subsidy"], queryFn: api.subsidy });
 
   if (status.isLoading) return <p>Loading…</p>;
   if (status.isError || !status.data) return <p>Could not load status.</p>;
@@ -68,6 +78,73 @@ export function Overview() {
           value={String(s.pending_plans)}
           sub={s.pending_plans === 1 ? "plan waiting" : "plans waiting"}
         />
+      </div>
+
+      <div className="card subsidy-card">
+        <div className="card__title subsidy-card__title">
+          Fee-Tier Subsidy
+          {subsidy.data ? (
+            <span className={`badge subsidy-card__badge subsidy-card__badge--${subsidy.data.status}`}>
+              {subsidy.data.status[0].toUpperCase() + subsidy.data.status.slice(1)}
+            </span>
+          ) : null}
+        </div>
+        {subsidy.isError ? (
+          <p className="muted">Could not load subsidy status.</p>
+        ) : !subsidy.data ? (
+          <p className="muted">Loading subsidy status…</p>
+        ) : (
+          <>
+            <p className="muted subsidy-card__reason">{subsidy.data.reason}</p>
+            <div className="subsidy-card__tier">
+              <span>
+                {subsidy.data.tier} ({subsidy.data.maker_bps} / {subsidy.data.taker_bps} bps)
+              </span>
+              <span>
+                BTC ADX {subsidy.data.adx === null ? "—" : subsidy.data.adx.toFixed(1)}
+              </span>
+            </div>
+            <div
+              className="progress"
+              role="progressbar"
+              aria-label="Fee-tier progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={subsidy.data.progress_pct * 100}
+            >
+              <div
+                className="progress__fill"
+                style={{ width: `${subsidy.data.progress_pct * 100}%` }}
+              />
+            </div>
+            <div className="subsidy-card__progress-labels">
+              <span>
+                {usd(subsidy.data.trailing_30d_volume_usd)} of{" "}
+                {usd(subsidy.data.target_volume_usd)} ·{" "}
+                {(subsidy.data.progress_pct * 100).toFixed(1)}%
+              </span>
+              <span>{usd(subsidy.data.remaining_to_target_usd)} to next tier</span>
+            </div>
+            <div className="subsidy-stats">
+              <div>
+                <div className="stat-card__title">Booster Trades</div>
+                <div className="subsidy-stats__value">{subsidy.data.booster_trades_30d}</div>
+              </div>
+              <div>
+                <div className="stat-card__title">Booster Volume</div>
+                <div className="subsidy-stats__value">
+                  {usd(subsidy.data.booster_volume_30d_usd)}
+                </div>
+              </div>
+              <div>
+                <div className="stat-card__title">Booster Fees Spent</div>
+                <div className="subsidy-stats__value">
+                  {usdCents(subsidy.data.booster_fees_30d_usd)}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="card">

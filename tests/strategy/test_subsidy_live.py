@@ -522,9 +522,19 @@ def test_open_orders_usd(session, monkeypatch) -> None:
 
 def test_booster_net_pnl_30d_fifo(session, monkeypatch) -> None:
     """Spec W1.3e: FIFO spread gain minus every ping_pong fee in 30d.
-    Buy 0.01 @ 49,000 (fee 1.96), sell 0.01 @ 50,000 (fee 2.00): the
-    $10 spread minus $3.96 in fees is $6.04."""
+    The in-window sell matches the oldest open lot — the 40-day-old
+    0.01 @ 48,000 buy, not the newer 0.01 @ 49,000 — so spread is
+    0.01 * (50,000 - 48,000) = $20; minus in-window fees (1.96 + 2.00)
+    and the pre-window buy's fee is outside the window, giving $16.04."""
     _enable(monkeypatch)
+    _fill(
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("480"),
+        side="buy",
+        price=Decimal("48000"),
+        at=NOW - timedelta(days=40),
+    )
     _fill(
         session,
         sleeve="ping_pong",
@@ -551,7 +561,7 @@ def test_booster_net_pnl_30d_fifo(session, monkeypatch) -> None:
     )
     session.flush()
     snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
-    assert snap.booster_net_pnl_30d_usd == Decimal("6.04")
+    assert snap.booster_net_pnl_30d_usd == Decimal("16.04")
 
 
 def test_booster_net_pnl_counts_unclosed_fees(session, monkeypatch) -> None:

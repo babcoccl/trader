@@ -107,11 +107,10 @@ class SubsidySnapshot:
 
 def _fills_30d(
     session: Session, mode: str, now: datetime
-) -> list[tuple[datetime, str, Decimal, Decimal, Decimal, str | None]]:
-    """(time, side, price, quantity, fee, sleeve) of non-shadow fills in
-    ``mode``, oldest first for FIFO matching."""
+) -> list[tuple[datetime, Decimal, Decimal, Decimal, str | None]]:
+    """(time, price, quantity, fee, sleeve) of non-shadow fills in ``mode``."""
     rows = session.execute(
-        select(Fill.time, Order.side, Fill.price, Fill.quantity, Fill.fee, Plan.sleeve)
+        select(Fill.time, Fill.price, Fill.quantity, Fill.fee, Plan.sleeve)
         .join(Order, Fill.order_id == Order.id)
         .join(Plan, Order.plan_id == Plan.id)
         .where(
@@ -119,9 +118,8 @@ def _fills_30d(
             Order.shadow.is_(False),
             Fill.time >= now - TRAILING_WINDOW,
         )
-        .order_by(Fill.time, Fill.id)
     ).all()
-    return [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
+    return [(r[0], r[1], r[2], r[3], r[4]) for r in rows]
 
 
 def _open_orders_usd(session: Session, mode: str) -> Decimal:
@@ -157,6 +155,49 @@ def _open_orders_usd(session: Session, mode: str) -> Decimal:
             Decimal("0"),
         )
     )
+
+
+def _booster_net_pnl_30d(session: Session, mode: str, now: datetime) -> Decimal:
+    """FIFO-matched spread gain/loss on 30-day ping_pong fills minus every
+    ping_pong fee in the window. Lots are built from all-time fills so a
+    sale matches its real cost basis rather than a newer in-window buy;
+    only fills inside the window contribute to the result."""
+    rows = session.execute(
+        select(Fill.time, Order.side, Fill.price, Fill.quantity, Fill.fee)
+        .join(Order, Fill.order_id == Order.id)
+        .join(Plan, Order.plan_id == Plan.id)
+        .where(
+            Plan.sleeve == SLEEVE,
+            Order.mode == mode,
+            Order.shadow.is_(False),
+        )
+        .order_by(Fill.time, Fill.id)
+    ).all()
+    window_start = now - TRAILING_WINDOW
+    net = Decimal("0")
+    buy_lots: deque[list[Decimal]] = deque()  # FIFO [price, remaining qty]
+    for time, side, price, quantity, fee in rows:
+        in_window = time >= window_start
+        if in_window:
+            # Every ping-pong fee reduces the realized net, even before a
+            # round-trip closes.
+            net -= fee
+        if side == "buy":
+            buy_lots.append([price, quantity])
+            continue
+        remaining = quantity
+        while remaining > 0 and buy_lots:
+            lot = buy_lots[0]
+            take = min(lot[1], remaining)
+            if in_window:
+                net += take * (price - lot[0])
+            lot[1] -= take
+            remaining -= take
+            if lot[1] == 0:
+                buy_lots.popleft()
+        # A sell with no ping-pong buy left sold inventory opened by
+        # another sleeve; only its fee enters the net.
+    return _q(net)
 
 
 def _recent_fills(session: Session, mode: str) -> list[SubsidyFill]:
@@ -222,33 +263,13 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
     booster_volume = Decimal("0")
     booster_fees = Decimal("0")
     today_start = now - BOOSTER_WINDOW
-    net_pnl = Decimal("0")
-    buy_lots: deque[list[Decimal]] = deque()  # FIFO [price, remaining qty]
-    for time, side, price, quantity, fee, sleeve in rows:
+    for time, price, quantity, fee, sleeve in rows:
         notional = abs(quantity * price)
         trailing += notional
         if sleeve == SLEEVE:
             booster_trades += 1
             booster_volume += notional
             booster_fees += fee
-            # Every ping-pong fee reduces the realized net, even before a
-            # round-trip closes.
-            net_pnl -= fee
-            if side == "buy":
-                buy_lots.append([price, quantity])
-            else:
-                remaining = quantity
-                while remaining > 0 and buy_lots:
-                    lot = buy_lots[0]
-                    take = min(lot[1], remaining)
-                    net_pnl += take * (price - lot[0])
-                    lot[1] -= take
-                    remaining -= take
-                    if lot[1] == 0:
-                        buy_lots.popleft()
-                # A sell with no 30d ping-pong buy left realizes no spread
-                # PnL (its cost basis predates the window or came from
-                # another sleeve); its fee is still counted above.
             if time >= today_start:
                 booster_today += notional
 
@@ -297,7 +318,7 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
         adx=adx,
         adx_max=adx_max,
         open_orders_usd=_open_orders_usd(session, mode),
-        booster_net_pnl_30d_usd=_q(net_pnl),
+        booster_net_pnl_30d_usd=_booster_net_pnl_30d(session, mode, now),
         recent_fills=_recent_fills(session, mode),
     )
 

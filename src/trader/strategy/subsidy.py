@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from trader.backtest.costs import BITSTAMP
 from trader.core.clock import Clock
 from trader.core.config import get_settings
+from trader.core.runtime_settings import load_runtime_overrides
 from trader.data import candles as candles_mod
 from trader.data.sources.base import ASSETS
 from trader.ledger import accounting
@@ -131,6 +132,7 @@ def _latest_adx(session: Session, now: datetime) -> float | None:
 def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot:
     """Fee-tier progress, 30-day booster spend and active/throttled state."""
     settings = get_settings()
+    overrides = load_runtime_overrides(session)
     now = clock.now()
     rows = _fills_30d(session, mode, now)
 
@@ -150,9 +152,9 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
             if time >= today_start:
                 booster_today += notional
 
-    target = settings.subsidy_target_volume_usd
-    daily_cap = settings.subsidy_daily_cap_usd
-    adx_max = settings.subsidy_adx_max
+    target = overrides.subsidy_target_volume_usd
+    daily_cap = overrides.subsidy_daily_cap_usd
+    adx_max = overrides.subsidy_adx_max
     tier, maker_bps, taker_bps = _tier(trailing)
     remaining = max(Decimal("0"), target - trailing)
     progress = min(1.0, float(trailing / target)) if target > 0 else 1.0
@@ -160,7 +162,7 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
 
     status: Literal["active", "throttled", "disabled"]
     reason: str
-    if not settings.subsidy_enabled:
+    if not overrides.subsidy_enabled:
         status, reason = "disabled", "Subsidy sleeve is disabled."
     elif settings.venue != "coinbase":
         status, reason = (
@@ -236,6 +238,7 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
     ``risk.check_plan`` vetoes the plan.
     """
     settings = get_settings()
+    overrides = load_runtime_overrides(session)
     if settings.venue != "coinbase":
         # The sleeve exists to reach a Coinbase fee tier; on any other
         # venue its volume buys nothing.
@@ -260,7 +263,7 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
         return None
 
     notional = min(
-        settings.subsidy_order_notional_usd,
+        overrides.subsidy_order_notional_usd,
         snapshot.remaining_to_target_usd,
         snapshot.daily_cap_usd - snapshot.today_booster_volume_usd,
     )
@@ -332,7 +335,7 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
         rationale=(
             f"I would like to {side} ${notional} of {SYMBOL} as a "
             "maker-or-cancel ping-pong order to move the trailing 30-day "
-            f"volume toward the {settings.subsidy_target_volume_usd} fee-tier "
+            f"volume toward the {overrides.subsidy_target_volume_usd} fee-tier "
             "target."
         ),
         expires_at=now + builder.APPROVAL_EXPIRY,

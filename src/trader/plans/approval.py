@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from trader.core.clock import Clock, SystemClock
 from trader.core.config import get_settings
+from trader.core.runtime_settings import load_runtime_overrides
 from trader.data.sources.base import SYMBOLS
 from trader.execution.paper import PRIMARY_SOURCE
 from trader.ledger import accounting
@@ -224,19 +225,40 @@ def maybe_auto_approve(
     refuses it and the plan stays ``pending``.
     """
     settings = get_settings()
-    if not settings.auto_approve_enabled or plan.status != "pending":
+    overrides = load_runtime_overrides(session)
+    if plan.status != "pending":
+        return False
+    limits = limits or Limits.load(session)
+    # str(): the column Literal predates the ping_pong sleeve (spec W1.2b).
+    if str(plan.sleeve) == "ping_pong" and overrides.subsidy_enabled:
+        # Autonomous ping-pong (spec W1.3b): the sleeve is already capped by
+        # the subsidy limits, so the notional and loss-pct gates do not
+        # apply. approve() still runs risk.check_plan and refuses while
+        # halted.
+        try:
+            approve(
+                session,
+                plan.id,
+                size_fraction=Decimal("1"),
+                clock=clock,
+                limits=limits,
+                actor="auto",
+            )
+        except ApprovalError:
+            return False
+        return True
+    if not overrides.auto_approve_enabled:
         return False
     notional = sum(
         Decimal(str(o["quantity"])) * Decimal(str(o["price"] or plan.reference_price))
         for o in plan.entry_orders
     )
-    if notional > settings.auto_approve_max_notional_usd:
+    if notional > overrides.auto_approve_max_notional_usd:
         return False
     # A stale quote on a held asset can overstate equity and inflate the
     # loss bound. Only held assets' prices feed equity (the plan's own
     # symbol freshness is tested by approve() -> risk.check_plan), so
     # unheld symbols may be stale without blocking auto-approval.
-    limits = limits or Limits.load(session)
     held = set(accounting.positions(session, settings.mode))
     price_age = risk.state(session, clock).price_age_seconds
     if any(
@@ -247,7 +269,7 @@ def maybe_auto_approve(
         return False
     equity = accounting.equity(session, settings.mode, _latest_prices(session))
     if equity <= 0 or (plan.worst_case_loss / equity) > (
-        settings.auto_approve_max_loss_pct
+        overrides.auto_approve_max_loss_pct
     ):
         return False
     try:

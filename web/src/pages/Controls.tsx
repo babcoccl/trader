@@ -25,6 +25,70 @@ const EDITABLE: EditableSpec[] = [
     input: "text",
     format: (v) => `${v} UTC`,
   },
+  {
+    key: "subsidy_enabled",
+    label: "Fee-tier subsidy",
+    input: "select",
+    options: [
+      { value: "true", label: "Enabled" },
+      { value: "false", label: "Disabled" },
+    ],
+    parse: (raw) => raw === "true",
+    format: (v) => (v ? "Enabled" : "Disabled"),
+  },
+  {
+    key: "subsidy_target_volume_usd",
+    label: "Subsidy target volume",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `$${Number(v).toLocaleString()}`,
+  },
+  {
+    key: "subsidy_daily_cap_usd",
+    label: "Subsidy daily cap",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `$${Number(v).toLocaleString()}`,
+  },
+  {
+    key: "subsidy_adx_max",
+    label: "Subsidy max ADX",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `${v}`,
+  },
+  {
+    key: "subsidy_order_notional_usd",
+    label: "Subsidy order size",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `$${Number(v).toLocaleString()}`,
+  },
+  {
+    key: "auto_approve_enabled",
+    label: "Auto-approve small plans",
+    input: "select",
+    options: [
+      { value: "true", label: "Enabled" },
+      { value: "false", label: "Disabled" },
+    ],
+    parse: (raw) => raw === "true",
+    format: (v) => (v ? "Enabled" : "Disabled"),
+  },
+  {
+    key: "auto_approve_max_notional_usd",
+    label: "Auto-approve max notional",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `$${Number(v).toLocaleString()}`,
+  },
+  {
+    key: "auto_approve_max_loss_pct",
+    label: "Auto-approve max loss",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `${(Number(v) * 100).toFixed(1)}%`,
+  },
 ];
 
 function SettingRow({ spec, value }: { spec: EditableSpec; value: unknown }) {
@@ -39,6 +103,7 @@ function SettingRow({ spec, value }: { spec: EditableSpec; value: unknown }) {
       setEditing(false);
       setError(null);
       void queryClient.invalidateQueries({ queryKey: ["settings"] });
+      void queryClient.invalidateQueries({ queryKey: ["subsidy"] });
     },
     onError: (e) =>
       setError(e instanceof ApiError ? `Rejected (${e.status}): ${e.message}` : "Save failed."),
@@ -94,11 +159,7 @@ function SettingRow({ spec, value }: { spec: EditableSpec; value: unknown }) {
               type="button"
               className="link"
               onClick={() => {
-                setRaw(
-                  spec.input === "select"
-                    ? (spec.options?.[0]?.value ?? String(value))
-                    : String(value),
-                );
+                setRaw(String(value));
                 setEditing(true);
                 setError(null);
               }}

@@ -1048,3 +1048,57 @@ def test_shadow_empty_state(seeded) -> None:
     assert slv["winning_trades"] == 0
     assert float(slv["fees_usd"]) == 0
     assert slv["open"] == [] and slv["recent_closed"] == []
+
+
+def test_subsidy_settings_editable(seeded) -> None:
+    """Spec W1.3b: subsidy and auto-approve keys persist through the API,
+    report the .env default when no row exists, and reject bad values."""
+    client, _, engine = seeded
+    _login(client)
+    rows = {r["key"]: r["value"] for r in client.get("/api/settings").json()}
+    # No rows yet: defaults come from get_settings() (the env defaults).
+    assert rows["subsidy_enabled"] is False
+    assert rows["subsidy_adx_max"] == 20.0
+    assert rows["auto_approve_enabled"] is False
+    assert rows["auto_approve_max_loss_pct"] == pytest.approx(0.015)
+
+    r = client.put("/api/settings/subsidy_adx_max", json={"value": 25})
+    assert r.status_code == 200
+    assert r.json()["value"] == 25
+    r = client.put("/api/settings/subsidy_enabled", json={"value": True})
+    assert r.status_code == 200
+    assert r.json()["value"] is True
+    with Session(engine) as s:
+        audit = s.scalars(
+            select(AuditLog).where(AuditLog.action == "set subsidy_enabled")
+        ).all()
+        assert len(audit) == 1
+    rows = {r["key"]: r["value"] for r in client.get("/api/settings").json()}
+    assert rows["subsidy_adx_max"] == 25
+    assert rows["subsidy_enabled"] is True
+
+    # Out-of-range and wrong-type values are rejected.
+    assert (
+        client.put("/api/settings/subsidy_adx_max", json={"value": 0.5}).status_code
+        == 422
+    )
+    assert (
+        client.put("/api/settings/subsidy_adx_max", json={"value": 101}).status_code
+        == 422
+    )
+    assert (
+        client.put("/api/settings/subsidy_enabled", json={"value": "yes"}).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            "/api/settings/auto_approve_max_loss_pct", json={"value": 0.5}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            "/api/settings/subsidy_daily_cap_usd", json={"value": 10}
+        ).status_code
+        == 422
+    )

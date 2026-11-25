@@ -12,6 +12,7 @@ stored rows did nothing).
 """
 
 import re
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -51,12 +52,65 @@ def _rate(v: Any) -> float:
     return x
 
 
+def _strict_bool(key: str) -> Any:
+    def validate(v: Any) -> bool:
+        if not isinstance(v, bool):
+            raise ValueError(f"{key} must be a boolean")
+        return v
+
+    return validate
+
+
+def _ranged(key: str, lo: float, hi: float) -> Any:
+    def validate(v: Any) -> float:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError(f"{key} must be a number")
+        x = float(v)
+        if not lo <= x <= hi:
+            raise ValueError(f"{key} must be between {lo} and {hi}")
+        return x
+
+    return validate
+
+
+# Sentinel: the default comes from get_settings() (the .env value), not a
+# hardcoded constant, so GET /api/settings never drifts from the env config.
+_ENV = object()
+
 EDITABLE: dict[str, tuple[Any, Any]] = {
     # key -> (default shown when no row exists, validator)
     "silence_alarm_minutes": (5, _minutes),
     "digest_time_utc": ("00:30", _hhmm),
     "t_bill_rate": (0.0, _rate),
+    "subsidy_enabled": (_ENV, _strict_bool("subsidy_enabled")),
+    "subsidy_target_volume_usd": (
+        _ENV,
+        _ranged("subsidy_target_volume_usd", 100, 10_000_000),
+    ),
+    "subsidy_daily_cap_usd": (_ENV, _ranged("subsidy_daily_cap_usd", 50, 1_000_000)),
+    "subsidy_adx_max": (_ENV, _ranged("subsidy_adx_max", 1.0, 100.0)),
+    "subsidy_order_notional_usd": (
+        _ENV,
+        _ranged("subsidy_order_notional_usd", 10, 50_000),
+    ),
+    "auto_approve_enabled": (_ENV, _strict_bool("auto_approve_enabled")),
+    "auto_approve_max_notional_usd": (
+        _ENV,
+        _ranged("auto_approve_max_notional_usd", 10, 100_000),
+    ),
+    "auto_approve_max_loss_pct": (
+        _ENV,
+        _ranged("auto_approve_max_loss_pct", 0.001, 0.10),
+    ),
 }
+
+
+def _default(key: str) -> Any:
+    default = EDITABLE[key][0]
+    if default is not _ENV:
+        return default
+    value = getattr(get_settings(), key)
+    return float(value) if isinstance(value, Decimal) else value
 
 
 def _fixed() -> dict[str, Any]:
@@ -79,9 +133,9 @@ def get_all(session: Session = SessionDep) -> list[SettingOut]:
         for r in rows.values()
     ]
     shown = set(rows)
-    for key, (default, _) in EDITABLE.items():
+    for key in EDITABLE:
         if key not in shown:
-            out.append(SettingOut(key=key, value=default, updated_at=None))
+            out.append(SettingOut(key=key, value=_default(key), updated_at=None))
     for key, value in fixed.items():
         out.append(SettingOut(key=key, value=value, updated_at=None))
     out.sort(key=lambda s: s.key)

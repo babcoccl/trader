@@ -121,6 +121,7 @@ def _plan(
     session: Session,
     symbol: str = "BTC-USD",
     status: str = "pending",
+    sleeve: str = "trend",
     quantity: str = "0.1",
     expires_at: datetime | None = None,
     reference_price: str = "60000",
@@ -133,7 +134,7 @@ def _plan(
     session.add(decision)
     session.flush()
     plan = Plan(
-        sleeve="trend",
+        sleeve=sleeve,
         symbol=symbol,
         side="buy",
         status=status,
@@ -541,3 +542,63 @@ def test_auto_approve_unheld_stale_asset_still_approves(
     plan = _plan(session, quantity="0.01", worst_case_loss="100")
     assert approval.maybe_auto_approve(session, plan, _clock()) is True
     assert plan.status == "approved"
+
+
+def _set(session: Session, key: str, value) -> None:
+    session.add(Setting(key=key, value=value, updated_at=NOW))
+    session.flush()
+
+
+def test_ping_pong_auto_approves_when_subsidy_enabled(session: Session) -> None:
+    """Autonomous ping-pong (spec W1.3b): with subsidy_enabled on in the DB,
+    a ping_pong plan approves as actor "auto" even though
+    auto_approve_enabled is False and the notional/loss bounds would reject
+    a directional trade."""
+    _funded(session)
+    _set(session, "subsidy_enabled", True)
+    plan = _plan(session, sleeve="ping_pong", quantity="0.1", worst_case_loss="1000")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is True
+    assert plan.status == "approved"
+    audits = _audits(session, "approve plan")
+    assert len(audits) == 1
+    assert audits[0].actor == "auto"
+
+
+def test_ping_pong_not_auto_approved_when_subsidy_disabled(session: Session) -> None:
+    _funded(session)
+    plan = _plan(session, sleeve="ping_pong", quantity="0.01", worst_case_loss="100")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is False
+    assert plan.status == "pending"
+
+
+def test_ping_pong_auto_approve_refused_when_halted(session: Session) -> None:
+    from trader.risk import engine as risk
+
+    _funded(session)
+    _set(session, "subsidy_enabled", True)
+    plan = _plan(session, sleeve="ping_pong", quantity="0.01", worst_case_loss="100")
+    risk.halt(session, "owner", "test halt")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is False
+    assert plan.status == "pending"
+
+
+def test_db_overrides_take_precedence_over_env(session: Session) -> None:
+    """A DB row for auto_approve_enabled enables Autonomy Level 2 even
+    though the .env default is False — no restart needed."""
+    _funded(session)
+    _set(session, "auto_approve_enabled", True)
+    plan = _plan(session, quantity="0.01", worst_case_loss="100")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is True
+    assert plan.status == "approved"
+
+
+def test_db_notional_cap_override_tightens_env(
+    session: Session, auto_approve_on: None
+) -> None:
+    """With auto-approve on via env, a DB row lowering the notional cap to
+    $10 blocks a $600 plan the env default ($750) would have approved."""
+    _funded(session)
+    _set(session, "auto_approve_max_notional_usd", 10)
+    plan = _plan(session, quantity="0.01", worst_case_loss="100")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is False
+    assert plan.status == "pending"

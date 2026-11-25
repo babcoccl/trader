@@ -1,6 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type ActivityItem } from "../api/client";
+import { fmtText } from "../lib/format";
 import { timeAgo } from "../lib/time";
 
 const PAGE_SIZE = 50;
@@ -75,7 +76,7 @@ export function Activity() {
                   <li key={key}>
                     <button className="activity-row" onClick={() => toggle(key)}>
                       <span className="muted">{timeAgo(i.time, new Date())}</span>{" "}
-                      <span className="badge">{i.kind}</span> {i.text}
+                      <span className="badge">{i.kind}</span> {fmtText(i.text)}
                     </button>
                     {expanded.has(key) ? (
                       <pre className="activity-raw">

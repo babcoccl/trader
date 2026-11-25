@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api/client";
+import { fmtQty } from "../lib/format";
 import { pct, timeAgo, usd } from "../lib/time";
 
 function usdCents(value: string | number): string {
@@ -142,6 +143,57 @@ export function Overview() {
                   {usdCents(subsidy.data.booster_fees_30d_usd)}
                 </div>
               </div>
+              <div>
+                <div className="stat-card__title">Open Orders</div>
+                <div className="subsidy-stats__value">
+                  {usd(subsidy.data.open_orders_usd)}
+                </div>
+              </div>
+              <div>
+                <div className="stat-card__title">30d Net PnL</div>
+                <div
+                  className={`subsidy-stats__value ${
+                    Number(subsidy.data.booster_net_pnl_30d_usd) >= 0
+                      ? "gain"
+                      : "loss"
+                  }`}
+                >
+                  {usdCents(subsidy.data.booster_net_pnl_30d_usd)}
+                </div>
+              </div>
+            </div>
+            <div className="subsidy-fills">
+              <div className="stat-card__title">Recent Ping-Pong Fills</div>
+              {subsidy.data.recent_fills.length === 0 ? (
+                <p className="muted">No ping-pong fills yet.</p>
+              ) : (
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Time</th>
+                        <th>Side</th>
+                        <th>Price</th>
+                        <th>Qty</th>
+                        <th>Cost</th>
+                        <th>Fee</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subsidy.data.recent_fills.map((f, i) => (
+                        <tr key={`${f.time}-${i}`}>
+                          <td>{f.time.slice(0, 16).replace("T", " ")}Z</td>
+                          <td>{f.side}</td>
+                          <td>{usdCents(f.price)}</td>
+                          <td>{fmtQty(f.quantity)}</td>
+                          <td>{usdCents(f.notional_usd)}</td>
+                          <td>{usdCents(f.fee_usd)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </>
         )}

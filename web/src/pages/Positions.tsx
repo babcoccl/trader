@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type PlanOut } from "../api/client";
+import { fmtQty } from "../lib/format";
 import { pct, timeAgo, usd } from "../lib/time";
 
 function FundingWatch() {
@@ -32,12 +33,18 @@ function OpenOrders({ onPlan }: { onPlan: (id: number) => void }) {
   if (orders.isLoading) return <p className="muted">Loading open orders…</p>;
   if (orders.isError || !orders.data)
     return <p className="muted">Could not load open orders.</p>;
+  const committed = orders.data.reduce(
+    (sum, o) => sum + (o.price === null ? 0 : Number(o.quantity) * Number(o.price)),
+    0,
+  );
   return (
     <div className="card">
       <div className="card__title">Open orders</div>
       {orders.data.length === 0 ? (
         <p className="muted">No open orders.</p>
       ) : (
+        <>
+        <p className="muted">{usd(committed)} committed in open orders.</p>
         <div className="table-scroll">
           <table className="data-table">
             <thead>
@@ -58,7 +65,7 @@ function OpenOrders({ onPlan }: { onPlan: (id: number) => void }) {
                   <td>{o.side}</td>
                   <td>{o.type}</td>
                   <td>{o.price ? usd(o.price) : "market"}</td>
-                  <td>{o.quantity}</td>
+                  <td>{fmtQty(o.quantity)}</td>
                   <td>{o.created_at.slice(0, 16).replace("T", " ")}Z</td>
                   <td>
                     {o.plan_id === null ? (
@@ -77,6 +84,7 @@ function OpenOrders({ onPlan }: { onPlan: (id: number) => void }) {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );
@@ -159,7 +167,7 @@ export function Positions() {
                   <tr key={p.symbol}>
                     <td>
                       {p.asset}
-                      <div className="muted">{p.quantity}</div>
+                      <div className="muted">{fmtQty(p.quantity)}</div>
                     </td>
                     <td>{usd(p.value_usd)}</td>
                     <td>{pct(p.share)}</td>
@@ -175,7 +183,7 @@ export function Positions() {
                         ? "—"
                         : p.resting_orders.map((o) => (
                             <div key={o.id}>
-                              {o.side} {o.type} {o.quantity} @{" "}
+                              {o.side} {o.type} {fmtQty(o.quantity)} @{" "}
                               {o.price ? usd(o.price) : "market"} ({o.status})
                             </div>
                           ))}

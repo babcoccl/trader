@@ -294,6 +294,15 @@ class ShadowOut(BaseModel):
     sleeves: list[ShadowSleeveOut]
 
 
+class SubsidyFillOut(BaseModel):
+    time: datetime
+    side: str
+    price: Decimal
+    quantity: Decimal
+    notional_usd: Decimal
+    fee_usd: Decimal
+
+
 class SubsidyOut(BaseModel):
     mode: str
     status: Literal["active", "throttled", "disabled"]
@@ -312,6 +321,9 @@ class SubsidyOut(BaseModel):
     daily_cap_usd: Decimal
     adx: float | None
     adx_max: float
+    open_orders_usd: Decimal
+    booster_net_pnl_30d_usd: Decimal
+    recent_fills: list[SubsidyFillOut]
 
 
 class BacktestParams(BaseModel):

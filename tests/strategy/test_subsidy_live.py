@@ -87,17 +87,18 @@ def _five_min_close(symbol: str, price: str) -> Candle:
     )
 
 
-def _fill(
+def _order(
     s: Session,
     *,
     sleeve: str,
-    notional: Decimal,
-    side: str = "buy",
+    side: str,
+    price: Decimal,
+    quantity: Decimal,
+    status: str,
     at: datetime,
     mode: str = "paper",
     shadow: bool = False,
-    apply: bool = False,
-) -> None:
+) -> Order:
     decision = Decision(
         cycle="intraday",
         ran_at=at,
@@ -130,19 +131,45 @@ def _fill(
         symbol="BTC-USD",
         side=side,
         type="limit",
-        price=Decimal("50000"),
-        quantity=notional / Decimal("50000"),
-        status="filled",
+        price=price,
+        quantity=quantity,
+        status=status,
         mode=mode,
         shadow=shadow,
     )
     s.add(order)
     s.flush()
+    return order
+
+
+def _fill(
+    s: Session,
+    *,
+    sleeve: str,
+    notional: Decimal,
+    side: str = "buy",
+    price: Decimal = Decimal("50000"),
+    at: datetime,
+    mode: str = "paper",
+    shadow: bool = False,
+    apply: bool = False,
+) -> None:
+    order = _order(
+        s,
+        sleeve=sleeve,
+        side=side,
+        price=price,
+        quantity=notional / price,
+        status="filled",
+        at=at,
+        mode=mode,
+        shadow=shadow,
+    )
     fill = Fill(
         order_id=order.id,
         time=at,
-        price=Decimal("50000"),
-        quantity=notional / Decimal("50000"),
+        price=price,
+        quantity=notional / price,
         fee=notional * Decimal("0.004"),
         fee_currency="USD",
         liquidity="maker",
@@ -424,6 +451,166 @@ def test_db_override_disables_subsidy_over_env(session, monkeypatch) -> None:
     session.flush()
     snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
     assert snap.status == "disabled"
+
+
+def test_open_orders_usd(session, monkeypatch) -> None:
+    """Spec W1.3e: committed capital sums open ping_pong order notionals;
+    a partially filled order counts only its unfilled remainder."""
+    _enable(monkeypatch)
+    at = NOW - timedelta(minutes=10)
+    _order(
+        session,
+        sleeve="ping_pong",
+        side="buy",
+        price=Decimal("50000"),
+        quantity=Decimal("0.01"),
+        status="new",
+        at=at,
+    )
+    partial = _order(
+        session,
+        sleeve="ping_pong",
+        side="buy",
+        price=Decimal("50000"),
+        quantity=Decimal("0.02"),
+        status="partially_filled",
+        at=at,
+    )
+    session.add(
+        Fill(
+            order_id=partial.id,
+            time=at,
+            price=Decimal("50000"),
+            quantity=Decimal("0.005"),
+            fee=Decimal("1"),
+            fee_currency="USD",
+            liquidity="maker",
+        )
+    )
+    _order(  # excluded: shadow
+        session,
+        sleeve="ping_pong",
+        side="buy",
+        price=Decimal("50000"),
+        quantity=Decimal("1"),
+        status="open",
+        at=at,
+        shadow=True,
+    )
+    _order(  # excluded: different sleeve
+        session,
+        sleeve="trend",
+        side="buy",
+        price=Decimal("50000"),
+        quantity=Decimal("1"),
+        status="open",
+        at=at,
+    )
+    _order(  # excluded: no longer open
+        session,
+        sleeve="ping_pong",
+        side="buy",
+        price=Decimal("50000"),
+        quantity=Decimal("1"),
+        status="cancelled",
+        at=at,
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.open_orders_usd == Decimal("1250")
+
+
+def test_booster_net_pnl_30d_fifo(session, monkeypatch) -> None:
+    """Spec W1.3e: FIFO spread gain minus every ping_pong fee in 30d.
+    The in-window sell matches the oldest open lot — the 40-day-old
+    0.01 @ 48,000 buy, not the newer 0.01 @ 49,000 — so spread is
+    0.01 * (50,000 - 48,000) = $20; minus in-window fees (1.96 + 2.00)
+    and the pre-window buy's fee is outside the window, giving $16.04."""
+    _enable(monkeypatch)
+    _fill(
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("480"),
+        side="buy",
+        price=Decimal("48000"),
+        at=NOW - timedelta(days=40),
+    )
+    _fill(
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("490"),
+        side="buy",
+        price=Decimal("49000"),
+        at=NOW - timedelta(days=2),
+    )
+    _fill(
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("500"),
+        side="sell",
+        price=Decimal("50000"),
+        at=NOW - timedelta(days=1),
+    )
+    _fill(  # other sleeves never enter the FIFO book
+        session,
+        sleeve="trend",
+        notional=Decimal("500"),
+        side="sell",
+        price=Decimal("50000"),
+        at=NOW - timedelta(days=1),
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.booster_net_pnl_30d_usd == Decimal("16.04")
+
+
+def test_booster_net_pnl_counts_unclosed_fees(session, monkeypatch) -> None:
+    """A buy whose round-trip has not closed still spends its fee."""
+    _enable(monkeypatch)
+    _fill(
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("500"),
+        side="buy",
+        at=NOW - timedelta(hours=3),
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.booster_net_pnl_30d_usd == Decimal("-2")
+
+
+def test_recent_fills_newest_first_and_capped(session, monkeypatch) -> None:
+    """Spec W1.3e: up to 25 newest non-shadow ping_pong fills."""
+    _enable(monkeypatch)
+    for i in range(27):
+        _fill(
+            session,
+            sleeve="ping_pong",
+            notional=Decimal("100"),
+            side="buy" if i % 2 == 0 else "sell",
+            at=NOW - timedelta(minutes=27 - i),
+        )
+    _fill(  # excluded: different sleeve
+        session, sleeve="trend", notional=Decimal("100"), at=NOW
+    )
+    _fill(  # excluded: shadow
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("100"),
+        at=NOW,
+        shadow=True,
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert len(snap.recent_fills) == 25
+    times = [f.time for f in snap.recent_fills]
+    assert times == sorted(times, reverse=True)
+    newest = snap.recent_fills[0]
+    assert newest.side == "buy"  # i = 26 is the newest seed
+    assert newest.price == Decimal("50000")
+    assert newest.quantity == Decimal("0.002")
+    assert newest.notional_usd == Decimal("100")
+    assert newest.fee_usd == Decimal("0.4")
 
 
 def test_db_override_adx_max(session, monkeypatch) -> None:

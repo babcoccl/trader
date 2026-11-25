@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from trader.api.auth import AuthRequired
 from trader.api.routes import SessionDep
-from trader.api.schemas import SubsidyOut
+from trader.api.schemas import SubsidyFillOut, SubsidyOut
 from trader.core.clock import SystemClock
 from trader.core.config import get_settings
 from trader.strategy import subsidy
@@ -39,4 +39,17 @@ def subsidy_status(session: Session = SessionDep) -> SubsidyOut:
         daily_cap_usd=snap.daily_cap_usd,
         adx=snap.adx,
         adx_max=snap.adx_max,
+        open_orders_usd=snap.open_orders_usd,
+        booster_net_pnl_30d_usd=snap.booster_net_pnl_30d_usd,
+        recent_fills=[
+            SubsidyFillOut(
+                time=f.time,
+                side=f.side,
+                price=f.price,
+                quantity=f.quantity,
+                notional_usd=f.notional_usd,
+                fee_usd=f.fee_usd,
+            )
+            for f in snap.recent_fills
+        ],
     )

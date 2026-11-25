@@ -33,7 +33,7 @@ function renderPositions() {
 const POSITION = {
   asset: "BTC",
   symbol: "BTC-USD",
-  quantity: "0.01",
+  quantity: "0.010000000000000000",
   price: "60000",
   value_usd: "600",
   share: 0.06,
@@ -49,7 +49,7 @@ const POSITION = {
       type: "limit" as const,
       price: "61000",
       stop_price: null,
-      quantity: "0.01",
+      quantity: "0.010000000000000000",
       status: "open",
       created_at: "2026-11-21T18:00:00Z",
     },
@@ -81,6 +81,9 @@ describe("Positions", () => {
     expect(screen.getByText("$600")).toBeInTheDocument();
     expect(screen.getByText("6.0%")).toBeInTheDocument();
     expect(screen.getByText("$45,000")).toBeInTheDocument();
+    // Trailing zeros stripped from the holding and resting order quantity.
+    expect(screen.getAllByText("0.01").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/0\.010000/)).not.toBeInTheDocument();
     expect(screen.getByText(/sell limit 0\.01 @ \$61,000/)).toBeInTheDocument();
     expect(await screen.findByText(/Funding watch:/)).toBeInTheDocument();
     expect(screen.getByText(/BTC-USD 12\.0% a year/)).toBeInTheDocument();
@@ -102,7 +105,9 @@ describe("Positions", () => {
 
   it("renders the open orders card even with no positions", async () => {
     positionsMock.mockResolvedValue([]);
-    openOrdersMock.mockResolvedValue([makeOpenOrder()]);
+    openOrdersMock.mockResolvedValue([
+      makeOpenOrder({ quantity: "0.100000000000000000" }),
+    ]);
     fundingMock.mockResolvedValue({ rates: [], t_bill_rate: 0 });
     renderPositions();
 
@@ -112,6 +117,8 @@ describe("Positions", () => {
     expect(screen.getByText("limit")).toBeInTheDocument();
     expect(screen.getByText("$2,900")).toBeInTheDocument();
     expect(screen.getByText("0.1")).toBeInTheDocument();
+    expect(screen.queryByText(/0\.10000/)).not.toBeInTheDocument();
+    expect(screen.getByText(/\$290 committed in open orders/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "plan 5" })).toBeInTheDocument();
   });
 

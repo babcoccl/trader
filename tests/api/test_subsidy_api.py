@@ -104,3 +104,6 @@ def test_subsidy_returns_snapshot(client) -> None:
     assert float(body["remaining_to_target_usd"]) == 10000
     assert body["progress_pct"] == 0
     assert body["adx"] is None
+    assert float(body["open_orders_usd"]) == 0
+    assert float(body["booster_net_pnl_30d_usd"]) == 0
+    assert body["recent_fills"] == []

@@ -169,6 +169,13 @@ class PingPongWorker:
                 for order in open_pp:
                     adapter.cancel(order.venue_order_id or "")
                 return
+            # Pull the resting buys before settling: a still-open
+            # ping-pong buy would fill as a new buy past the cap. The
+            # sells stay resting so their fills still book.
+            for order in open_pp:
+                if order.side == "buy":
+                    adapter.cancel(order.venue_order_id or "")
+            open_pp = [o for o in open_pp if o.side != "buy"]
 
         # Adopt a changed level count immediately; counters only initialize
         # while the sleeve is active.

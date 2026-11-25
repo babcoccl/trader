@@ -108,7 +108,7 @@ describe("Overview", () => {
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByText("Boosting volume toward the next fee tier.")).toBeInTheDocument();
     expect(screen.getByText("Tier 1 (40 / 60 bps)")).toBeInTheDocument();
-    expect(screen.getByText("BTC ADX 18.4")).toBeInTheDocument();
+    expect(screen.getByText("BTC ADX (4h) 18.4")).toBeInTheDocument();
     expect(screen.getByText(/\$5,200 of \$10,000 · 52\.0%/)).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "Fee-tier progress" })).toHaveAttribute(
       "aria-valuenow",

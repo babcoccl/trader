@@ -210,7 +210,10 @@ def run(session: Session, clock: Clock) -> Decision:
     if settings.subsidy_enabled:
         try:
             if not risk_engine.state(session, clock).halted:
-                subsidy.propose_ping_pong_plan(session, clock, settings.mode)
+                # A savepoint keeps a subsidy SQL error from aborting the
+                # outer intraday transaction.
+                with session.begin_nested():
+                    subsidy.propose_ping_pong_plan(session, clock, settings.mode)
         except Exception:
             log.exception("ping-pong subsidy check failed")
     return row

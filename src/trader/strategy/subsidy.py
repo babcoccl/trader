@@ -161,6 +161,11 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
     reason: str
     if not settings.subsidy_enabled:
         status, reason = "disabled", "Subsidy sleeve is disabled."
+    elif settings.venue != "coinbase":
+        status, reason = (
+            "disabled",
+            "Subsidy sleeve only applies to Coinbase venue.",
+        )
     elif trailing >= target:
         status, reason = "throttled", "Target fee tier volume reached."
     elif booster_today >= daily_cap:
@@ -268,6 +273,16 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
         inventory, accounting.positions(session, mode).get(ASSET, Decimal("0"))
     )
     side = "buy" if holding <= 0 else "sell"
+    maker_fee = Decimal(str(snapshot.maker_bps)) / Decimal("10000")
+    if side == "buy":
+        # Leave room for the fill's fee, like plans/builder.py: a buy sized
+        # at the whole cash balance would cost more than the cash on hand.
+        notional = min(
+            notional,
+            accounting.cash(session, mode) / (Decimal("1") + maker_fee),
+        )
+        if notional < MIN_ORDER_NOTIONAL[mode]:
+            return None
     if side == "buy":
         price = _round_down(last_close * (1 - QUOTE_BPS), asset.tick)
     else:
@@ -287,7 +302,6 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
     delta = float(notional / equity) if equity > 0 else 0.0
     target_weight = max(0.0, current + delta if side == "buy" else current - delta)
 
-    maker_fee = Decimal(str(snapshot.maker_bps)) / Decimal("10000")
     est_fees = _q(notional * maker_fee * 2)
     worst_case = _q(notional + est_fees) if side == "buy" else est_fees
 

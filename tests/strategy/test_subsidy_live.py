@@ -358,3 +358,42 @@ def test_no_plan_on_non_coinbase_venue(session, monkeypatch) -> None:
     session.flush()
 
     assert subsidy.propose_ping_pong_plan(session, FrozenClock(NOW), "paper") is None
+
+
+def test_disabled_status_on_non_coinbase_venue(session, monkeypatch) -> None:
+    _enable(monkeypatch, TRADER_VENUE="bitstamp")
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    session.flush()
+
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "disabled"
+    assert "Coinbase" in snap.reason
+
+
+def test_buy_notional_reserves_fee_cash(session, monkeypatch) -> None:
+    _enable(monkeypatch)
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    session.add(_five_min_close("BTC-USD", "60000"))
+    _fund(session)
+    # Drain most of the cash: a $250 order would exceed the ~$161 left.
+    _fill(
+        session,
+        sleeve="trend",
+        notional=Decimal("9800"),
+        side="buy",
+        at=NOW - timedelta(hours=2),
+        apply=True,
+    )
+    session.flush()
+    cash = accounting.cash(session, "paper")
+
+    plan = subsidy.propose_ping_pong_plan(session, FrozenClock(NOW), "paper")
+    assert plan is not None
+    assert plan.side == "buy"
+    order = plan.entry_orders[0]
+    notional = Decimal(order["price"]) * Decimal(order["quantity"])
+    assert notional <= cash
+    assert notional <= cash / (Decimal("1") + Decimal("0.004"))
+    assert notional < Decimal("250")

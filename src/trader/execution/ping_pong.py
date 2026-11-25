@@ -64,8 +64,11 @@ def _round_down(x: Decimal, step: Decimal) -> Decimal:
 def fetch_live_bbo(symbol: str = subsidy.SYMBOL) -> tuple[Decimal, Decimal] | None:
     """(best_bid, best_ask) from Coinbase's public ticker; None on error."""
     url = TICKER_URL.format(symbol=symbol)
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "trader/1.0", "Accept": "application/json"}
+    )
     try:
-        with urllib.request.urlopen(url, timeout=TICKER_TIMEOUT_SECONDS) as r:
+        with urllib.request.urlopen(req, timeout=TICKER_TIMEOUT_SECONDS) as r:
             payload: dict[str, Any] = json.loads(r.read())
         return Decimal(str(payload["bid"])), Decimal(str(payload["ask"]))
     except (OSError, ValueError, KeyError) as e:

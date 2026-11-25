@@ -2,9 +2,12 @@
 timer, paper fills and the halt path. Needs TEST_DATABASE_URL; the live
 ticker is injected, so no network is touched."""
 
+import json
 import os
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -15,7 +18,7 @@ from trader.backtest.costs import BITSTAMP
 from trader.core.clock import FrozenClock
 from trader.core.config import get_settings
 from trader.execution.paper import PaperAdapter
-from trader.execution.ping_pong import PingPongWorker
+from trader.execution.ping_pong import PingPongWorker, fetch_live_bbo
 from trader.ledger import accounting
 from trader.ledger.models import (
     Balance,
@@ -170,6 +173,25 @@ def _open(session: Session) -> list[Order]:
             .order_by(Order.id)
         )
     )
+
+
+def test_fetch_live_bbo_sends_headers() -> None:
+    """Offline: urlopen mocked, no network. fetch_live_bbo must send a
+    Request carrying User-Agent and Accept headers (Coinbase 403s
+    headerless urllib calls) and return (Decimal, Decimal)."""
+    payload = json.dumps({"bid": "59990.50", "ask": "60010.25"}).encode()
+    resp = MagicMock()
+    resp.read.return_value = payload
+    resp.__enter__.return_value = resp
+    with patch(
+        "trader.execution.ping_pong.urllib.request.urlopen", return_value=resp
+    ) as mock_open:
+        bbo = fetch_live_bbo("BTC-USD")
+    req = mock_open.call_args[0][0]
+    assert isinstance(req, urllib.request.Request)
+    assert req.get_header("User-agent") == "trader/1.0"
+    assert req.get_header("Accept") == "application/json"
+    assert bbo == (Decimal("59990.50"), Decimal("60010.25"))
 
 
 def test_multi_level_progression(session: Session, monkeypatch) -> None:

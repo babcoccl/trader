@@ -273,13 +273,14 @@ def daily_volume(df: pd.DataFrame, gate: float, vol_set: set[int],
                 buys_rem -= 1
         for k in range(sells_rem):
             price = o * (1 + spread_bps * (k + 1) / 10_000)
-            if hi >= price and bar_btc >= ORDER_NOTIONAL_USD / price:
-                qty = ORDER_NOTIONAL_USD / price
-                btc -= qty
-                bar_btc -= qty
-                cash += qty * price * (1 - maker_fee)
-                vol[day] += qty * price
-                sells_rem -= 1
+            if hi >= price:
+                qty = min(ORDER_NOTIONAL_USD / price, bar_btc)
+                if qty > 0:
+                    btc -= qty
+                    bar_btc -= qty
+                    cash += qty * price * (1 - maker_fee)
+                    vol[day] += qty * price
+                    sells_rem -= 1
         if buys_rem == 0 and sells_rem == 0:
             buys_rem = sells_rem = ORDER_LEVELS
     return vol.clip(upper=DAILY_CAP_USD)
@@ -324,15 +325,15 @@ def smart_boost(df: pd.DataFrame, aplus: tuple, fallback: tuple,
                     # Healthy: anticipate expiry — when volume dropping
                     # out within 3-5 days would push rolling_30d under
                     # target, pre-build a cushion on the fallback filter.
-                    drop = next(
-                        (j + 1 for j in range(min(5, len(expiring)))
-                         if rolling - expiring.iloc[:j + 1].sum()
-                         < TIER_TARGET_USD),
-                        None)
-                    if drop is None:
+                    # Deepest projected breach inside the lookahead, so
+                    # clustered expiries size one cushion, not just the
+                    # first drop.
+                    projected = [
+                        rolling - expiring.iloc[:j + 1].sum()
+                        for j in range(min(5, len(expiring)))]
+                    shortfall = TIER_TARGET_USD - min(projected)
+                    if shortfall <= 0:
                         continue
-                    shortfall = TIER_TARGET_USD - (
-                        rolling - expiring.iloc[:drop].sum())
                     v = min(fb_vol[day], shortfall, DAILY_CAP_USD)
                     cost += v * cost_rate["fallback"]
             realized[day] = v

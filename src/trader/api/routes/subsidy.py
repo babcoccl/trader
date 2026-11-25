@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from trader.api.auth import AuthRequired
 from trader.api.routes import SessionDep
-from trader.api.schemas import SubsidyFillOut, SubsidyOut
+from trader.api.schemas import SubsidyFillOut, SubsidyGateOut, SubsidyOut
 from trader.core.clock import SystemClock
 from trader.core.config import get_settings
 from trader.strategy import subsidy
@@ -52,5 +52,11 @@ def subsidy_status(session: Session = SessionDep) -> SubsidyOut:
                 pnl_usd=f.pnl_usd,
             )
             for f in snap.recent_fills
+        ],
+        expiring_5d_volume_usd=snap.expiring_5d_volume_usd,
+        projected_30d_volume_usd=snap.projected_30d_volume_usd,
+        gates=[
+            SubsidyGateOut(name=g.name, passed=g.passed, detail=g.detail)
+            for g in snap.gates
         ],
     )

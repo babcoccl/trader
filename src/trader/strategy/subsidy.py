@@ -43,6 +43,9 @@ MIN_ORDER_NOTIONAL = {"paper": Decimal("10"), "live": Decimal("1")}
 QUOTE_BPS = Decimal("0.001")  # 10 bps off the last close
 BOOSTER_WINDOW = timedelta(hours=24)
 TRAILING_WINDOW = timedelta(days=30)
+# Fills leaving the 30-day window within this lookahead are pre-rebuilt so
+# the rolling volume never drops out of the target fee tier (spec W1.4b).
+EXPIRY_LOOKAHEAD = timedelta(days=5)
 ADX_LOOKBACK_DAYS = 120
 _OPEN_PLAN_STATUSES = ("pending", "approved")
 _OPEN_ORDER_STATUSES = ("new", "open", "partially_filled")
@@ -83,6 +86,13 @@ class SubsidyFill:
 
 
 @dataclass(frozen=True)
+class SubsidyGate:
+    name: str
+    passed: bool
+    detail: str
+
+
+@dataclass(frozen=True)
 class SubsidySnapshot:
     mode: str
     status: Literal["active", "throttled", "disabled"]
@@ -104,6 +114,9 @@ class SubsidySnapshot:
     open_orders_usd: Decimal
     booster_net_pnl_30d_usd: Decimal
     recent_fills: list[SubsidyFill]
+    expiring_5d_volume_usd: Decimal
+    projected_30d_volume_usd: Decimal
+    gates: list[SubsidyGate]
 
 
 def _fills_30d(
@@ -274,10 +287,14 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
     booster_trades = 0
     booster_volume = Decimal("0")
     booster_fees = Decimal("0")
+    expiring = Decimal("0")
     today_start = now - BOOSTER_WINDOW
+    expiry_edge = now - TRAILING_WINDOW + EXPIRY_LOOKAHEAD
     for time, price, quantity, fee, sleeve in rows:
         notional = abs(quantity * price)
         trailing += notional
+        if time <= expiry_edge:
+            expiring += notional
         if sleeve == SLEEVE:
             booster_trades += 1
             booster_volume += notional
@@ -293,6 +310,11 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
     progress = min(1.0, float(trailing / target)) if target > 0 else 1.0
     adx = _latest_adx(session, now)
 
+    # Spec W1.4b: volume expiring within 5 days is spent ahead of time so
+    # the sleeve pre-builds a cushion instead of falling out of the tier.
+    projected = max(Decimal("0"), trailing - expiring)
+    effective_needed = max(Decimal("0"), target - projected)
+
     # A target or cap the next minimum-size order could never reach is as
     # good as spent: without this floor the sleeve stays "active" with too
     # little room left to place a single order (spec W1.3h).
@@ -306,14 +328,64 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
             "disabled",
             "Subsidy sleeve only applies to Coinbase venue.",
         )
-    elif target - trailing < min_notional:
+    elif effective_needed < min_notional:
         status, reason = "throttled", "Target fee tier volume reached."
     elif daily_cap - booster_today < min_notional:
         status, reason = "throttled", "Daily booster cap reached."
     elif adx is None or adx >= adx_max:
         status, reason = "throttled", "ADX above sideways threshold."
+    elif trailing >= target:
+        status, reason = (
+            "active",
+            f"Pre-building cushion: ${expiring:,.0f} expiring within 5 days "
+            "would drop 30d volume below target.",
+        )
     else:
         status, reason = "active", "Boosting volume toward the next fee tier."
+
+    halted = risk_engine.state(session, clock).halted
+    cap_left = daily_cap - booster_today
+    gates = [
+        SubsidyGate(
+            "Enabled",
+            overrides.subsidy_enabled,
+            "On" if overrides.subsidy_enabled else "Off",
+        ),
+        SubsidyGate(
+            "Venue",
+            settings.venue == "coinbase",
+            "Coinbase" if settings.venue == "coinbase" else settings.venue,
+        ),
+        SubsidyGate("System Halt", not halted, "Clear" if not halted else "Halted"),
+        SubsidyGate(
+            "ADX Regime",
+            adx is None or adx < adx_max,
+            (
+                "unavailable"
+                if adx is None
+                else f"{adx:.1f} < {adx_max:.1f}"
+                if adx < adx_max
+                else f"{adx:.1f} >= {adx_max:.1f} (trending)"
+            ),
+        ),
+        SubsidyGate(
+            "Daily Cap",
+            cap_left >= min_notional,
+            f"${booster_today:,.0f} / ${daily_cap:,.0f}"
+            + ("" if cap_left >= min_notional else " (cap reached)"),
+        ),
+        SubsidyGate(
+            "30d Target",
+            effective_needed >= min_notional,
+            (
+                "Target met"
+                if effective_needed < min_notional
+                else f"${expiring:,.0f} expiring in 5d"
+                if expiring > 0
+                else f"${effective_needed:,.0f} needed"
+            ),
+        ),
+    ]
 
     booster_net, fill_pnl = _fifo_pnl(session, mode, now)
     return SubsidySnapshot(
@@ -337,6 +409,9 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
         open_orders_usd=_open_orders_usd(session, mode),
         booster_net_pnl_30d_usd=booster_net,
         recent_fills=_recent_fills(session, mode, fill_pnl),
+        expiring_5d_volume_usd=_q(expiring),
+        projected_30d_volume_usd=_q(projected),
+        gates=gates,
     )
 
 
@@ -405,7 +480,10 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
 
     notional = min(
         overrides.subsidy_order_notional_usd,
-        snapshot.remaining_to_target_usd,
+        max(
+            snapshot.remaining_to_target_usd,
+            snapshot.target_volume_usd - snapshot.projected_30d_volume_usd,
+        ),
         snapshot.daily_cap_usd - snapshot.today_booster_volume_usd,
     )
     if notional < MIN_ORDER_NOTIONAL[mode]:

@@ -708,3 +708,98 @@ def test_db_override_adx_max(session, monkeypatch) -> None:
     assert snap.status == "throttled"
     assert "ADX" in snap.reason
     assert snap.adx_max == 5.0
+
+
+def test_prebuilds_cushion_when_volume_expires_soon(session, monkeypatch) -> None:
+    """Spec W1.4b: trailing >= target but fills 26-29 days old drop the
+    projected 30d volume below it -> stays active pre-building a cushion."""
+    _enable(monkeypatch)
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    _fill(session, sleeve="trend", notional=Decimal("8000"), at=NOW - timedelta(days=2))
+    _fill(
+        session, sleeve="trend", notional=Decimal("4000"), at=NOW - timedelta(days=27)
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.trailing_30d_volume_usd == Decimal("12000")
+    assert snap.expiring_5d_volume_usd == Decimal("4000")
+    assert snap.projected_30d_volume_usd == Decimal("8000")
+    assert snap.status == "active"
+    assert "cushion" in snap.reason.lower()
+    gate = {g.name: g for g in snap.gates}["30d Target"]
+    assert gate.passed is True
+    assert "expiring in 5d" in gate.detail
+
+
+def test_target_met_only_when_projected_stays_above(session, monkeypatch) -> None:
+    """Trailing >= target with no near-term expiry still throttles as met."""
+    _enable(monkeypatch)
+    _fill(
+        session, sleeve="trend", notional=Decimal("12000"), at=NOW - timedelta(days=2)
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "throttled"
+    assert snap.reason == "Target fee tier volume reached."
+    assert snap.projected_30d_volume_usd == Decimal("12000")
+    gate = {g.name: g for g in snap.gates}["30d Target"]
+    assert gate.passed is False
+    assert gate.detail == "Target met"
+
+
+def test_gates_disabled_and_venue(session, monkeypatch) -> None:
+    _enable(monkeypatch, TRADER_SUBSIDY_ENABLED="false", TRADER_VENUE="bitstamp")
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    gates = {g.name: g for g in snap.gates}
+    assert gates["Enabled"].passed is False
+    assert gates["Enabled"].detail == "Off"
+    assert gates["Venue"].passed is False
+    assert gates["Venue"].detail == "bitstamp"
+
+
+def test_gates_halted(session, monkeypatch) -> None:
+    _enable(monkeypatch)
+    session.add(Setting(key="risk.halted", value=True, updated_at=NOW))
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    gate = {g.name: g for g in snap.gates}["System Halt"]
+    assert gate.passed is False
+    assert gate.detail == "Halted"
+
+
+def test_gates_adx_and_daily_cap(session, monkeypatch) -> None:
+    _enable(monkeypatch)
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.02):
+        session.add(candle)
+    _fill(
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("1995"),
+        at=NOW - timedelta(hours=1),
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    gates = {g.name: g for g in snap.gates}
+    assert gates["ADX Regime"].passed is False
+    assert "trending" in gates["ADX Regime"].detail
+    assert gates["Daily Cap"].passed is False
+    assert "cap reached" in gates["Daily Cap"].detail
+
+
+def test_gates_all_pass_when_active(session, monkeypatch) -> None:
+    _enable(monkeypatch)
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "active"
+    assert [g.name for g in snap.gates] == [
+        "Enabled",
+        "Venue",
+        "System Halt",
+        "ADX Regime",
+        "Daily Cap",
+        "30d Target",
+    ]
+    assert all(g.passed for g in snap.gates)

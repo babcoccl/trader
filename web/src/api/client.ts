@@ -266,6 +266,12 @@ export interface SubsidyFillOut {
   pnl_usd: string;
 }
 
+export interface SubsidyGateOut {
+  name: string;
+  passed: boolean;
+  detail: string;
+}
+
 export interface SubsidyOut {
   mode: string;
   status: "active" | "throttled" | "disabled";
@@ -287,6 +293,9 @@ export interface SubsidyOut {
   open_orders_usd: string;
   booster_net_pnl_30d_usd: string;
   recent_fills: SubsidyFillOut[];
+  expiring_5d_volume_usd: string;
+  projected_30d_volume_usd: string;
+  gates: SubsidyGateOut[];
 }
 
 export interface SettingOut {

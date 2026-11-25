@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     subsidy_enabled: bool = False
     subsidy_target_volume_usd: Decimal = Decimal("10000")
     subsidy_daily_cap_usd: Decimal = Decimal("2000")
-    subsidy_adx_max: float = 20.0
+    subsidy_adx_max: float = 30.0
     subsidy_order_notional_usd: Decimal = Decimal("250")
     # Ping-pong worker (spec W1.3c): quoting levels each side, per-level
     # offset in basis points (level k sits spread_bps * (k + 1) off the

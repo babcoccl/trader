@@ -34,9 +34,9 @@ Q18 = Decimal("1e-18")
 SLEEVE = "ping_pong"
 SYMBOL = "BTC-USD"
 ASSET = "BTC"
-# Placement floor: the paper adapter rejects orders under $10 and live
-# venues enforce their own minimum again at placement time.
-MIN_ORDER_NOTIONAL = Decimal("10")
+# Placement floors: the paper adapter rejects orders under $10; Coinbase's
+# BTC-USD quote minimum is $1 (enforced again at placement time).
+MIN_ORDER_NOTIONAL = {"paper": Decimal("10"), "live": Decimal("1")}
 QUOTE_BPS = Decimal("0.001")  # 10 bps off the last close
 BOOSTER_WINDOW = timedelta(hours=24)
 TRAILING_WINDOW = timedelta(days=30)
@@ -258,7 +258,7 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
         snapshot.remaining_to_target_usd,
         snapshot.daily_cap_usd - snapshot.today_booster_volume_usd,
     )
-    if notional < MIN_ORDER_NOTIONAL:
+    if notional < MIN_ORDER_NOTIONAL[mode]:
         return None
     asset = ASSETS[SYMBOL]
     inventory = _ping_pong_inventory(session, mode)
@@ -278,7 +278,7 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
     if quantity <= 0:
         return None
     notional = _q(quantity * price)
-    if notional < MIN_ORDER_NOTIONAL:
+    if notional < MIN_ORDER_NOTIONAL[mode]:
         return None
 
     portfolio = accounting.portfolio_view(session, mode, _latest_closes(session))

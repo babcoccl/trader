@@ -324,6 +324,11 @@ class PingPongWorker:
         # quoting so the worker never stalls. Never sells BTC for cash.
         if (
             overrides.subsidy_auto_seed
+            # bid == ask means the ticker failed and both sides came from
+            # the last close: a seed resting at that "bid" would fill
+            # against itself on the next stale pass, so skip it. A real
+            # locked book would cross a maker order anyway.
+            and bid < ask
             and self.sells_remaining == overrides.subsidy_order_levels
             and btc * bid < overrides.subsidy_order_notional_usd
         ):

@@ -544,6 +544,24 @@ def test_no_seed_when_auto_seed_off(session: Session, monkeypatch) -> None:
     assert all(o.price < Decimal("59990") for o in orders)
 
 
+def test_no_seed_on_stale_close(session: Session, monkeypatch) -> None:
+    """A failed ticker leaves bid == ask at the last close; a seed placed
+    there would fill against itself next pass, so it must not fire."""
+    clock = _active(session, monkeypatch, btc=None, TRADER_SUBSIDY_AUTO_SEED="true")
+    worker = PingPongWorker(ticker=lambda _symbol: None, clock=clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+
+    orders = _open(session)
+    assert orders
+    # Normal ladder quotes at the close-derived spread; nothing rests at
+    # the close itself.
+    assert all(o.price != Decimal("60000") for o in orders)
+    worker.tick(session, adapter, clock, "paper")
+    assert list(session.scalars(select(Fill))) == []
+
+
 def test_no_seed_mid_cycle(session: Session, monkeypatch) -> None:
     """Auto-seed never fires once sell levels have been consumed."""
     clock = _active(session, monkeypatch, btc=None, TRADER_SUBSIDY_AUTO_SEED="true")

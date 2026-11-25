@@ -145,7 +145,7 @@ class PingPongWorker:
         now = clock.now()
         self._settle(session, adapter, open_pp, bid, ask, now)
         session.flush()
-        filled_this_tick = self._count_fills(session, mode, overrides)
+        filled_this_tick, filled_notional = self._count_fills(session, mode, overrides)
 
         open_pp = self._open_ping_pong(session, adapter, mode)
         oldest = min((o.created_at for o in open_pp), default=None)
@@ -159,7 +159,18 @@ class PingPongWorker:
         )
         if not refresh:
             return
-        self._refresh(session, adapter, overrides, snapshot, bid, ask, clock, now, mode)
+        self._refresh(
+            session,
+            adapter,
+            overrides,
+            snapshot,
+            bid,
+            ask,
+            clock,
+            now,
+            mode,
+            filled_notional,
+        )
 
     # -- steps ----------------------------------------------------------------
 
@@ -206,12 +217,14 @@ class PingPongWorker:
 
     def _count_fills(
         self, session: Session, mode: str, overrides: RuntimeConfig
-    ) -> int:
+    ) -> tuple[int, Decimal]:
         """Decrement the level counters for newly recorded ping_pong fills
         (booked by this worker or by the main executor pass) and reset the
-        grid when both sides reach zero. Returns the new-fill count."""
+        grid when both sides reach zero. Returns (new-fill count, their
+        notional) — the notional is spent budget the refresh must not
+        reuse."""
         rows = session.execute(
-            select(Fill.id, Order.side)
+            select(Fill.id, Order.side, Fill.price, Fill.quantity)
             .join(Order, Fill.order_id == Order.id)
             .join(Plan, Order.plan_id == Plan.id)
             .where(
@@ -222,15 +235,17 @@ class PingPongWorker:
             )
             .order_by(Fill.id)
         ).all()
-        for fill_id, side in rows:
+        filled_notional = Decimal("0")
+        for fill_id, side, price, quantity in rows:
             if side == "buy":
                 self.buys_remaining = max(0, (self.buys_remaining or 0) - 1)
             else:
                 self.sells_remaining = max(0, (self.sells_remaining or 0) - 1)
+            filled_notional += price * quantity
             self._fill_watermark = max(self._fill_watermark, int(fill_id))
         if self.buys_remaining == 0 and self.sells_remaining == 0:
             self.buys_remaining = self.sells_remaining = overrides.subsidy_order_levels
-        return len(rows)
+        return len(rows), filled_notional
 
     def _refresh(
         self,
@@ -243,13 +258,17 @@ class PingPongWorker:
         clock: Clock,
         now: datetime,
         mode: str,
+        spent_this_tick: Decimal = Decimal("0"),
     ) -> None:
         for order in self._open_ping_pong(session, adapter, mode):
             adapter.cancel(order.venue_order_id or "")
 
-        remaining_budget = min(
-            snapshot.remaining_to_target_usd,
-            snapshot.daily_cap_usd - snapshot.today_booster_volume_usd,
+        remaining_budget = (
+            min(
+                snapshot.remaining_to_target_usd,
+                snapshot.daily_cap_usd - snapshot.today_booster_volume_usd,
+            )
+            - spent_this_tick
         )
         if remaining_budget < subsidy.MIN_ORDER_NOTIONAL[mode]:
             return

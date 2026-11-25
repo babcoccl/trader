@@ -9,6 +9,7 @@ interface EditableSpec {
   options?: { value: string; label: string }[];
   parse?: (raw: string) => unknown;
   format?: (value: unknown) => string;
+  toRaw?: (value: unknown) => string;
 }
 
 const EDITABLE: EditableSpec[] = [
@@ -86,8 +87,11 @@ const EDITABLE: EditableSpec[] = [
     key: "auto_approve_max_loss_pct",
     label: "Auto-approve max loss",
     input: "number",
-    parse: (raw) => Number.parseFloat(raw),
+    // Stored as a fraction (0.015); the input works in percent (1.5) to
+    // match the displayed value.
+    parse: (raw) => Number.parseFloat(raw) / 100,
     format: (v) => `${(Number(v) * 100).toFixed(1)}%`,
+    toRaw: (v) => String(Number(v) * 100),
   },
 ];
 
@@ -159,7 +163,7 @@ function SettingRow({ spec, value }: { spec: EditableSpec; value: unknown }) {
               type="button"
               className="link"
               onClick={() => {
-                setRaw(String(value));
+                setRaw(spec.toRaw ? spec.toRaw(value) : String(value));
                 setEditing(true);
                 setError(null);
               }}

@@ -205,6 +205,22 @@ describe("Controls", () => {
     await userEvent.selectOptions(select, "true");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(putSettingMock).toHaveBeenCalledWith("subsidy_enabled", true);
+
+    // Max loss input works in percent but saves the fraction.
+    putSettingMock.mockResolvedValue({
+      key: "auto_approve_max_loss_pct",
+      value: 0.02,
+      updated_at: "2026-11-21T12:02:00Z",
+    });
+    await userEvent.click(
+      Array.from(lossRow.querySelectorAll("button")).find((b) => b.textContent === "Edit")!,
+    );
+    const lossInput = screen.getByLabelText("Auto-approve max loss value");
+    expect(lossInput).toHaveValue(1.5);
+    await userEvent.clear(lossInput);
+    await userEvent.type(lossInput, "2");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(putSettingMock).toHaveBeenCalledWith("auto_approve_max_loss_pct", 0.02);
   });
 
   it("shows read-only limits; autonomy and approval expiry have no edit button", async () => {

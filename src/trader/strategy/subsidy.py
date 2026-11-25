@@ -33,6 +33,10 @@ log = logging.getLogger(__name__)
 Q18 = Decimal("1e-18")
 SLEEVE = "ping_pong"
 SYMBOL = "BTC-USD"
+ASSET = "BTC"
+# Placement floor: the paper adapter rejects orders under $10 and live
+# venues enforce their own minimum again at placement time.
+MIN_ORDER_NOTIONAL = Decimal("10")
 QUOTE_BPS = Decimal("0.001")  # 10 bps off the last close
 BOOSTER_WINDOW = timedelta(hours=24)
 TRAILING_WINDOW = timedelta(days=30)
@@ -226,6 +230,10 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
     ``risk.check_plan`` vetoes the plan.
     """
     settings = get_settings()
+    if settings.venue != "coinbase":
+        # The sleeve exists to reach a Coinbase fee tier; on any other
+        # venue its volume buys nothing.
+        return None
     snapshot = compute_status(session, clock, mode)
     if snapshot.status != "active":
         return None
@@ -250,19 +258,28 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
         snapshot.remaining_to_target_usd,
         snapshot.daily_cap_usd - snapshot.today_booster_volume_usd,
     )
+    if notional < MIN_ORDER_NOTIONAL:
+        return None
     asset = ASSETS[SYMBOL]
     inventory = _ping_pong_inventory(session, mode)
-    side = "buy" if inventory <= 0 else "sell"
+    # The sleeve can only sell BTC the account still holds: an outside sale
+    # (a Flatten, a trend-sleeve exit) leaves stale ping_pong inventory.
+    holding = min(
+        inventory, accounting.positions(session, mode).get(ASSET, Decimal("0"))
+    )
+    side = "buy" if holding <= 0 else "sell"
     if side == "buy":
         price = _round_down(last_close * (1 - QUOTE_BPS), asset.tick)
     else:
         price = _round_down(last_close * (1 + QUOTE_BPS), asset.tick)
     quantity = _round_down(notional / price, asset.lot) if price > 0 else Decimal(0)
     if side == "sell":
-        quantity = min(quantity, inventory)
+        quantity = min(quantity, holding)
     if quantity <= 0:
         return None
     notional = _q(quantity * price)
+    if notional < MIN_ORDER_NOTIONAL:
+        return None
 
     portfolio = accounting.portfolio_view(session, mode, _latest_closes(session))
     equity = portfolio.equity_usd

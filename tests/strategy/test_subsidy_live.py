@@ -96,6 +96,7 @@ def _fill(
     at: datetime,
     mode: str = "paper",
     shadow: bool = False,
+    apply: bool = False,
 ) -> None:
     decision = Decision(
         cycle="intraday",
@@ -137,17 +138,19 @@ def _fill(
     )
     s.add(order)
     s.flush()
-    s.add(
-        Fill(
-            order_id=order.id,
-            time=at,
-            price=Decimal("50000"),
-            quantity=notional / Decimal("50000"),
-            fee=notional * Decimal("0.004"),
-            fee_currency="USD",
-            liquidity="maker",
-        )
+    fill = Fill(
+        order_id=order.id,
+        time=at,
+        price=Decimal("50000"),
+        quantity=notional / Decimal("50000"),
+        fee=notional * Decimal("0.004"),
+        fee_currency="USD",
+        liquidity="maker",
     )
+    s.add(fill)
+    s.flush()
+    if apply:
+        accounting.apply_fill(s, fill)
 
 
 @pytest.fixture()
@@ -184,6 +187,7 @@ def _fund(s: Session) -> None:
 def _enable(monkeypatch, **overrides: str) -> None:
     env = {
         "TRADER_SUBSIDY_ENABLED": "true",
+        "TRADER_VENUE": "coinbase",
         "TRADER_SUBSIDY_TARGET_VOLUME_USD": "10000",
         "TRADER_SUBSIDY_DAILY_CAP_USD": "2000",
         "TRADER_SUBSIDY_ADX_MAX": "20",
@@ -302,6 +306,7 @@ def test_plan_alternates_to_sell_when_holding(session, monkeypatch) -> None:
         notional=Decimal("240"),
         side="buy",
         at=NOW - timedelta(hours=30),
+        apply=True,
     )
     session.flush()
 
@@ -312,3 +317,44 @@ def test_plan_alternates_to_sell_when_holding(session, monkeypatch) -> None:
     assert order["maker_or_cancel"] is True
     assert Decimal(order["price"]) > Decimal("60000")
     assert Decimal(order["quantity"]) <= Decimal("240") / Decimal("50000")
+
+
+def test_buys_again_after_position_sold_elsewhere(session, monkeypatch) -> None:
+    _enable(monkeypatch)
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    session.add(_five_min_close("BTC-USD", "60000"))
+    _fund(session)
+    _fill(
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("240"),
+        side="buy",
+        at=NOW - timedelta(hours=30),
+        apply=True,
+    )
+    # A flatten/trend sell outside the sleeve liquidated the BTC.
+    _fill(
+        session,
+        sleeve="trend",
+        notional=Decimal("240"),
+        side="sell",
+        at=NOW - timedelta(hours=1),
+        apply=True,
+    )
+    session.flush()
+
+    plan = subsidy.propose_ping_pong_plan(session, FrozenClock(NOW), "paper")
+    assert plan is not None
+    assert plan.side == "buy"
+
+
+def test_no_plan_on_non_coinbase_venue(session, monkeypatch) -> None:
+    _enable(monkeypatch, TRADER_VENUE="bitstamp")
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    session.add(_five_min_close("BTC-USD", "60000"))
+    _fund(session)
+    session.flush()
+
+    assert subsidy.propose_ping_pong_plan(session, FrozenClock(NOW), "paper") is None

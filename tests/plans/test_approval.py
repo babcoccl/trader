@@ -529,3 +529,15 @@ def test_auto_approve_risk_veto_stays_pending(
     plan = _plan(session, quantity="0.01", worst_case_loss="100")
     assert approval.maybe_auto_approve(session, plan, _clock()) is False
     assert plan.status == "pending"
+
+
+def test_auto_approve_unheld_stale_asset_still_approves(
+    session: Session, auto_approve_on: None
+) -> None:
+    """An unheld asset's stale quote never feeds equity, so it must not
+    block auto-approval; only held-asset freshness is checked."""
+    accounting.deposit(session, "paper", Decimal("10000"), _clock())
+    _candle(session)  # fresh BTC-USD only; ETH-USD has no candles and is unheld
+    plan = _plan(session, quantity="0.01", worst_case_loss="100")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is True
+    assert plan.status == "approved"

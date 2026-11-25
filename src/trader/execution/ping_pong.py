@@ -96,6 +96,9 @@ class PingPongWorker:
         # Highest fills.id counted toward the level state so far: fills
         # booked by either loop are caught, and never counted twice.
         self._fill_watermark = 0
+        # Orders whose "filled" status already consumed a level: multiple
+        # executions on one order must not decrement it more than once.
+        self._filled_counted: set[int] = set()
 
     # -- service entry -----------------------------------------------------
 
@@ -247,7 +250,7 @@ class PingPongWorker:
         (booked by this worker or by the main executor pass) and reset the
         grid when both sides reach zero. Returns the new-fill count."""
         rows = session.execute(
-            select(Fill.id, Order.side, Order.status)
+            select(Fill.id, Order.id, Order.side, Order.status)
             .join(Order, Fill.order_id == Order.id)
             .join(Plan, Order.plan_id == Plan.id)
             .where(
@@ -258,10 +261,12 @@ class PingPongWorker:
             )
             .order_by(Fill.id)
         ).all()
-        for fill_id, side, order_status in rows:
-            # A level is consumed only when the order is fully filled; a
-            # partial execution leaves its level alive.
-            if order_status == "filled":
+        for fill_id, order_id, side, order_status in rows:
+            # A level is consumed once per completed order: partial fills
+            # leave it alive, and batched executions of the same completed
+            # order count once.
+            if order_status == "filled" and order_id not in self._filled_counted:
+                self._filled_counted.add(int(order_id))
                 if side == "buy":
                     self.buys_remaining = max(0, (self.buys_remaining or 0) - 1)
                 else:
@@ -464,8 +469,6 @@ class PingPongWorker:
             ),
             details={"sleeve": subsidy.SLEEVE},
         )
-        session.add(decision)
-        session.flush()
         plan = Plan(
             sleeve=subsidy.SLEEVE,
             symbol=subsidy.SYMBOL,
@@ -485,7 +488,7 @@ class PingPongWorker:
             ),
             expires_at=now + builder.APPROVAL_EXPIRY,
             decided_at=now,
-            decision_id=decision.id,
+            decision_id=0,  # linked to the persisted decision below
         )
         verdict = risk_engine.check_plan(
             plan, portfolio, Limits.load(session), risk_engine.state(session, clock)
@@ -493,6 +496,11 @@ class PingPongWorker:
         if not verdict.ok:
             log.info("ping-pong refresh vetoed: %s", " ".join(verdict.reasons))
             return False
+        # Persist the decision only once the batch passes the veto: a
+        # vetoed attempt must not leave an orphaned plan_proposed row.
+        session.add(decision)
+        session.flush()
+        plan.decision_id = decision.id
         session.add(plan)
         session.flush()
         for i, entry in enumerate(entries):

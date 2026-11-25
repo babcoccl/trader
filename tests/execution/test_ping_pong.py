@@ -294,6 +294,8 @@ def test_buy_veto_still_places_sells(session: Session, monkeypatch) -> None:
     assert all(o.side == "sell" for o in orders)
     plan = session.get(Plan, orders[0].plan_id)
     assert plan is not None and plan.status == "approved"
+    # The vetoed mixed attempt left no orphaned decision row.
+    assert len(list(session.scalars(select(Decision)))) == 1
 
 
 def test_paper_fill_charges_maker_fee(session: Session, monkeypatch) -> None:
@@ -355,6 +357,38 @@ def test_partial_fill_keeps_level(session: Session, monkeypatch) -> None:
             liquidity="maker",
         )
     )
+    session.flush()
+    worker.tick(session, adapter, clock, "paper")
+    assert (worker.buys_remaining, worker.sells_remaining) == (1, 2)
+
+
+def test_batched_fills_on_one_order_count_once(session: Session, monkeypatch) -> None:
+    """poll_fills can return several executions of one order together;
+    they consume a single level."""
+    clock = _active(session, monkeypatch)
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+    order = next(o for o in _open(session) if o.side == "buy")
+
+    # Two executions on the same completed order in one pass: one level.
+    order.status = "filled"
+    for _ in range(2):
+        session.add(
+            Fill(
+                order_id=order.id,
+                time=NOW,
+                price=order.price,
+                quantity=order.quantity / 2,
+                fee=Decimal("0"),
+                fee_currency="USD",
+                liquidity="maker",
+            )
+        )
     session.flush()
     worker.tick(session, adapter, clock, "paper")
     assert (worker.buys_remaining, worker.sells_remaining) == (1, 2)

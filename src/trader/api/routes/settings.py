@@ -73,6 +73,17 @@ def _ranged(key: str, lo: float, hi: float) -> Any:
     return validate
 
 
+def _ranged_int(key: str, lo: int, hi: int) -> Any:
+    def validate(v: Any) -> int:
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise ValueError(f"{key} must be an integer")
+        if not lo <= v <= hi:
+            raise ValueError(f"{key} must be between {lo} and {hi}")
+        return v
+
+    return validate
+
+
 def _ranged_decimal(key: str, lo: str, hi: str) -> Any:
     """Monetary/rate validator: stores the canonical decimal string, per the
     repo convention that money is Decimal, never a rounded float."""
@@ -125,6 +136,12 @@ EDITABLE: dict[str, tuple[Any, Any]] = {
     "subsidy_order_notional_usd": (
         _ENV,
         _ranged_decimal("subsidy_order_notional_usd", "10", "50000"),
+    ),
+    "subsidy_order_levels": (_ENV, _ranged_int("subsidy_order_levels", 1, 5)),
+    "subsidy_spread_bps": (_ENV, _ranged("subsidy_spread_bps", 1.0, 100.0)),
+    "subsidy_refresh_seconds": (
+        _ENV,
+        _ranged_int("subsidy_refresh_seconds", 5, 300),
     ),
     "auto_approve_enabled": (_ENV, _strict_bool("auto_approve_enabled")),
     "auto_approve_max_notional_usd": (

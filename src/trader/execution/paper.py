@@ -151,12 +151,15 @@ class PaperAdapter:
 
     # -- paper-only helpers ---------------------------------------------------
 
-    def fill_now(self, order: Order, price: Decimal, time: datetime) -> Fill:
+    def fill_now(
+        self, order: Order, price: Decimal, time: datetime, maker: bool = False
+    ) -> Fill:
         """Fill an order immediately at ``price`` with taker fee and slippage
         already applied by the caller. Used for emergency-stop and flatten
-        market sells, which cannot wait for the next candle. The returned
-        fill is transient: the caller adds it to the session."""
-        fill = self._make_fill(order, time, price, "taker")
+        market sells, which cannot wait for the next candle. ``maker=True``
+        charges the maker fee instead (ping-pong's maker-only quotes). The
+        returned fill is transient: the caller adds it to the session."""
+        fill = self._make_fill(order, time, price, "maker" if maker else "taker")
         order.status = "filled"
         return fill
 

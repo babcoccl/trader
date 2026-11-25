@@ -47,9 +47,9 @@ class Settings(BaseSettings):
     # Ping-pong worker (spec W1.3c): quoting levels each side, per-level
     # offset in basis points (level k sits spread_bps * (k + 1) off the
     # live bid/ask), and the re-quote timer in seconds.
-    subsidy_order_levels: int = 2
-    subsidy_spread_bps: float = 5.0
-    subsidy_refresh_seconds: int = 20
+    subsidy_order_levels: int = Field(default=2, ge=1, le=5)
+    subsidy_spread_bps: float = Field(default=5.0, ge=1.0, le=100.0)
+    subsidy_refresh_seconds: int = Field(default=20, ge=5, le=300)
     # Autonomy Level 2 (spec W1.3): when enabled, pending plans inside both
     # bounds auto-approve as actor "auto" instead of waiting for the owner.
     # Off by default; risk.check_plan and the halt still apply.

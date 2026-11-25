@@ -88,9 +88,11 @@ class PingPongWorker:
         self._clock = clock or SystemClock()
         self._session = session_factory
         self._make_adapter = make_adapter
-        # None until the first tick reads the configured order_levels.
+        # None until the first active tick reads the configured order_levels.
         self.buys_remaining: int | None = None
         self.sells_remaining: int | None = None
+        # Last order_levels seen: a settings change reseats the grid.
+        self._levels_seen: int | None = None
         # Highest fills.id counted toward the level state so far: fills
         # booked by either loop are caught, and never counted twice.
         self._fill_watermark = 0
@@ -123,8 +125,6 @@ class PingPongWorker:
         self, session: Session, adapter: ExecutionAdapter, clock: Clock, mode: str
     ) -> None:
         overrides = load_runtime_overrides(session)
-        if self.buys_remaining is None or self.sells_remaining is None:
-            self.buys_remaining = self.sells_remaining = overrides.subsidy_order_levels
         snapshot = subsidy.compute_status(session, clock, mode)
         open_pp = self._open_ping_pong(session, adapter, mode)
 
@@ -132,6 +132,12 @@ class PingPongWorker:
             for order in open_pp:
                 adapter.cancel(order.venue_order_id or "")
             return
+
+        # Adopt a changed level count immediately; counters only initialize
+        # while the sleeve is active.
+        if self._levels_seen != overrides.subsidy_order_levels:
+            self._levels_seen = overrides.subsidy_order_levels
+            self.buys_remaining = self.sells_remaining = overrides.subsidy_order_levels
 
         bbo = self._ticker(subsidy.SYMBOL)
         if bbo is None:
@@ -192,7 +198,7 @@ class PingPongWorker:
                 if (order.side == "buy" and ask <= (order.price or 0)) or (
                     order.side == "sell" and bid >= (order.price or 0)
                 ):
-                    fill = adapter.fill_now(order, order.price or bid, now)
+                    fill = adapter.fill_now(order, order.price or bid, now, maker=True)
                     session.add(fill)
                     accounting.apply_fill(session, fill)
             return
@@ -224,7 +230,7 @@ class PingPongWorker:
         notional) — the notional is spent budget the refresh must not
         reuse."""
         rows = session.execute(
-            select(Fill.id, Order.side, Fill.price, Fill.quantity)
+            select(Fill.id, Order.side, Fill.price, Fill.quantity, Order.status)
             .join(Order, Fill.order_id == Order.id)
             .join(Plan, Order.plan_id == Plan.id)
             .where(
@@ -236,11 +242,14 @@ class PingPongWorker:
             .order_by(Fill.id)
         ).all()
         filled_notional = Decimal("0")
-        for fill_id, side, price, quantity in rows:
-            if side == "buy":
-                self.buys_remaining = max(0, (self.buys_remaining or 0) - 1)
-            else:
-                self.sells_remaining = max(0, (self.sells_remaining or 0) - 1)
+        for fill_id, side, price, quantity, order_status in rows:
+            # A level is consumed only when the order is fully filled; a
+            # partial execution leaves its level alive.
+            if order_status == "filled":
+                if side == "buy":
+                    self.buys_remaining = max(0, (self.buys_remaining or 0) - 1)
+                else:
+                    self.sells_remaining = max(0, (self.sells_remaining or 0) - 1)
             filled_notional += price * quantity
             self._fill_watermark = max(self._fill_watermark, int(fill_id))
         if self.buys_remaining == 0 and self.sells_remaining == 0:
@@ -327,8 +336,74 @@ class PingPongWorker:
         if not entries:
             return
 
-        prices = self._latest_prices(session)
-        portfolio = accounting.portfolio_view(session, mode, prices)
+        portfolio = accounting.portfolio_view(
+            session, mode, self._latest_prices(session)
+        )
+        if self._place_batch(
+            session,
+            adapter,
+            overrides,
+            snapshot,
+            bid,
+            ask,
+            clock,
+            now,
+            mode,
+            entries,
+            portfolio,
+        ):
+            return
+        # A vetoed mixed grid still places its eligible sells so the bot
+        # can unwind inventory instead of withdrawing both sides.
+        sells = [e for e in entries if e["side"] == "sell"]
+        if sells and len(sells) < len(entries):
+            log.info("buy side vetoed; placing %d eligible sell quotes", len(sells))
+            self._place_batch(
+                session,
+                adapter,
+                overrides,
+                snapshot,
+                bid,
+                ask,
+                clock,
+                now,
+                mode,
+                sells,
+                portfolio,
+            )
+
+    def _place_batch(
+        self,
+        session: Session,
+        adapter: ExecutionAdapter,
+        overrides: RuntimeConfig,
+        snapshot: subsidy.SubsidySnapshot,
+        bid: Decimal,
+        ask: Decimal,
+        clock: Clock,
+        now: datetime,
+        mode: str,
+        entries: list[dict[str, Any]],
+        portfolio: accounting.Portfolio,
+    ) -> bool:
+        """Risk-check one batch of quote entries and place its orders.
+        Returns False when check_plan vetoes it (nothing is placed)."""
+        buy_notional = sum(
+            (
+                _q(Decimal(e["price"]) * Decimal(e["quantity"]))
+                for e in entries
+                if e["side"] == "buy"
+            ),
+            Decimal("0"),
+        )
+        sell_notional = sum(
+            (
+                _q(Decimal(e["price"]) * Decimal(e["quantity"]))
+                for e in entries
+                if e["side"] == "sell"
+            ),
+            Decimal("0"),
+        )
         equity = portfolio.equity_usd
         current = portfolio.weights.get(subsidy.SYMBOL, 0.0)
         # A buy-dominant batch must be checked as a buy so check_plan's
@@ -342,8 +417,7 @@ class PingPongWorker:
             delta = float(sell_notional / equity) if equity > 0 else 0.0
             target_weight = max(0.0, current - delta)
         maker_fee = Decimal(str(snapshot.maker_bps)) / Decimal("10000")
-        total_notional = buy_notional + sell_notional
-        est_fees = _q(total_notional * maker_fee * 2)
+        est_fees = _q((buy_notional + sell_notional) * maker_fee * 2)
 
         decision = Decision(
             cycle="intraday",
@@ -385,7 +459,7 @@ class PingPongWorker:
         )
         if not verdict.ok:
             log.info("ping-pong refresh vetoed: %s", " ".join(verdict.reasons))
-            return
+            return False
         session.add(plan)
         session.flush()
         for i, entry in enumerate(entries):
@@ -409,6 +483,7 @@ class PingPongWorker:
             except Exception as e:
                 log.info("ping-pong order rejected by venue: %s", e)
                 order.status = "rejected"
+        return True
 
     # -- helpers ----------------------------------------------------------
 

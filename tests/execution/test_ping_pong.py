@@ -273,6 +273,121 @@ def test_paper_fill_books_to_ledger(session: Session, monkeypatch) -> None:
     assert snap.booster_fees_30d_usd == fills[0].fee
 
 
+def test_buy_veto_still_places_sells(session: Session, monkeypatch) -> None:
+    """A mixed grid vetoed on buy exposure must still place its eligible
+    sell quotes so inventory can unwind."""
+    clock = _active(session, monkeypatch)
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    # Cap BTC weight just above the current ~0.23 weight: the buy side's
+    # ~0.27 target vetoes the mixed batch while sells stay exempt.
+    session.add(Setting(key="risk.limits.max_asset_weight", value=0.25, updated_at=NOW))
+    session.flush()
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+
+    orders = _open(session)
+    assert len(orders) == 2
+    assert all(o.side == "sell" for o in orders)
+    plan = session.get(Plan, orders[0].plan_id)
+    assert plan is not None and plan.status == "approved"
+
+
+def test_paper_fill_charges_maker_fee(session: Session, monkeypatch) -> None:
+    clock = _active(session, monkeypatch)
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+    bbo["quote"] = (Decimal("59950"), Decimal("59955"))
+    worker.tick(session, adapter, clock, "paper")
+
+    fill = session.scalars(select(Fill)).one()
+    assert fill.liquidity == "maker"
+    assert fill.fee == fill.price * fill.quantity * Decimal(str(BITSTAMP.maker_fee))
+
+
+def test_partial_fill_keeps_level(session: Session, monkeypatch) -> None:
+    """Levels are consumed per completed order, not per execution."""
+    clock = _active(session, monkeypatch)
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+    order = next(o for o in _open(session) if o.side == "buy")
+
+    # First execution leaves the order partially filled: no level consumed.
+    order.status = "partially_filled"
+    session.add(
+        Fill(
+            order_id=order.id,
+            time=NOW,
+            price=order.price,
+            quantity=order.quantity / 2,
+            fee=Decimal("0"),
+            fee_currency="USD",
+            liquidity="maker",
+        )
+    )
+    session.flush()
+    worker.tick(session, adapter, clock, "paper")
+    assert (worker.buys_remaining, worker.sells_remaining) == (2, 2)
+
+    # The completing execution consumes the level.
+    order.status = "filled"
+    session.add(
+        Fill(
+            order_id=order.id,
+            time=NOW,
+            price=order.price,
+            quantity=order.quantity / 2,
+            fee=Decimal("0"),
+            fee_currency="USD",
+            liquidity="maker",
+        )
+    )
+    session.flush()
+    worker.tick(session, adapter, clock, "paper")
+    assert (worker.buys_remaining, worker.sells_remaining) == (1, 2)
+
+
+def test_level_change_reseats_counters(session: Session, monkeypatch) -> None:
+    clock = _active(session, monkeypatch)
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+    assert (worker.buys_remaining, worker.sells_remaining) == (2, 2)
+
+    # Drop one level below the top: (1, 2) before the setting change.
+    bbo["quote"] = (Decimal("59950"), Decimal("59958"))
+    worker.tick(session, adapter, clock, "paper")
+    assert (worker.buys_remaining, worker.sells_remaining) == (1, 2)
+
+    # Editing the level count reseats the counters immediately; the grid
+    # itself re-quotes on the next refresh.
+    session.add(Setting(key="subsidy_order_levels", value=3, updated_at=NOW))
+    session.flush()
+    worker.tick(session, adapter, clock, "paper")
+    assert (worker.buys_remaining, worker.sells_remaining) == (3, 3)
+
+    clock.advance(timedelta(seconds=21))
+    worker.tick(session, adapter, clock, "paper")
+    assert len(_open(session)) == 6
+
+
 def test_halt_cancels_and_disabled_places_nothing(
     session: Session, monkeypatch
 ) -> None:
@@ -305,3 +420,6 @@ def test_disabled_places_nothing(session: Session, monkeypatch) -> None:
 
     worker.tick(session, adapter, clock, "paper")
     assert _open(session) == []
+    # Counters stay uninitialized while the sleeve is disabled.
+    assert worker.buys_remaining is None
+    assert worker.sells_remaining is None

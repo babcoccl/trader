@@ -107,3 +107,69 @@ def test_subsidy_returns_snapshot(client) -> None:
     assert float(body["open_orders_usd"]) == 0
     assert float(body["booster_net_pnl_30d_usd"]) == 0
     assert body["recent_fills"] == []
+
+
+def test_subsidy_recent_fills_include_pnl(client) -> None:
+    """Spec W1.3i: each recent fill exposes its per-execution net PnL."""
+    from decimal import Decimal
+
+    engine = _shared_engine()
+    with Session(engine) as s:
+        decision = Decision(
+            cycle="intraday",
+            ran_at=NOW,
+            action="plan_proposed",
+            reason="seed",
+            details={},
+        )
+        s.add(decision)
+        s.flush()
+        plan = Plan(
+            sleeve="ping_pong",
+            symbol="BTC-USD",
+            side="buy",
+            status="completed",
+            reference_price=Decimal("50000"),
+            target_weight=Decimal("0"),
+            entry_orders=[],
+            worst_case_loss=Decimal("0"),
+            est_fees=Decimal("0"),
+            rationale="seed",
+            expires_at=NOW,
+            decision_id=decision.id,
+        )
+        s.add(plan)
+        s.flush()
+        order = Order(
+            plan_id=plan.id,
+            venue="paper",
+            client_order_id=f"{plan.id}-1",
+            symbol="BTC-USD",
+            side="buy",
+            type="limit",
+            price=Decimal("50000"),
+            quantity=Decimal("0.002"),
+            status="filled",
+            mode="paper",
+            shadow=False,
+        )
+        s.add(order)
+        s.flush()
+        s.add(
+            Fill(
+                order_id=order.id,
+                time=NOW,
+                price=Decimal("50000"),
+                quantity=Decimal("0.002"),
+                fee=Decimal("0.4"),
+                fee_currency="USD",
+                liquidity="maker",
+            )
+        )
+        s.commit()
+    _login(client)
+    body = client.get("/api/subsidy").json()
+    assert len(body["recent_fills"]) == 1
+    fill = body["recent_fills"][0]
+    assert "pnl_usd" in fill
+    assert float(fill["pnl_usd"]) == -0.4  # an open buy pays only its fee

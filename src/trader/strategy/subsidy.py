@@ -79,6 +79,7 @@ class SubsidyFill:
     quantity: Decimal
     notional_usd: Decimal
     fee_usd: Decimal
+    pnl_usd: Decimal
 
 
 @dataclass(frozen=True)
@@ -157,13 +158,18 @@ def _open_orders_usd(session: Session, mode: str) -> Decimal:
     )
 
 
-def _booster_net_pnl_30d(session: Session, mode: str, now: datetime) -> Decimal:
-    """FIFO-matched spread gain/loss on 30-day ping_pong fills minus every
-    ping_pong fee in the window. Lots are built from all-time fills so a
-    sale matches its real cost basis rather than a newer in-window buy;
-    only fills inside the window contribute to the result."""
+def _fifo_pnl(
+    session: Session, mode: str, now: datetime
+) -> tuple[Decimal, dict[int, Decimal]]:
+    """Per-fill net PnL (id -> usd) plus its sum over the 30-day window.
+
+    One all-time FIFO pass: a buy pays only its fee until matched, a sell
+    realizes its FIFO spread minus its own fee. Lots are built from
+    all-time fills so a sale matches its real cost basis rather than a
+    newer in-window buy; only fills inside the window contribute to the
+    30-day net, so summing ``pnl_usd`` over them reproduces it exactly."""
     rows = session.execute(
-        select(Fill.time, Order.side, Fill.price, Fill.quantity, Fill.fee)
+        select(Fill.id, Fill.time, Order.side, Fill.price, Fill.quantity, Fill.fee)
         .join(Order, Fill.order_id == Order.id)
         .join(Plan, Order.plan_id == Plan.id)
         .where(
@@ -175,35 +181,40 @@ def _booster_net_pnl_30d(session: Session, mode: str, now: datetime) -> Decimal:
     ).all()
     window_start = now - TRAILING_WINDOW
     net = Decimal("0")
+    pnl_by_id: dict[int, Decimal] = {}
     buy_lots: deque[list[Decimal]] = deque()  # FIFO [price, remaining qty]
-    for time, side, price, quantity, fee in rows:
-        in_window = time >= window_start
-        if in_window:
-            # Every ping-pong fee reduces the realized net, even before a
-            # round-trip closes.
-            net -= fee
+    for fill_id, time, side, price, quantity, fee in rows:
         if side == "buy":
             buy_lots.append([price, quantity])
-            continue
-        remaining = quantity
-        while remaining > 0 and buy_lots:
-            lot = buy_lots[0]
-            take = min(lot[1], remaining)
-            if in_window:
-                net += take * (price - lot[0])
-            lot[1] -= take
-            remaining -= take
-            if lot[1] == 0:
-                buy_lots.popleft()
-        # A sell with no ping-pong buy left sold inventory opened by
-        # another sleeve; only its fee enters the net.
-    return _q(net)
+            # The entry fee is spent even before a round-trip closes.
+            pnl = -fee
+        else:
+            spread = Decimal("0")
+            remaining = quantity
+            while remaining > 0 and buy_lots:
+                lot = buy_lots[0]
+                take = min(lot[1], remaining)
+                spread += take * (price - lot[0])
+                lot[1] -= take
+                remaining -= take
+                if lot[1] == 0:
+                    buy_lots.popleft()
+            # A sell with no ping-pong buy left sold inventory opened by
+            # another sleeve; only its fee enters the net.
+            pnl = spread - fee
+        pnl = _q(pnl)
+        pnl_by_id[fill_id] = pnl
+        if time >= window_start:
+            net += pnl
+    return _q(net), pnl_by_id
 
 
-def _recent_fills(session: Session, mode: str) -> list[SubsidyFill]:
+def _recent_fills(
+    session: Session, mode: str, pnl_by_id: dict[int, Decimal]
+) -> list[SubsidyFill]:
     """Up to RECENT_FILLS_LIMIT newest non-shadow ping_pong fills."""
     rows = session.execute(
-        select(Fill.time, Order.side, Fill.price, Fill.quantity, Fill.fee)
+        select(Fill.id, Fill.time, Order.side, Fill.price, Fill.quantity, Fill.fee)
         .join(Order, Fill.order_id == Order.id)
         .join(Plan, Order.plan_id == Plan.id)
         .where(
@@ -222,8 +233,9 @@ def _recent_fills(session: Session, mode: str) -> list[SubsidyFill]:
             quantity=qty,
             notional_usd=_q(p * qty),
             fee_usd=fee,
+            pnl_usd=pnl_by_id.get(fill_id, Decimal("0")),
         )
-        for t, s, p, qty, fee in rows
+        for fill_id, t, s, p, qty, fee in rows
     ]
 
 
@@ -303,6 +315,7 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
     else:
         status, reason = "active", "Boosting volume toward the next fee tier."
 
+    booster_net, fill_pnl = _fifo_pnl(session, mode, now)
     return SubsidySnapshot(
         mode=mode,
         status=status,
@@ -322,8 +335,8 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
         adx=adx,
         adx_max=adx_max,
         open_orders_usd=_open_orders_usd(session, mode),
-        booster_net_pnl_30d_usd=_booster_net_pnl_30d(session, mode, now),
-        recent_fills=_recent_fills(session, mode),
+        booster_net_pnl_30d_usd=booster_net,
+        recent_fills=_recent_fills(session, mode, fill_pnl),
     )
 
 

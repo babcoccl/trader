@@ -49,6 +49,7 @@ def subsidy_status(session: Session = SessionDep) -> SubsidyOut:
                 quantity=f.quantity,
                 notional_usd=f.notional_usd,
                 fee_usd=f.fee_usd,
+                pnl_usd=f.pnl_usd,
             )
             for f in snap.recent_fills
         ],

@@ -12,7 +12,7 @@ stored rows did nothing).
 """
 
 import re
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -73,6 +73,36 @@ def _ranged(key: str, lo: float, hi: float) -> Any:
     return validate
 
 
+def _ranged_decimal(key: str, lo: str, hi: str) -> Any:
+    """Monetary/rate validator: stores the canonical decimal string, per the
+    repo convention that money is Decimal, never a rounded float."""
+    lo_d, hi_d = Decimal(lo), Decimal(hi)
+
+    def validate(v: Any) -> str:
+        if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+            raise ValueError(f"{key} must be a number")
+        try:
+            d = Decimal(str(v))
+        except InvalidOperation as e:
+            raise ValueError(f"{key} must be a number") from e
+        if not d.is_finite():
+            raise ValueError(f"{key} must be finite")
+        if not lo_d <= d <= hi_d:
+            raise ValueError(f"{key} must be between {lo} and {hi}")
+        return str(d)
+
+    return validate
+
+
+# Monetary keys whose values are stored as canonical decimal strings.
+_DECIMAL_KEYS = {
+    "subsidy_target_volume_usd",
+    "subsidy_daily_cap_usd",
+    "subsidy_order_notional_usd",
+    "auto_approve_max_notional_usd",
+    "auto_approve_max_loss_pct",
+}
+
 # Sentinel: the default comes from get_settings() (the .env value), not a
 # hardcoded constant, so GET /api/settings never drifts from the env config.
 _ENV = object()
@@ -85,22 +115,25 @@ EDITABLE: dict[str, tuple[Any, Any]] = {
     "subsidy_enabled": (_ENV, _strict_bool("subsidy_enabled")),
     "subsidy_target_volume_usd": (
         _ENV,
-        _ranged("subsidy_target_volume_usd", 100, 10_000_000),
+        _ranged_decimal("subsidy_target_volume_usd", "100", "10000000"),
     ),
-    "subsidy_daily_cap_usd": (_ENV, _ranged("subsidy_daily_cap_usd", 50, 1_000_000)),
+    "subsidy_daily_cap_usd": (
+        _ENV,
+        _ranged_decimal("subsidy_daily_cap_usd", "50", "1000000"),
+    ),
     "subsidy_adx_max": (_ENV, _ranged("subsidy_adx_max", 1.0, 100.0)),
     "subsidy_order_notional_usd": (
         _ENV,
-        _ranged("subsidy_order_notional_usd", 10, 50_000),
+        _ranged_decimal("subsidy_order_notional_usd", "10", "50000"),
     ),
     "auto_approve_enabled": (_ENV, _strict_bool("auto_approve_enabled")),
     "auto_approve_max_notional_usd": (
         _ENV,
-        _ranged("auto_approve_max_notional_usd", 10, 100_000),
+        _ranged_decimal("auto_approve_max_notional_usd", "10", "100000"),
     ),
     "auto_approve_max_loss_pct": (
         _ENV,
-        _ranged("auto_approve_max_loss_pct", 0.001, 0.10),
+        _ranged_decimal("auto_approve_max_loss_pct", "0.001", "0.10"),
     ),
 }
 
@@ -110,6 +143,8 @@ def _default(key: str) -> Any:
     if default is not _ENV:
         return default
     value = getattr(get_settings(), key)
+    if key in _DECIMAL_KEYS:
+        return str(value)
     return float(value) if isinstance(value, Decimal) else value
 
 

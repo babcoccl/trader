@@ -240,7 +240,7 @@ describe("Controls", () => {
 
     const autonomyRow = screen.getByText("Autonomy level").closest("tr")!;
     expect(autonomyRow).toHaveTextContent(
-      "Approve every plan (other levels are not built yet)",
+      "Ping-pong subsidy plans and small bounded plans execute autonomously when enabled below; every other plan needs your approval",
     );
     expect(autonomyRow.querySelector("button")).toBeNull();
 

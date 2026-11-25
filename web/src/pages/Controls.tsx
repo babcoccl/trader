@@ -214,7 +214,7 @@ export function Controls() {
 
   const settingsByKey = new Map((settings.data ?? []).map((r) => [r.key, r.value]));
   const readOnly: [string, string][] = [
-    ["Autonomy level", "Approve every plan (other levels are not built yet)"],
+    ["Autonomy level", "Ping-pong subsidy plans and small bounded plans execute autonomously when enabled below; every other plan needs your approval"],
     ["Approval expiry", "6 hours (fixed)"],
     ["Drawdown halt", `${(s.halt_at * 100).toFixed(0)}% from peak`],
     ["Sizing", "Volatility target 40%, assets set by TRADER_SYMBOLS (default BTC and ETH), long only, no leverage"],

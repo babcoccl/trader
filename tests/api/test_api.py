@@ -1060,7 +1060,7 @@ def test_subsidy_settings_editable(seeded) -> None:
     assert rows["subsidy_enabled"] is False
     assert rows["subsidy_adx_max"] == 20.0
     assert rows["auto_approve_enabled"] is False
-    assert rows["auto_approve_max_loss_pct"] == pytest.approx(0.015)
+    assert rows["auto_approve_max_loss_pct"] == "0.015"
 
     r = client.put("/api/settings/subsidy_adx_max", json={"value": 25})
     assert r.status_code == 200
@@ -1073,9 +1073,13 @@ def test_subsidy_settings_editable(seeded) -> None:
             select(AuditLog).where(AuditLog.action == "set subsidy_enabled")
         ).all()
         assert len(audit) == 1
+    r = client.put("/api/settings/subsidy_order_notional_usd", json={"value": 300})
+    assert r.status_code == 200
+    assert r.json()["value"] == "300"  # canonical decimal string, not a float
     rows = {r["key"]: r["value"] for r in client.get("/api/settings").json()}
     assert rows["subsidy_adx_max"] == 25
     assert rows["subsidy_enabled"] is True
+    assert rows["subsidy_order_notional_usd"] == "300"
 
     # Out-of-range and wrong-type values are rejected.
     assert (

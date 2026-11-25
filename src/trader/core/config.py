@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     subsidy_order_levels: int = Field(default=2, ge=1, le=5)
     subsidy_spread_bps: float = Field(default=5.0, ge=1.0, le=100.0)
     subsidy_refresh_seconds: int = Field(default=20, ge=5, le=300)
+    # Auto-seed (spec W1.3g): when the ping-pong worker starts a fresh
+    # ladder with too little BTC to fund even one sell level, place one
+    # maker-only buy at the best bid for the shortfall. Off by default.
+    subsidy_auto_seed: bool = False
     # Autonomy Level 2 (spec W1.3): when enabled, pending plans inside both
     # bounds auto-approve as actor "auto" instead of waiting for the owner.
     # Off by default; risk.check_plan and the halt still apply.

@@ -124,7 +124,12 @@ def _enable(monkeypatch, **overrides: str) -> None:
     get_settings.cache_clear()
 
 
-def _active(session: Session, monkeypatch, **overrides: str) -> FrozenClock:
+def _active(
+    session: Session,
+    monkeypatch,
+    btc: Decimal | None = Decimal("0.05"),
+    **overrides: str,
+) -> FrozenClock:
     """Active subsidy sleeve: env on, sideways ADX, funded account."""
     _enable(monkeypatch, **overrides)
     for candle in _daily_candles("BTC-USD", 60, 60000):
@@ -146,7 +151,8 @@ def _active(session: Session, monkeypatch, **overrides: str) -> FrozenClock:
     clock = FrozenClock(NOW)
     accounting.deposit(session, "paper", Decimal("10000"), clock)
     # Some BTC so the sell side of the grid can quote.
-    session.add(Balance(time=NOW, mode="paper", asset="BTC", quantity=Decimal("0.05")))
+    if btc is not None:
+        session.add(Balance(time=NOW, mode="paper", asset="BTC", quantity=btc))
     risk.update_equity(session, Decimal("10000"), clock)
     session.flush()
     snap = subsidy.compute_status(session, clock, "paper")
@@ -463,6 +469,103 @@ def test_halt_cancels_and_disabled_places_nothing(
     assert _open(session) == []
     for order in session.scalars(select(Order)).all():
         assert order.status == "cancelled"
+
+
+def test_auto_seed_buys_inventory_for_fresh_ladder(
+    session: Session, monkeypatch
+) -> None:
+    """Spec W1.3g: auto-seed on + zero BTC + fresh ladder -> one maker-only
+    buy at the best bid sized to order_levels * order_notional_usd."""
+    clock = _active(session, monkeypatch, btc=None, TRADER_SUBSIDY_AUTO_SEED="true")
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+
+    orders = _open(session)
+    assert len(orders) == 1
+    seed = orders[0]
+    assert seed.side == "buy"
+    assert seed.price == Decimal("59990.00")
+    # 2 levels * $250 = $500 -> 500 / 59990 rounded down to the lot.
+    assert seed.quantity == Decimal("0.00833472")
+    plan = session.get(Plan, seed.plan_id)
+    assert plan is not None and plan.status == "approved"
+    assert len(plan.entry_orders) == 1
+    assert plan.entry_orders[0]["maker_or_cancel"] is True
+
+
+def test_auto_seed_fill_then_normal_ladder(session: Session, monkeypatch) -> None:
+    """Once the seed buy fills and BTC covers a sell level, the next
+    refresh quotes buys and sells normally."""
+    clock = _active(session, monkeypatch, btc=None, TRADER_SUBSIDY_AUTO_SEED="true")
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+    assert len(_open(session)) == 1
+
+    # Ask drops under the resting seed bid: the seed fills, one buy level
+    # is consumed, and the re-quote runs the normal ladder.
+    bbo["quote"] = (Decimal("59980"), Decimal("59985"))
+    worker.tick(session, adapter, clock, "paper")
+
+    assert (worker.buys_remaining, worker.sells_remaining) == (1, 2)
+    assert accounting.positions(session, "paper")["BTC"] > Decimal("0")
+    orders = _open(session)
+    assert [o.side for o in orders] == ["buy", "sell", "sell"]
+    buys = sorted(o.price for o in orders if o.side == "buy")
+    sells = sorted(o.price for o in orders if o.side == "sell")
+    assert buys == [Decimal("59950.01")]
+    assert sells == [Decimal("60014.99"), Decimal("60044.98")]
+
+
+def test_no_seed_when_auto_seed_off(session: Session, monkeypatch) -> None:
+    """Default off: an under-funded fresh ladder quotes buys only; no
+    order rests at the best bid."""
+    clock = _active(session, monkeypatch, btc=None)
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+
+    orders = _open(session)
+    assert len(orders) == 2
+    assert all(o.side == "buy" for o in orders)
+    assert all(o.price < Decimal("59990") for o in orders)
+
+
+def test_no_seed_mid_cycle(session: Session, monkeypatch) -> None:
+    """Auto-seed never fires once sell levels have been consumed."""
+    clock = _active(session, monkeypatch, btc=None, TRADER_SUBSIDY_AUTO_SEED="true")
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+    assert len(_open(session)) == 1  # the seed order
+
+    # Mid-cycle: a sell level is already consumed, so even though BTC is
+    # still zero the refresh must quote the normal ladder, not re-seed.
+    worker.sells_remaining = 1
+    clock.advance(timedelta(seconds=21))
+    worker.tick(session, adapter, clock, "paper")
+
+    orders = _open(session)
+    assert len(orders) == 2
+    assert all(o.side == "buy" for o in orders)
+    assert all(o.price < Decimal("59990") for o in orders)
 
 
 def test_disabled_places_nothing(session: Session, monkeypatch) -> None:

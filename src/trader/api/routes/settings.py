@@ -143,6 +143,7 @@ EDITABLE: dict[str, tuple[Any, Any]] = {
         _ENV,
         _ranged_int("subsidy_refresh_seconds", 5, 300),
     ),
+    "subsidy_auto_seed": (_ENV, _strict_bool("subsidy_auto_seed")),
     "auto_approve_enabled": (_ENV, _strict_bool("auto_approve_enabled")),
     "auto_approve_max_notional_usd": (
         _ENV,

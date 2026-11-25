@@ -1106,3 +1106,28 @@ def test_subsidy_settings_editable(seeded) -> None:
         ).status_code
         == 422
     )
+
+
+def test_subsidy_auto_seed_editable(seeded) -> None:
+    """Spec W1.3g: the auto-seed flag persists true/false through the API
+    and rejects non-boolean values."""
+    client, _, _ = seeded
+    _login(client)
+    rows = {r["key"]: r["value"] for r in client.get("/api/settings").json()}
+    assert rows["subsidy_auto_seed"] is False
+
+    for value in (True, False):
+        r = client.put("/api/settings/subsidy_auto_seed", json={"value": value})
+        assert r.status_code == 200
+        assert r.json()["value"] is value
+    rows = {r["key"]: r["value"] for r in client.get("/api/settings").json()}
+    assert rows["subsidy_auto_seed"] is False
+
+    assert (
+        client.put("/api/settings/subsidy_auto_seed", json={"value": "yes"}).status_code
+        == 422
+    )
+    assert (
+        client.put("/api/settings/subsidy_auto_seed", json={"value": 1}).status_code
+        == 422
+    )

@@ -395,5 +395,5 @@ def test_buy_notional_reserves_fee_cash(session, monkeypatch) -> None:
     order = plan.entry_orders[0]
     notional = Decimal(order["price"]) * Decimal(order["quantity"])
     assert notional <= cash
-    assert notional <= cash / (Decimal("1") + Decimal("0.004"))
+    assert notional <= cash / (Decimal("1") + Decimal("0.003"))
     assert notional < Decimal("250")

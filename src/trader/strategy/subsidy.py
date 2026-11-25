@@ -17,6 +17,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from trader.backtest.costs import BITSTAMP
 from trader.core.clock import Clock
 from trader.core.config import get_settings
 from trader.data import candles as candles_mod
@@ -277,9 +278,12 @@ def propose_ping_pong_plan(session: Session, clock: Clock, mode: str) -> Plan | 
     if side == "buy":
         # Leave room for the fill's fee, like plans/builder.py: a buy sized
         # at the whole cash balance would cost more than the cash on hand.
+        # Paper fills charge the BITSTAMP model regardless of the Coinbase
+        # tier the snapshot reports.
+        fee_rate = maker_fee if mode == "live" else Decimal(str(BITSTAMP.maker_fee))
         notional = min(
             notional,
-            accounting.cash(session, mode) / (Decimal("1") + maker_fee),
+            accounting.cash(session, mode) / (Decimal("1") + fee_rate),
         )
         if notional < MIN_ORDER_NOTIONAL[mode]:
             return None

@@ -66,6 +66,27 @@ const EDITABLE: EditableSpec[] = [
     format: (v) => `$${Number(v).toLocaleString()}`,
   },
   {
+    key: "subsidy_order_levels",
+    label: "Ping-pong order levels",
+    input: "number",
+    parse: (raw) => Number.parseInt(raw, 10),
+    format: (v) => `${v} per side`,
+  },
+  {
+    key: "subsidy_spread_bps",
+    label: "Ping-pong spread",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `${v} bps`,
+  },
+  {
+    key: "subsidy_refresh_seconds",
+    label: "Ping-pong refresh",
+    input: "number",
+    parse: (raw) => Number.parseInt(raw, 10),
+    format: (v) => `${v}s`,
+  },
+  {
     key: "auto_approve_enabled",
     label: "Auto-approve small plans",
     input: "select",

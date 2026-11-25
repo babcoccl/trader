@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from trader.backtest.costs import BITSTAMP
@@ -33,7 +33,7 @@ from trader.core.clock import Clock, SystemClock
 from trader.core.config import get_settings
 from trader.core.db import session_scope
 from trader.core.runtime_settings import RuntimeConfig, load_runtime_overrides
-from trader.data.sources.base import ASSETS
+from trader.data.sources.base import ASSETS, Asset
 from trader.execution.base import ExecutionAdapter
 from trader.execution.paper import PaperAdapter
 from trader.ledger import accounting
@@ -138,6 +138,11 @@ class PingPongWorker:
         if self._levels_seen != overrides.subsidy_order_levels:
             self._levels_seen = overrides.subsidy_order_levels
             self.buys_remaining = self.sells_remaining = overrides.subsidy_order_levels
+            # Fills booked before the reseat predate the new grid; they
+            # must not consume its levels.
+            self._fill_watermark = int(
+                session.scalar(select(func.coalesce(func.max(Fill.id), 0))) or 0
+            )
 
         bbo = self._ticker(subsidy.SYMBOL)
         if bbo is None:
@@ -149,9 +154,9 @@ class PingPongWorker:
             bid, ask = bbo
 
         now = clock.now()
-        self._settle(session, adapter, open_pp, bid, ask, now)
+        spent = self._settle(session, adapter, open_pp, bid, ask, now)
         session.flush()
-        filled_this_tick, filled_notional = self._count_fills(session, mode, overrides)
+        filled_this_tick = self._count_fills(session, mode, overrides)
 
         open_pp = self._open_ping_pong(session, adapter, mode)
         oldest = min((o.created_at for o in open_pp), default=None)
@@ -175,7 +180,7 @@ class PingPongWorker:
             clock,
             now,
             mode,
-            filled_notional,
+            spent,
         )
 
     # -- steps ----------------------------------------------------------------
@@ -188,11 +193,14 @@ class PingPongWorker:
         bid: Decimal,
         ask: Decimal,
         now: datetime,
-    ) -> None:
+    ) -> Decimal:
         """Book new fills. Paper fills a resting ping-pong order the moment
         the live quote touches it; live relies on the venue's fill poll,
         whose results must all be booked (emitted once, whichever loop
-        polls first)."""
+        polls first). Returns the notional booked this pass — spent budget
+        the refresh must not reuse (earlier fills are already inside
+        compute_status's totals)."""
+        booked = Decimal("0")
         if isinstance(adapter, PaperAdapter):
             for order in open_pp:
                 if (order.side == "buy" and ask <= (order.price or 0)) or (
@@ -201,13 +209,15 @@ class PingPongWorker:
                     fill = adapter.fill_now(order, order.price or bid, now, maker=True)
                     session.add(fill)
                     accounting.apply_fill(session, fill)
-            return
+                    booked += fill.price * fill.quantity
+            return booked
         for fill in adapter.poll_fills(now - _POLL_WINDOW):
             filled_order = session.get(Order, fill.order_id)
             try:
                 with session.begin_nested():
                     session.add(fill)
                     accounting.apply_fill(session, fill)
+                    booked += fill.price * fill.quantity
             except ValueError as exc:
                 if filled_order is not None:
                     filled_order.status = "rejected"
@@ -220,17 +230,16 @@ class PingPongWorker:
                         details={"order_id": fill.order_id},
                     )
                 )
+        return booked
 
     def _count_fills(
         self, session: Session, mode: str, overrides: RuntimeConfig
-    ) -> tuple[int, Decimal]:
+    ) -> int:
         """Decrement the level counters for newly recorded ping_pong fills
         (booked by this worker or by the main executor pass) and reset the
-        grid when both sides reach zero. Returns (new-fill count, their
-        notional) — the notional is spent budget the refresh must not
-        reuse."""
+        grid when both sides reach zero. Returns the new-fill count."""
         rows = session.execute(
-            select(Fill.id, Order.side, Fill.price, Fill.quantity, Order.status)
+            select(Fill.id, Order.side, Order.status)
             .join(Order, Fill.order_id == Order.id)
             .join(Plan, Order.plan_id == Plan.id)
             .where(
@@ -241,8 +250,7 @@ class PingPongWorker:
             )
             .order_by(Fill.id)
         ).all()
-        filled_notional = Decimal("0")
-        for fill_id, side, price, quantity, order_status in rows:
+        for fill_id, side, order_status in rows:
             # A level is consumed only when the order is fully filled; a
             # partial execution leaves its level alive.
             if order_status == "filled":
@@ -250,11 +258,10 @@ class PingPongWorker:
                     self.buys_remaining = max(0, (self.buys_remaining or 0) - 1)
                 else:
                     self.sells_remaining = max(0, (self.sells_remaining or 0) - 1)
-            filled_notional += price * quantity
             self._fill_watermark = max(self._fill_watermark, int(fill_id))
         if self.buys_remaining == 0 and self.sells_remaining == 0:
             self.buys_remaining = self.sells_remaining = overrides.subsidy_order_levels
-        return len(rows), filled_notional
+        return len(rows)
 
     def _refresh(
         self,
@@ -293,8 +300,8 @@ class PingPongWorker:
         btc = accounting.positions(session, mode).get(subsidy.ASSET, Decimal("0"))
         min_notional = subsidy.MIN_ORDER_NOTIONAL[mode]
 
+        budget = remaining_budget
         entries: list[dict[str, Any]] = []
-        buy_notional = Decimal("0")
         for k in range(self.buys_remaining or 0):
             bps = Decimal(str(overrides.subsidy_spread_bps * (k + 1))) / Decimal(
                 "10000"
@@ -312,27 +319,11 @@ class PingPongWorker:
                 continue
             entries.append(self._entry("buy", price, quantity))
             notional = _q(quantity * price)
-            buy_notional += notional
             cash -= notional * (1 + fee_rate)
             remaining_budget -= notional
-        sell_notional = Decimal("0")
-        for k in range(self.sells_remaining or 0):
-            bps = Decimal(str(overrides.subsidy_spread_bps * (k + 1))) / Decimal(
-                "10000"
-            )
-            price = _round_down(ask * (1 + bps), asset.tick)
-            notional = min(overrides.subsidy_order_notional_usd, remaining_budget)
-            quantity = (
-                _round_down(notional / price, asset.lot) if price > 0 else Decimal(0)
-            )
-            quantity = min(quantity, btc)
-            if quantity <= 0 or _q(quantity * price) < min_notional:
-                continue
-            entries.append(self._entry("sell", price, quantity))
-            notional = _q(quantity * price)
-            sell_notional += notional
-            btc -= quantity
-            remaining_budget -= notional
+        entries += self._sell_entries(
+            overrides, remaining_budget, btc, ask, asset, min_notional
+        )
         if not entries:
             return
 
@@ -354,9 +345,16 @@ class PingPongWorker:
         ):
             return
         # A vetoed mixed grid still places its eligible sells so the bot
-        # can unwind inventory instead of withdrawing both sides.
-        sells = [e for e in entries if e["side"] == "sell"]
-        if sells and len(sells) < len(entries):
+        # can unwind inventory instead of withdrawing both sides — unless
+        # the veto is the halt itself, in which case nothing may quote.
+        # The vetoed buys spent nothing, so the sells are re-sized against
+        # the untouched budget and BTC balance.
+        if risk_engine.state(session, clock).halted:
+            return
+        if not any(e["side"] == "buy" for e in entries):
+            return
+        sells = self._sell_entries(overrides, budget, btc, ask, asset, min_notional)
+        if sells:
             log.info("buy side vetoed; placing %d eligible sell quotes", len(sells))
             self._place_batch(
                 session,
@@ -371,6 +369,33 @@ class PingPongWorker:
                 sells,
                 portfolio,
             )
+
+    def _sell_entries(
+        self,
+        overrides: RuntimeConfig,
+        budget: Decimal,
+        btc: Decimal,
+        ask: Decimal,
+        asset: Asset,
+        min_notional: Decimal,
+    ) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        for k in range(self.sells_remaining or 0):
+            bps = Decimal(str(overrides.subsidy_spread_bps * (k + 1))) / Decimal(
+                "10000"
+            )
+            price = _round_down(ask * (1 + bps), asset.tick)
+            notional = min(overrides.subsidy_order_notional_usd, budget)
+            quantity = (
+                _round_down(notional / price, asset.lot) if price > 0 else Decimal(0)
+            )
+            quantity = min(quantity, btc)
+            if quantity <= 0 or _q(quantity * price) < min_notional:
+                continue
+            entries.append(self._entry("sell", price, quantity))
+            btc -= quantity
+            budget -= _q(quantity * price)
+        return entries
 
     def _place_batch(
         self,

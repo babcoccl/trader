@@ -157,7 +157,7 @@ class PingPongWorker:
             bid, ask = bbo
 
         now = clock.now()
-        spent = self._settle(session, adapter, open_pp, bid, ask, now)
+        spent_all, spent_pp = self._settle(session, adapter, open_pp, bid, ask, now)
         session.flush()
         filled_this_tick = self._count_fills(session, mode, overrides)
 
@@ -183,7 +183,8 @@ class PingPongWorker:
             clock,
             now,
             mode,
-            spent,
+            spent_all,
+            spent_pp,
         )
 
     # -- steps ----------------------------------------------------------------
@@ -196,14 +197,16 @@ class PingPongWorker:
         bid: Decimal,
         ask: Decimal,
         now: datetime,
-    ) -> Decimal:
+    ) -> tuple[Decimal, Decimal]:
         """Book new fills. Paper fills a resting ping-pong order the moment
         the live quote touches it; live relies on the venue's fill poll,
         whose results must all be booked (emitted once, whichever loop
-        polls first). Returns the notional booked this pass — spent budget
-        the refresh must not reuse (earlier fills are already inside
-        compute_status's totals)."""
-        booked = Decimal("0")
+        polls first). Returns (all-fill notional, ping-pong notional)
+        booked this pass: the fee-tier target counts every fill while the
+        daily booster cap counts ping-pong fills only — earlier fills are
+        already inside compute_status's totals."""
+        booked_all = Decimal("0")
+        booked_pp = Decimal("0")
         if isinstance(adapter, PaperAdapter):
             for order in open_pp:
                 if (order.side == "buy" and ask <= (order.price or 0)) or (
@@ -212,23 +215,23 @@ class PingPongWorker:
                     fill = adapter.fill_now(order, order.price or bid, now, maker=True)
                     session.add(fill)
                     accounting.apply_fill(session, fill)
-                    booked += fill.price * fill.quantity
-            return booked
+                    booked_all += fill.price * fill.quantity
+                    booked_pp += fill.price * fill.quantity
+            return booked_all, booked_pp
         for fill in adapter.poll_fills(now - _POLL_WINDOW):
             filled_order = session.get(Order, fill.order_id)
             try:
                 with session.begin_nested():
                     session.add(fill)
                     accounting.apply_fill(session, fill)
-                    # Only ping-pong fills spend booster budget; other
-                    # sleeves' fills must still be booked but not deducted.
+                    booked_all += fill.price * fill.quantity
                     plan = (
                         session.get(Plan, filled_order.plan_id)
                         if filled_order is not None
                         else None
                     )
                     if plan is not None and plan.sleeve == subsidy.SLEEVE:
-                        booked += fill.price * fill.quantity
+                        booked_pp += fill.price * fill.quantity
             except ValueError as exc:
                 if filled_order is not None:
                     filled_order.status = "rejected"
@@ -241,7 +244,7 @@ class PingPongWorker:
                         details={"order_id": fill.order_id},
                     )
                 )
-        return booked
+        return booked_all, booked_pp
 
     def _count_fills(
         self, session: Session, mode: str, overrides: RuntimeConfig
@@ -287,17 +290,15 @@ class PingPongWorker:
         clock: Clock,
         now: datetime,
         mode: str,
-        spent_this_tick: Decimal = Decimal("0"),
+        spent_all: Decimal = Decimal("0"),
+        spent_pp: Decimal = Decimal("0"),
     ) -> None:
         for order in self._open_ping_pong(session, adapter, mode):
             adapter.cancel(order.venue_order_id or "")
 
-        remaining_budget = (
-            min(
-                snapshot.remaining_to_target_usd,
-                snapshot.daily_cap_usd - snapshot.today_booster_volume_usd,
-            )
-            - spent_this_tick
+        remaining_budget = min(
+            snapshot.remaining_to_target_usd - spent_all,
+            snapshot.daily_cap_usd - snapshot.today_booster_volume_usd - spent_pp,
         )
         if remaining_budget < subsidy.MIN_ORDER_NOTIONAL[mode]:
             return

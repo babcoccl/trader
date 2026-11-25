@@ -24,6 +24,9 @@ KEYS = (
     "subsidy_daily_cap_usd",
     "subsidy_adx_max",
     "subsidy_order_notional_usd",
+    "subsidy_order_levels",
+    "subsidy_spread_bps",
+    "subsidy_refresh_seconds",
     "auto_approve_enabled",
     "auto_approve_max_notional_usd",
     "auto_approve_max_loss_pct",
@@ -37,6 +40,9 @@ class RuntimeConfig:
     subsidy_daily_cap_usd: Decimal
     subsidy_adx_max: float
     subsidy_order_notional_usd: Decimal
+    subsidy_order_levels: int
+    subsidy_spread_bps: float
+    subsidy_refresh_seconds: int
     auto_approve_enabled: bool
     auto_approve_max_notional_usd: Decimal
     auto_approve_max_loss_pct: Decimal
@@ -70,6 +76,15 @@ def load_runtime_overrides(session: Session) -> RuntimeConfig:
         subsidy_adx_max=float(get("subsidy_adx_max", settings.subsidy_adx_max)),
         subsidy_order_notional_usd=_dec(
             get("subsidy_order_notional_usd", settings.subsidy_order_notional_usd)
+        ),
+        subsidy_order_levels=int(
+            get("subsidy_order_levels", settings.subsidy_order_levels)
+        ),
+        subsidy_spread_bps=float(
+            get("subsidy_spread_bps", settings.subsidy_spread_bps)
+        ),
+        subsidy_refresh_seconds=int(
+            get("subsidy_refresh_seconds", settings.subsidy_refresh_seconds)
         ),
         auto_approve_enabled=bool(
             get("auto_approve_enabled", settings.auto_approve_enabled)

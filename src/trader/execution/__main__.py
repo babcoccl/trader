@@ -47,6 +47,7 @@ from trader.execution.base import LIMIT_TTL, ExecutionAdapter
 from trader.execution.bitstamp import BitstampAdapter
 from trader.execution.coinbase import CoinbaseAdvancedAdapter
 from trader.execution.paper import PRIMARY_SOURCE, PaperAdapter
+from trader.execution.ping_pong import PingPongWorker
 from trader.ledger import accounting
 from trader.ledger.models import (
     Candle,
@@ -59,11 +60,13 @@ from trader.ledger.models import (
 )
 from trader.ops.heartbeat import beat
 from trader.risk import engine as risk
+from trader.strategy import subsidy
 
 log = logging.getLogger(__name__)
 
 SERVICE = "executor"
 LOOP_SECONDS = 30
+PING_PONG_SECONDS = 10
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -358,6 +361,10 @@ class Executor:
             if order.status not in ("new", "open", "partially_filled"):
                 continue  # settled by a fill collected earlier in this loop
             plan = plans[order.plan_id]
+            if plan.sleeve == subsidy.SLEEVE:
+                # The ping-pong worker (spec W1.3c) owns its orders: no
+                # TTL conversion or repricing from this loop.
+                continue
             # Maker-or-cancel orders (spec W1.2b) never convert to a taker
             # fill: at TTL they cancel, and they are never repriced into a
             # quote that could lift the ask.
@@ -577,11 +584,25 @@ class Executor:
 
     def serve(self) -> None:
         self.tick_safe()  # the emergency-stop check also runs at start-up
+        ping_pong = PingPongWorker(
+            clock=self._clock,
+            session_factory=self._session,
+            make_adapter=self._adapter,
+        )
         scheduler = BlockingScheduler(timezone=UTC)
         scheduler.add_job(
             self.tick_safe,
             "interval",
             seconds=LOOP_SECONDS,
+            coalesce=True,
+            max_instances=1,
+        )
+        # Spec W1.3c: the ping-pong worker quotes on its own 10-second
+        # loop; tick_safe isolates it from this service's 30-second pass.
+        scheduler.add_job(
+            ping_pong.tick_safe,
+            "interval",
+            seconds=PING_PONG_SECONDS,
             coalesce=True,
             max_instances=1,
         )

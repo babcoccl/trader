@@ -317,6 +317,50 @@ class PingPongWorker:
         btc = accounting.positions(session, mode).get(subsidy.ASSET, Decimal("0"))
         min_notional = subsidy.MIN_ORDER_NOTIONAL[mode]
 
+        # Auto-seed (spec W1.3g): a fresh sell ladder with too little BTC
+        # to fund even one level seeds its inventory with a single
+        # maker-only buy at the best bid. Mid-cycle ladders (sells
+        # already consumed) and a risk veto both fall through to normal
+        # quoting so the worker never stalls. Never sells BTC for cash.
+        if (
+            overrides.subsidy_auto_seed
+            # bid == ask means the ticker failed and both sides came from
+            # the last close: a seed resting at that "bid" would fill
+            # against itself on the next stale pass, so skip it. A real
+            # locked book would cross a maker order anyway.
+            and bid < ask
+            and self.sells_remaining == overrides.subsidy_order_levels
+            and btc * bid < overrides.subsidy_order_notional_usd
+        ):
+            target_seed_usd = (
+                Decimal(overrides.subsidy_order_levels)
+                * overrides.subsidy_order_notional_usd
+            )
+            shortfall_usd = target_seed_usd - btc * bid
+            price = _round_down(bid, asset.tick)
+            notional = min(shortfall_usd, remaining_budget, cash / (1 + fee_rate))
+            quantity = (
+                _round_down(notional / price, asset.lot) if price > 0 else Decimal(0)
+            )
+            if quantity > 0 and _q(quantity * price) >= min_notional:
+                portfolio = accounting.portfolio_view(
+                    session, mode, self._latest_prices(session)
+                )
+                if self._place_batch(
+                    session,
+                    adapter,
+                    overrides,
+                    snapshot,
+                    bid,
+                    ask,
+                    clock,
+                    now,
+                    mode,
+                    [self._entry("buy", price, quantity)],
+                    portfolio,
+                ):
+                    return
+
         budget = remaining_budget
         entries: list[dict[str, Any]] = []
         for k in range(self.buys_remaining or 0):

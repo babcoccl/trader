@@ -47,6 +47,7 @@ function defaultSettings() {
     { key: "subsidy_order_levels", value: 3, updated_at: null },
     { key: "subsidy_spread_bps", value: 8.5, updated_at: null },
     { key: "subsidy_refresh_seconds", value: 15, updated_at: null },
+    { key: "subsidy_auto_seed", value: false, updated_at: null },
     { key: "auto_approve_enabled", value: false, updated_at: null },
     { key: "auto_approve_max_notional_usd", value: 750, updated_at: null },
     { key: "auto_approve_max_loss_pct", value: 0.015, updated_at: null },
@@ -283,6 +284,27 @@ describe("Controls", () => {
     await userEvent.type(refreshInput, "30");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(putSettingMock).toHaveBeenCalledWith("subsidy_refresh_seconds", 30);
+  });
+
+  it("renders Ping-pong auto-seed and saves it as a boolean", async () => {
+    statusMock.mockResolvedValue(makeStatus());
+    settingsMock.mockResolvedValue(defaultSettings());
+    putSettingMock.mockResolvedValue({
+      key: "subsidy_auto_seed",
+      value: true,
+      updated_at: "2026-11-21T12:06:00Z",
+    });
+    renderControls();
+
+    const row = (await screen.findByText("Ping-pong auto-seed")).closest("tr")!;
+    expect(row).toHaveTextContent("Disabled");
+    await userEvent.click(
+      Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Edit")!,
+    );
+    const select = screen.getByLabelText("Ping-pong auto-seed value");
+    await userEvent.selectOptions(select, "true");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(putSettingMock).toHaveBeenCalledWith("subsidy_auto_seed", true);
   });
 
   it("shows read-only limits; autonomy and approval expiry have no edit button", async () => {

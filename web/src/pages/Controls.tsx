@@ -87,6 +87,17 @@ const EDITABLE: EditableSpec[] = [
     format: (v) => `${v}s`,
   },
   {
+    key: "subsidy_auto_seed",
+    label: "Ping-pong auto-seed",
+    input: "select",
+    options: [
+      { value: "true", label: "Enabled" },
+      { value: "false", label: "Disabled" },
+    ],
+    parse: (raw) => raw === "true",
+    format: (v) => (v ? "Enabled" : "Disabled"),
+  },
+  {
     key: "auto_approve_enabled",
     label: "Auto-approve small plans",
     input: "select",

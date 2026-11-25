@@ -27,6 +27,7 @@ KEYS = (
     "subsidy_order_levels",
     "subsidy_spread_bps",
     "subsidy_refresh_seconds",
+    "subsidy_auto_seed",
     "auto_approve_enabled",
     "auto_approve_max_notional_usd",
     "auto_approve_max_loss_pct",
@@ -43,6 +44,7 @@ class RuntimeConfig:
     subsidy_order_levels: int
     subsidy_spread_bps: float
     subsidy_refresh_seconds: int
+    subsidy_auto_seed: bool
     auto_approve_enabled: bool
     auto_approve_max_notional_usd: Decimal
     auto_approve_max_loss_pct: Decimal
@@ -86,6 +88,7 @@ def load_runtime_overrides(session: Session) -> RuntimeConfig:
         subsidy_refresh_seconds=int(
             get("subsidy_refresh_seconds", settings.subsidy_refresh_seconds)
         ),
+        subsidy_auto_seed=bool(get("subsidy_auto_seed", settings.subsidy_auto_seed)),
         auto_approve_enabled=bool(
             get("auto_approve_enabled", settings.auto_approve_enabled)
         ),

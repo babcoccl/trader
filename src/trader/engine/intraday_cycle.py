@@ -21,6 +21,7 @@ from trader.core.config import get_settings
 from trader.data import candles as candles_mod
 from trader.data.sources.base import SYMBOLS
 from trader.ledger.models import Decision, Plan, Signal
+from trader.plans import approval
 from trader.risk import engine as risk_engine
 from trader.strategy import dip_bid, subsidy
 
@@ -213,7 +214,9 @@ def run(session: Session, clock: Clock) -> Decision:
                 # A savepoint keeps a subsidy SQL error from aborting the
                 # outer intraday transaction.
                 with session.begin_nested():
-                    subsidy.propose_ping_pong_plan(session, clock, settings.mode)
+                    plan = subsidy.propose_ping_pong_plan(session, clock, settings.mode)
+                    if plan is not None:
+                        approval.maybe_auto_approve(session, plan, clock)
         except Exception:
             log.exception("ping-pong subsidy check failed")
     return row

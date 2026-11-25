@@ -28,7 +28,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from trader.core.clock import Clock
+from trader.core.clock import Clock, SystemClock
 from trader.core.config import get_settings
 from trader.data.sources.base import SYMBOLS
 from trader.execution.paper import PRIMARY_SOURCE
@@ -150,8 +150,9 @@ def approve(
     session: Session,
     plan_id: int,
     size_fraction: float | Decimal,
-    actor: str,
-    clock: Clock,
+    actor: str = "owner",
+    clock: Clock | None = None,
+    limits: Limits | None = None,
 ) -> Plan:
     """Approve a pending plan, optionally at half or quarter size.
 
@@ -159,6 +160,8 @@ def approve(
     expiry, the fraction is not one of ``{1.0, 0.5, 0.25}``, or the scaled
     plan no longer passes ``risk.check_plan``.
     """
+    clock = clock or SystemClock()
+    limits = limits or Limits.load(session)
     plan = _locked_plan(session, plan_id)
     if plan is None:
         raise ApprovalError(f"plan {plan_id} not found")
@@ -185,9 +188,7 @@ def approve(
     mode = get_settings().mode
     prices = _latest_prices(session)
     portfolio = accounting.portfolio_view(session, mode, prices)
-    verdict = risk.check_plan(
-        scaled, portfolio, Limits.load(session), risk.state(session, clock)
-    )
+    verdict = risk.check_plan(scaled, portfolio, limits, risk.state(session, clock))
     if not verdict.ok:
         raise ApprovalError(
             f"plan {plan_id} failed risk checks: {'; '.join(verdict.reasons)}"
@@ -208,6 +209,46 @@ def approve(
     _audit(session, actor, "approve plan", plan, before)
     session.flush()
     return plan
+
+
+def maybe_auto_approve(
+    session: Session, plan: Plan, clock: Clock, limits: Limits | None = None
+) -> bool:
+    """Autonomy Level 2: approve ``plan`` immediately when it is small and
+    risk-bounded, else leave it ``pending`` for the owner.
+
+    Both bounds must hold: plan notional at or under
+    ``auto_approve_max_notional_usd`` and worst-case loss at or under
+    ``auto_approve_max_loss_pct`` of current equity. The approval still
+    goes through ``approve`` — a ``risk.check_plan`` veto or a halt
+    refuses it and the plan stays ``pending``.
+    """
+    settings = get_settings()
+    if not settings.auto_approve_enabled or plan.status != "pending":
+        return False
+    notional = sum(
+        Decimal(str(o["quantity"])) * Decimal(str(o["price"] or plan.reference_price))
+        for o in plan.entry_orders
+    )
+    if notional > settings.auto_approve_max_notional_usd:
+        return False
+    equity = accounting.equity(session, settings.mode, _latest_prices(session))
+    if equity <= 0 or (plan.worst_case_loss / equity) > (
+        settings.auto_approve_max_loss_pct
+    ):
+        return False
+    try:
+        approve(
+            session,
+            plan.id,
+            size_fraction=Decimal("1"),
+            clock=clock,
+            limits=limits,
+            actor="auto",
+        )
+    except ApprovalError:
+        return False
+    return True
 
 
 def deny(session: Session, plan_id: int, actor: str, clock: Clock) -> Plan:

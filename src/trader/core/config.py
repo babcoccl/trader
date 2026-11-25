@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     subsidy_daily_cap_usd: Decimal = Decimal("2000")
     subsidy_adx_max: float = 20.0
     subsidy_order_notional_usd: Decimal = Decimal("250")
+    # Autonomy Level 2 (spec W1.3): when enabled, pending plans inside both
+    # bounds auto-approve as actor "auto" instead of waiting for the owner.
+    # Off by default; risk.check_plan and the halt still apply.
+    auto_approve_enabled: bool = False
+    auto_approve_max_notional_usd: Decimal = Decimal("750")
+    auto_approve_max_loss_pct: Decimal = Decimal("0.015")
 
     @property
     def symbol_list(self) -> tuple[str, ...]:

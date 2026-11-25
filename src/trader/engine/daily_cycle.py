@@ -27,7 +27,7 @@ from trader.core.config import get_settings
 from trader.data import candles as candles_mod
 from trader.data.sources.base import ASSETS, SYMBOLS
 from trader.ledger.models import Candle, Decision, Signal
-from trader.plans import builder
+from trader.plans import approval, builder
 from trader.risk import engine as risk_engine
 from trader.risk.limits import Limits
 from trader.strategy import ensemble, momentum, regime, rules, sizing, sleeves
@@ -339,6 +339,7 @@ def run(
                     plan.decision_id = decision.id
                     session.add(plan)
                     session.flush()
+                    approval.maybe_auto_approve(session, plan, clock)
                 else:
                     decision.action = "blocked"
                     decision.reason = (

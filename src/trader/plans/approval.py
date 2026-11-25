@@ -228,6 +228,11 @@ def maybe_auto_approve(
     overrides = load_runtime_overrides(session)
     if plan.status != "pending":
         return False
+    # No auto-approval while halted: risk.check_plan exempts
+    # exposure-reducing sells, so a halt that lands after the intraday
+    # cycle's own check must be re-tested here.
+    if risk.state(session, clock).halted:
+        return False
     limits = limits or Limits.load(session)
     # str(): the column Literal predates the ping_pong sleeve (spec W1.2b).
     if str(plan.sleeve) == "ping_pong" and overrides.subsidy_enabled:

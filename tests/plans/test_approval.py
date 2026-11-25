@@ -602,3 +602,20 @@ def test_db_notional_cap_override_tightens_env(
     plan = _plan(session, quantity="0.01", worst_case_loss="100")
     assert approval.maybe_auto_approve(session, plan, _clock()) is False
     assert plan.status == "pending"
+
+
+def test_ping_pong_sell_not_auto_approved_when_halted(session: Session) -> None:
+    """A halt landing after the intraday cycle's own check still blocks
+    auto-approval: risk.check_plan exempts exposure-reducing sells, so
+    maybe_auto_approve re-tests the halt itself."""
+    from trader.risk import engine as risk
+
+    _funded(session)
+    _set(session, "subsidy_enabled", True)
+    plan = _plan(session, sleeve="ping_pong", quantity="0.01", worst_case_loss="100")
+    plan.side = "sell"
+    plan.entry_orders[0]["side"] = "sell"
+    session.flush()
+    risk.halt(session, "owner", "test halt")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is False
+    assert plan.status == "pending"

@@ -1058,7 +1058,7 @@ def test_subsidy_settings_editable(seeded) -> None:
     rows = {r["key"]: r["value"] for r in client.get("/api/settings").json()}
     # No rows yet: defaults come from get_settings() (the env defaults).
     assert rows["subsidy_enabled"] is False
-    assert rows["subsidy_adx_max"] == 20.0
+    assert rows["subsidy_adx_max"] == 30.0
     assert rows["auto_approve_enabled"] is False
     assert rows["auto_approve_max_loss_pct"] == "0.015"
 

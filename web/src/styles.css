@@ -631,6 +631,36 @@ button.link {
   color: #f53b3a;
 }
 
+.subsidy-gates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.subsidy-gate {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgb(0 0 0 / 0.08);
+  white-space: nowrap;
+}
+
+.subsidy-gate--pass {
+  background: rgb(62 237 155 / 0.15);
+  color: #00a558;
+}
+
+.subsidy-gate--fail {
+  background: rgb(245 158 11 / 0.15);
+  color: #b45309;
+}
+
+.subsidy-expiry-note {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
 .subsidy-fills {
   border-top: 1px solid rgb(0 0 0 / 0.06);
   margin-top: 12px;

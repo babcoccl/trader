@@ -71,6 +71,16 @@ describe("Overview", () => {
       adx_max: 25,
       open_orders_usd: "750",
       booster_net_pnl_30d_usd: "6.04",
+      expiring_5d_volume_usd: "2500",
+      projected_30d_volume_usd: "2700",
+      gates: [
+        { name: "Enabled", passed: true, detail: "On" },
+        { name: "Venue", passed: true, detail: "Coinbase" },
+        { name: "System Halt", passed: true, detail: "Clear" },
+        { name: "ADX Regime", passed: true, detail: "18.4 < 30.0" },
+        { name: "Daily Cap", passed: true, detail: "$120 / $250" },
+        { name: "30d Target", passed: true, detail: "$2,500 expiring in 5d" },
+      ],
       recent_fills: [
         {
           time: "2026-11-21T18:00:00Z",
@@ -107,6 +117,12 @@ describe("Overview", () => {
     expect(await screen.findByText("Fee-Tier Subsidy")).toBeInTheDocument();
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByText("Boosting volume toward the next fee tier.")).toBeInTheDocument();
+    expect(screen.getByText(/✓ ADX Regime: 18\.4 < 30\.0/)).toBeInTheDocument();
+    expect(screen.getByText(/✓ Daily Cap: \$120 \/ \$250/)).toBeInTheDocument();
+    expect(screen.getByText(/✓ 30d Target: \$2,500 expiring in 5d/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Expiring in 5d: \$2,500 \(projected 30d: \$2,700\)/),
+    ).toBeInTheDocument();
     expect(screen.getByText("Tier 1 (40 / 60 bps)")).toBeInTheDocument();
     expect(screen.getByText("BTC ADX 18.4")).toBeInTheDocument();
     expect(screen.getByText(/\$5,200 of \$10,000 · 52\.0%/)).toBeInTheDocument();

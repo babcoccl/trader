@@ -107,6 +107,19 @@ def test_subsidy_returns_snapshot(client) -> None:
     assert float(body["open_orders_usd"]) == 0
     assert float(body["booster_net_pnl_30d_usd"]) == 0
     assert body["recent_fills"] == []
+    assert float(body["expiring_5d_volume_usd"]) == 0
+    assert float(body["projected_30d_volume_usd"]) == 0
+    assert [g["name"] for g in body["gates"]] == [
+        "Enabled",
+        "Venue",
+        "System Halt",
+        "ADX Regime",
+        "Daily Cap",
+        "30d Target",
+    ]
+    enabled = next(g for g in body["gates"] if g["name"] == "Enabled")
+    assert enabled["passed"] is False
+    assert enabled["detail"] == "Off"
 
 
 def test_subsidy_recent_fills_include_pnl(client) -> None:

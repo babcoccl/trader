@@ -304,6 +304,12 @@ class SubsidyFillOut(BaseModel):
     pnl_usd: Decimal
 
 
+class SubsidyGateOut(BaseModel):
+    name: str
+    passed: bool
+    detail: str
+
+
 class SubsidyOut(BaseModel):
     mode: str
     status: Literal["active", "throttled", "disabled"]
@@ -325,6 +331,9 @@ class SubsidyOut(BaseModel):
     open_orders_usd: Decimal
     booster_net_pnl_30d_usd: Decimal
     recent_fills: list[SubsidyFillOut]
+    expiring_5d_volume_usd: Decimal
+    projected_30d_volume_usd: Decimal
+    gates: list[SubsidyGateOut]
 
 
 class BacktestParams(BaseModel):

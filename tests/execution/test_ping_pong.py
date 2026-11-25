@@ -170,6 +170,60 @@ def _adapter(session: Session, clock: FrozenClock) -> PaperAdapter:
     return PaperAdapter(session, BITSTAMP, clock, "paper")
 
 
+def _fill(s: Session, *, sleeve: str, notional: Decimal, at: datetime) -> None:
+    """Completed non-shadow order + fill, unapplied to the ledger."""
+    decision = Decision(
+        cycle="intraday",
+        ran_at=at,
+        action="plan_proposed",
+        reason="seed",
+        details={},
+    )
+    s.add(decision)
+    s.flush()
+    plan = Plan(
+        sleeve=sleeve,
+        symbol="BTC-USD",
+        side="buy",
+        status="completed",
+        reference_price=Decimal("50000"),
+        target_weight=Decimal("0"),
+        entry_orders=[],
+        worst_case_loss=Decimal("0"),
+        est_fees=Decimal("0"),
+        rationale="seed",
+        expires_at=at,
+        decision_id=decision.id,
+    )
+    s.add(plan)
+    s.flush()
+    order = Order(
+        plan_id=plan.id,
+        venue="paper",
+        client_order_id=f"{plan.id}-1",
+        symbol="BTC-USD",
+        side="buy",
+        type="limit",
+        price=Decimal("50000"),
+        quantity=notional / Decimal("50000"),
+        status="filled",
+        mode="paper",
+    )
+    s.add(order)
+    s.flush()
+    s.add(
+        Fill(
+            order_id=order.id,
+            time=at,
+            price=Decimal("50000"),
+            quantity=notional / Decimal("50000"),
+            fee=Decimal("0"),
+            fee_currency="USD",
+            liquidity="maker",
+        )
+    )
+
+
 def _open(session: Session) -> list[Order]:
     return list(
         session.scalars(
@@ -558,6 +612,33 @@ def test_no_seed_on_stale_close(session: Session, monkeypatch) -> None:
     # Normal ladder quotes at the close-derived spread; nothing rests at
     # the close itself.
     assert all(o.price != Decimal("60000") for o in orders)
+
+
+def test_quotes_to_prebuild_expiry_cushion(session: Session, monkeypatch) -> None:
+    """Spec W1.4b: trailing 30d already >= the fee-tier target, but volume
+    expiring within 5 days projects the window below it -> the worker still
+    quotes against the projected shortfall."""
+    clock = _active(session, monkeypatch)
+    _fill(session, sleeve="trend", notional=Decimal("8000"), at=NOW - timedelta(days=2))
+    _fill(
+        session, sleeve="trend", notional=Decimal("4000"), at=NOW - timedelta(days=27)
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, clock, "paper")
+    assert snap.trailing_30d_volume_usd == Decimal("12000")
+    assert snap.projected_30d_volume_usd == Decimal("8000")
+    assert snap.status == "active"
+
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+    worker.tick(session, adapter, clock, "paper")
+
+    orders = _open(session)
+    assert len(orders) == 4
+    assert {o.side for o in orders} == {"buy", "sell"}
 
 
 def _sleeve_fill(

@@ -388,8 +388,15 @@ class PingPongWorker:
             )
             return
 
+        # Spec W1.4b: budget against the projected 30-day volume too, so a
+        # sleeve at target still quotes while expiring volume would drop it
+        # below the fee tier inside the lookahead window.
         remaining_budget = min(
-            snapshot.remaining_to_target_usd - spent_all,
+            max(
+                snapshot.remaining_to_target_usd,
+                snapshot.target_volume_usd - snapshot.projected_30d_volume_usd,
+            )
+            - spent_all,
             snapshot.daily_cap_usd - snapshot.today_booster_volume_usd - spent_pp,
         )
         if remaining_budget < subsidy.MIN_ORDER_NOTIONAL[mode]:

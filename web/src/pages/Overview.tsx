@@ -97,6 +97,20 @@ export function Overview() {
         ) : (
           <>
             <p className="muted subsidy-card__reason">{subsidy.data.reason}</p>
+            {subsidy.data.gates.length > 0 ? (
+              <div className="subsidy-gates">
+                {subsidy.data.gates.map((g) => (
+                  <span
+                    key={g.name}
+                    className={`subsidy-gate ${
+                      g.passed ? "subsidy-gate--pass" : "subsidy-gate--fail"
+                    }`}
+                  >
+                    {g.passed ? "✓" : "✕"} {g.name}: {g.detail}
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <div className="subsidy-card__tier">
               <span>
                 {subsidy.data.tier} ({subsidy.data.maker_bps} / {subsidy.data.taker_bps} bps)
@@ -126,6 +140,12 @@ export function Overview() {
               </span>
               <span>{usd(subsidy.data.remaining_to_target_usd)} to next tier</span>
             </div>
+            {Number(subsidy.data.expiring_5d_volume_usd) > 0 ? (
+              <p className="muted subsidy-expiry-note">
+                Expiring in 5d: {usd(subsidy.data.expiring_5d_volume_usd)} (projected
+                30d: {usd(subsidy.data.projected_30d_volume_usd)})
+              </p>
+            ) : null}
             <div className="subsidy-stats">
               <div>
                 <div className="stat-card__title">Booster Trades</div>

@@ -331,12 +331,19 @@ class PingPongWorker:
         portfolio = accounting.portfolio_view(session, mode, prices)
         equity = portfolio.equity_usd
         current = portfolio.weights.get(subsidy.SYMBOL, 0.0)
-        delta = float((buy_notional - sell_notional) / equity) if equity > 0 else 0.0
-        target_weight = max(0.0, current + delta)
+        # A buy-dominant batch must be checked as a buy so check_plan's
+        # sell exemption never lets new buy exposure bypass the limits.
+        if buy_notional > 0:
+            side = "buy"
+            delta = float(buy_notional / equity) if equity > 0 else 0.0
+            target_weight = max(0.0, current + delta)
+        else:
+            side = "sell"
+            delta = float(sell_notional / equity) if equity > 0 else 0.0
+            target_weight = max(0.0, current - delta)
         maker_fee = Decimal(str(snapshot.maker_bps)) / Decimal("10000")
         total_notional = buy_notional + sell_notional
         est_fees = _q(total_notional * maker_fee * 2)
-        side = "buy" if buy_notional >= sell_notional else "sell"
 
         decision = Decision(
             cycle="intraday",

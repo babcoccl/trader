@@ -161,6 +161,9 @@ def simulate(df: pd.DataFrame, gate: float, vol_set: set[int], spread_bps: float
             drift += btc * (o - prev_close)  # inventory PnL across the gap
         if a:
             active_bars += 1
+            # Both ladders are quoted at the bar's open: sells are sized on
+            # pre-bar inventory, not BTC a same-bar buy may have added.
+            sell_btc = btc
             if not seeded:
                 # Auto-seed: one maker buy at the open for the sell ladder.
                 qty = SEED_LEVELS_USD / o
@@ -187,18 +190,19 @@ def simulate(df: pd.DataFrame, gate: float, vol_set: set[int], spread_bps: float
                 for k in range(sells_rem):
                     price = o * (1 + spread_bps * (k + 1) / 10_000)
                     if hi >= price:
-                        qty = min(ORDER_NOTIONAL_USD / price, btc)
+                        qty = min(ORDER_NOTIONAL_USD / price, sell_btc)
                         if qty > 0:
                             fee = qty * price * maker_fee
                             cash += qty * price - fee
                             btc -= qty
+                            sell_btc -= qty
                             fees += fee
                             volume += qty * price
                             sells_rem -= 1
             if buys_rem == 0 and sells_rem == 0:
                 buys_rem = sells_rem = ORDER_LEVELS
         drift += btc * (c - o)  # intra-bar drift on post-fill inventory
-        prev_close = o  # next gap measured open-to-open
+        prev_close = c  # next gap measured close-to-open
         equity.append(cash + btc * c)
         inv_value.append(btc * c)
 
@@ -258,6 +262,7 @@ def daily_volume(df: pd.DataFrame, gate: float, vol_set: set[int],
             cash -= qty * o * (1 + maker_fee)
             seeded = True
             continue
+        bar_btc = btc  # sell ladder sizes on pre-bar inventory
         for k in range(buys_rem):
             price = o * (1 - spread_bps * (k + 1) / 10_000)
             if lo <= price and cash >= ORDER_NOTIONAL_USD * (1 + maker_fee):
@@ -268,9 +273,10 @@ def daily_volume(df: pd.DataFrame, gate: float, vol_set: set[int],
                 buys_rem -= 1
         for k in range(sells_rem):
             price = o * (1 + spread_bps * (k + 1) / 10_000)
-            if hi >= price and btc >= ORDER_NOTIONAL_USD / price:
+            if hi >= price and bar_btc >= ORDER_NOTIONAL_USD / price:
                 qty = ORDER_NOTIONAL_USD / price
                 btc -= qty
+                bar_btc -= qty
                 cash += qty * price * (1 - maker_fee)
                 vol[day] += qty * price
                 sells_rem -= 1
@@ -296,30 +302,38 @@ def smart_boost(df: pd.DataFrame, aplus: tuple, fallback: tuple,
         for i, day in enumerate(days):
             rolling = realized.iloc[max(0, i - ROLLING_DAYS):i].sum()
             deficit = TIER_TARGET_USD - rolling
-            if deficit <= 0:
-                continue
+            expiring = realized.iloc[max(0, i - ROLLING_DAYS):i]
             if name == "baseline":
+                if deficit <= 0:
+                    continue
                 v = min(base_vol[day], deficit, DAILY_CAP_USD)
                 cost += v * cost_rate["unfiltered"]
             else:
-                # Days until >$0 of trailing volume expires below target.
-                expiring = realized.iloc[max(0, i - ROLLING_DAYS):i]
-                days_until_drop = next(
-                    (j for j in range(min(5, len(expiring)))
-                     if rolling - expiring.iloc[:j + 1].sum() < TIER_TARGET_USD),
-                    99)
-                if days_until_drop > 5:
+                if deficit > 0:
+                    # Below target: trade the A+ filter; top up on the
+                    # relaxed filter when A+ can't cover the deficit
+                    # inside the remaining window.
                     v = min(aplus_vol[day], deficit, DAILY_CAP_USD)
                     cost += v * cost_rate["aplus"]
-                    # A+ volume too scarce to cover the deficit inside the
-                    # remaining window: top up on the relaxed filter.
-                    if v < deficit and deficit - v > 2 * DAILY_CAP_USD:
-                        extra = min(fb_vol[day], deficit - v, DAILY_CAP_USD - v)
+                    if deficit - v > 2 * DAILY_CAP_USD:
+                        extra = min(fb_vol[day], deficit - v,
+                                    DAILY_CAP_USD - v)
                         cost += extra * cost_rate["fallback"]
                         v += extra
                 else:
-                    # Volume expiring within 3-5 days: relax the filter.
-                    v = min(fb_vol[day], deficit, DAILY_CAP_USD)
+                    # Healthy: anticipate expiry — when volume dropping
+                    # out within 3-5 days would push rolling_30d under
+                    # target, pre-build a cushion on the fallback filter.
+                    drop = next(
+                        (j + 1 for j in range(min(5, len(expiring)))
+                         if rolling - expiring.iloc[:j + 1].sum()
+                         < TIER_TARGET_USD),
+                        None)
+                    if drop is None:
+                        continue
+                    shortfall = TIER_TARGET_USD - (
+                        rolling - expiring.iloc[:drop].sum())
+                    v = min(fb_vol[day], shortfall, DAILY_CAP_USD)
                     cost += v * cost_rate["fallback"]
             realized[day] = v
         rolling_series = realized.rolling(ROLLING_DAYS, min_periods=1).sum()
@@ -467,10 +481,11 @@ inventory drift; the primary ranking metric.
 
 Policy volume is capped at ${DAILY_CAP_USD:,.0f}/day. Baseline boosts
 every day `rolling_30d < $10,000` regardless of conditions. Smart boost
-quotes only on A+ days ({gate_name}, {band_name}) while
-`days_until_drop > 5`, and relaxes to a fallback filter (ADX<30, all vol
-bands) when volume expiring within 3-5 days would push the rolling
-window under $10,000.
+quotes on the A+ filter ({gate_name}, {band_name}) to cover a deficit,
+tops up on the relaxed fallback (ADX<30, all vol bands) when A+ volume
+is more than 2 days short, and — while the tier is still healthy —
+pre-builds a fallback cushion when volume expiring within 3-5 days
+would push the rolling window under $10,000.
 
 {fmt_table(boost_rows, ["Policy", "Volume traded", "Net subsidy cost", "Tier uptime"])}
 
@@ -486,10 +501,11 @@ window under $10,000.
 3. Third: **{top3[2][0][1]} + {top3[2][0][2]}** at
    `spread_bps = {top3[2][0][3]}` — ${top3[2][1]['pnl_per_1000']:,.3f} per
    $1,000.
-4. Smart boost cut the 30-day maintenance cost to
-   ${boost['smart']['cost_usd']:,.2f} vs ${boost['baseline']['cost_usd']:,.2f}
-   always-on, at {boost['smart']['uptime_pct']:.0f}% vs
-   {boost['baseline']['uptime_pct']:.0f}% tier uptime.
+4. Smart boost spent ${boost['smart']['cost_usd']:,.2f} vs
+   ${boost['baseline']['cost_usd']:,.2f} always-on and held tier uptime at
+   {boost['smart']['uptime_pct']:.0f}% vs {boost['baseline']['uptime_pct']:.0f}%
+   — the expiry-anticipation cushion, not the regime filter, is what
+   keeps the tier alive between A+ spells.
 
 ## 5. Recommendation for Step 2 (`strategy/subsidy.py`, `execution/ping_pong.py`)
 
@@ -503,12 +519,11 @@ window under $10,000.
 2. Set `subsidy_spread_bps = {best_spread}`. Wider spreads raise capture
    per fill but collapse fill count and leave inventory parked longer;
    the net per $1,000 worsens monotonically past 5 bps.
-3. Smart boost: quote the A+ filter only while `days_until_drop > 5`;
-   when volume expiring within 3-5 days would drop `rolling_30d` below
-   $10,000, relax to the fallback (ADX<30, all volatility bands) until
-   the window is back above target. On this window that saved ~10% of
-   cost but lost 30 points of tier uptime — the fallback must engage
-   earlier than 3-5 days when the daily cap binds.
+3. Smart boost: on a deficit, quote the A+ filter and top up on the
+   fallback (ADX<30, all bands) when the shortfall exceeds two days of
+   cap; while healthy, watch the 30-day window and pre-build a fallback
+   cushion when volume expiring within 3-5 days would push
+   `rolling_30d` under $10,000.
 4. Keep the $2,000/day booster cap; the unfiltered run averaged
    ${best['vol_per_day']:,.0f}/day, so the cap is the throttle that
    paces a $10k window, not the market.

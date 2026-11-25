@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from trader.core.clock import Clock
 from trader.core.config import get_settings
+from trader.core.runtime_settings import load_runtime_overrides
 from trader.data import candles as candles_mod
 from trader.data.sources.base import SYMBOLS
 from trader.ledger.models import Decision, Plan, Signal
@@ -208,7 +209,7 @@ def run(session: Session, clock: Clock) -> Decision:
     # isolated so a subsidy failure can never break stop/dip-bid checks,
     # and it never proposes while trading is halted.
     settings = get_settings()
-    if settings.subsidy_enabled:
+    if load_runtime_overrides(session).subsidy_enabled:
         try:
             if not risk_engine.state(session, clock).halted:
                 # A savepoint keeps a subsidy SQL error from aborting the

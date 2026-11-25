@@ -9,6 +9,7 @@ interface EditableSpec {
   options?: { value: string; label: string }[];
   parse?: (raw: string) => unknown;
   format?: (value: unknown) => string;
+  toRaw?: (value: unknown) => string;
 }
 
 const EDITABLE: EditableSpec[] = [
@@ -25,6 +26,73 @@ const EDITABLE: EditableSpec[] = [
     input: "text",
     format: (v) => `${v} UTC`,
   },
+  {
+    key: "subsidy_enabled",
+    label: "Fee-tier subsidy",
+    input: "select",
+    options: [
+      { value: "true", label: "Enabled" },
+      { value: "false", label: "Disabled" },
+    ],
+    parse: (raw) => raw === "true",
+    format: (v) => (v ? "Enabled" : "Disabled"),
+  },
+  {
+    key: "subsidy_target_volume_usd",
+    label: "Subsidy target volume",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `$${Number(v).toLocaleString()}`,
+  },
+  {
+    key: "subsidy_daily_cap_usd",
+    label: "Subsidy daily cap",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `$${Number(v).toLocaleString()}`,
+  },
+  {
+    key: "subsidy_adx_max",
+    label: "Subsidy max ADX",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `${v}`,
+  },
+  {
+    key: "subsidy_order_notional_usd",
+    label: "Subsidy order size",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `$${Number(v).toLocaleString()}`,
+  },
+  {
+    key: "auto_approve_enabled",
+    label: "Auto-approve small plans",
+    input: "select",
+    options: [
+      { value: "true", label: "Enabled" },
+      { value: "false", label: "Disabled" },
+    ],
+    parse: (raw) => raw === "true",
+    format: (v) => (v ? "Enabled" : "Disabled"),
+  },
+  {
+    key: "auto_approve_max_notional_usd",
+    label: "Auto-approve max notional",
+    input: "number",
+    parse: (raw) => Number.parseFloat(raw),
+    format: (v) => `$${Number(v).toLocaleString()}`,
+  },
+  {
+    key: "auto_approve_max_loss_pct",
+    label: "Auto-approve max loss",
+    input: "number",
+    // Stored as a fraction (0.015); the input works in percent (1.5) to
+    // match the displayed value.
+    parse: (raw) => Number.parseFloat(raw) / 100,
+    format: (v) => `${(Number(v) * 100).toFixed(1)}%`,
+    toRaw: (v) => String(Number(v) * 100),
+  },
 ];
 
 function SettingRow({ spec, value }: { spec: EditableSpec; value: unknown }) {
@@ -39,6 +107,7 @@ function SettingRow({ spec, value }: { spec: EditableSpec; value: unknown }) {
       setEditing(false);
       setError(null);
       void queryClient.invalidateQueries({ queryKey: ["settings"] });
+      void queryClient.invalidateQueries({ queryKey: ["subsidy"] });
     },
     onError: (e) =>
       setError(e instanceof ApiError ? `Rejected (${e.status}): ${e.message}` : "Save failed."),
@@ -94,11 +163,7 @@ function SettingRow({ spec, value }: { spec: EditableSpec; value: unknown }) {
               type="button"
               className="link"
               onClick={() => {
-                setRaw(
-                  spec.input === "select"
-                    ? (spec.options?.[0]?.value ?? String(value))
-                    : String(value),
-                );
+                setRaw(spec.toRaw ? spec.toRaw(value) : String(value));
                 setEditing(true);
                 setError(null);
               }}
@@ -149,7 +214,7 @@ export function Controls() {
 
   const settingsByKey = new Map((settings.data ?? []).map((r) => [r.key, r.value]));
   const readOnly: [string, string][] = [
-    ["Autonomy level", "Approve every plan (other levels are not built yet)"],
+    ["Autonomy level", "Ping-pong subsidy plans and small bounded plans execute autonomously when enabled below; every other plan needs your approval"],
     ["Approval expiry", "6 hours (fixed)"],
     ["Drawdown halt", `${(s.halt_at * 100).toFixed(0)}% from peak`],
     ["Sizing", "Volatility target 40%, assets set by TRADER_SYMBOLS (default BTC and ETH), long only, no leverage"],

@@ -12,6 +12,7 @@ stored rows did nothing).
 """
 
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -51,12 +52,100 @@ def _rate(v: Any) -> float:
     return x
 
 
+def _strict_bool(key: str) -> Any:
+    def validate(v: Any) -> bool:
+        if not isinstance(v, bool):
+            raise ValueError(f"{key} must be a boolean")
+        return v
+
+    return validate
+
+
+def _ranged(key: str, lo: float, hi: float) -> Any:
+    def validate(v: Any) -> float:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError(f"{key} must be a number")
+        x = float(v)
+        if not lo <= x <= hi:
+            raise ValueError(f"{key} must be between {lo} and {hi}")
+        return x
+
+    return validate
+
+
+def _ranged_decimal(key: str, lo: str, hi: str) -> Any:
+    """Monetary/rate validator: stores the canonical decimal string, per the
+    repo convention that money is Decimal, never a rounded float."""
+    lo_d, hi_d = Decimal(lo), Decimal(hi)
+
+    def validate(v: Any) -> str:
+        if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+            raise ValueError(f"{key} must be a number")
+        try:
+            d = Decimal(str(v))
+        except InvalidOperation as e:
+            raise ValueError(f"{key} must be a number") from e
+        if not d.is_finite():
+            raise ValueError(f"{key} must be finite")
+        if not lo_d <= d <= hi_d:
+            raise ValueError(f"{key} must be between {lo} and {hi}")
+        return str(d)
+
+    return validate
+
+
+# Monetary keys whose values are stored as canonical decimal strings.
+_DECIMAL_KEYS = {
+    "subsidy_target_volume_usd",
+    "subsidy_daily_cap_usd",
+    "subsidy_order_notional_usd",
+    "auto_approve_max_notional_usd",
+    "auto_approve_max_loss_pct",
+}
+
+# Sentinel: the default comes from get_settings() (the .env value), not a
+# hardcoded constant, so GET /api/settings never drifts from the env config.
+_ENV = object()
+
 EDITABLE: dict[str, tuple[Any, Any]] = {
     # key -> (default shown when no row exists, validator)
     "silence_alarm_minutes": (5, _minutes),
     "digest_time_utc": ("00:30", _hhmm),
     "t_bill_rate": (0.0, _rate),
+    "subsidy_enabled": (_ENV, _strict_bool("subsidy_enabled")),
+    "subsidy_target_volume_usd": (
+        _ENV,
+        _ranged_decimal("subsidy_target_volume_usd", "100", "10000000"),
+    ),
+    "subsidy_daily_cap_usd": (
+        _ENV,
+        _ranged_decimal("subsidy_daily_cap_usd", "50", "1000000"),
+    ),
+    "subsidy_adx_max": (_ENV, _ranged("subsidy_adx_max", 1.0, 100.0)),
+    "subsidy_order_notional_usd": (
+        _ENV,
+        _ranged_decimal("subsidy_order_notional_usd", "10", "50000"),
+    ),
+    "auto_approve_enabled": (_ENV, _strict_bool("auto_approve_enabled")),
+    "auto_approve_max_notional_usd": (
+        _ENV,
+        _ranged_decimal("auto_approve_max_notional_usd", "10", "100000"),
+    ),
+    "auto_approve_max_loss_pct": (
+        _ENV,
+        _ranged_decimal("auto_approve_max_loss_pct", "0.001", "0.10"),
+    ),
 }
+
+
+def _default(key: str) -> Any:
+    default = EDITABLE[key][0]
+    if default is not _ENV:
+        return default
+    value = getattr(get_settings(), key)
+    if key in _DECIMAL_KEYS:
+        return str(value)
+    return float(value) if isinstance(value, Decimal) else value
 
 
 def _fixed() -> dict[str, Any]:
@@ -79,9 +168,9 @@ def get_all(session: Session = SessionDep) -> list[SettingOut]:
         for r in rows.values()
     ]
     shown = set(rows)
-    for key, (default, _) in EDITABLE.items():
+    for key in EDITABLE:
         if key not in shown:
-            out.append(SettingOut(key=key, value=default, updated_at=None))
+            out.append(SettingOut(key=key, value=_default(key), updated_at=None))
     for key, value in fixed.items():
         out.append(SettingOut(key=key, value=value, updated_at=None))
     out.sort(key=lambda s: s.key)

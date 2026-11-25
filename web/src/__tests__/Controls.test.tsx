@@ -39,6 +39,14 @@ function defaultSettings() {
     { key: "autonomy", value: "approve_every_plan", updated_at: null },
     { key: "digest_time_utc", value: "00:30", updated_at: null },
     { key: "silence_alarm_minutes", value: 5, updated_at: null },
+    { key: "subsidy_enabled", value: false, updated_at: null },
+    { key: "subsidy_target_volume_usd", value: 10000, updated_at: null },
+    { key: "subsidy_daily_cap_usd", value: 2000, updated_at: null },
+    { key: "subsidy_adx_max", value: 20, updated_at: null },
+    { key: "subsidy_order_notional_usd", value: 250, updated_at: null },
+    { key: "auto_approve_enabled", value: false, updated_at: null },
+    { key: "auto_approve_max_notional_usd", value: 750, updated_at: null },
+    { key: "auto_approve_max_loss_pct", value: 0.015, updated_at: null },
   ];
 }
 
@@ -149,6 +157,72 @@ describe("Controls", () => {
     expect(await screen.findByText(/06:15 UTC/)).toBeInTheDocument();
   });
 
+  it("renders subsidy and auto-approve controls and saves them", async () => {
+    statusMock.mockResolvedValue(makeStatus());
+    settingsMock.mockResolvedValue(defaultSettings());
+    putSettingMock.mockResolvedValue({
+      key: "subsidy_adx_max",
+      value: 25,
+      updated_at: "2026-11-21T12:00:00Z",
+    });
+    renderControls();
+
+    // Labels render with formatted values.
+    expect(await screen.findByText("Fee-tier subsidy")).toBeInTheDocument();
+    expect(screen.getByText("Subsidy target volume")).toBeInTheDocument();
+    expect(screen.getByText("Subsidy daily cap")).toBeInTheDocument();
+    expect(screen.getByText("Subsidy max ADX")).toBeInTheDocument();
+    expect(screen.getByText("Subsidy order size")).toBeInTheDocument();
+    expect(screen.getByText("Auto-approve small plans")).toBeInTheDocument();
+    expect(screen.getByText("Auto-approve max notional")).toBeInTheDocument();
+    const lossRow = screen.getByText("Auto-approve max loss").closest("tr")!;
+    expect(lossRow).toHaveTextContent("1.5%");
+
+    // Number input: subsidy max ADX saves as a number.
+    const adxRow = screen.getByText("Subsidy max ADX").closest("tr")!;
+    await userEvent.click(
+      Array.from(adxRow.querySelectorAll("button")).find((b) => b.textContent === "Edit")!,
+    );
+    const adxInput = screen.getByLabelText("Subsidy max ADX value");
+    await userEvent.clear(adxInput);
+    await userEvent.type(adxInput, "25");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(putSettingMock).toHaveBeenCalledWith("subsidy_adx_max", 25);
+
+    // Boolean select: fee-tier subsidy saves true/false, not a string.
+    putSettingMock.mockResolvedValue({
+      key: "subsidy_enabled",
+      value: true,
+      updated_at: "2026-11-21T12:01:00Z",
+    });
+    const toggleRow = screen.getByText("Fee-tier subsidy").closest("tr")!;
+    await userEvent.click(
+      Array.from(toggleRow.querySelectorAll("button")).find(
+        (b) => b.textContent === "Edit",
+      )!,
+    );
+    const select = screen.getByLabelText("Fee-tier subsidy value");
+    await userEvent.selectOptions(select, "true");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(putSettingMock).toHaveBeenCalledWith("subsidy_enabled", true);
+
+    // Max loss input works in percent but saves the fraction.
+    putSettingMock.mockResolvedValue({
+      key: "auto_approve_max_loss_pct",
+      value: 0.02,
+      updated_at: "2026-11-21T12:02:00Z",
+    });
+    await userEvent.click(
+      Array.from(lossRow.querySelectorAll("button")).find((b) => b.textContent === "Edit")!,
+    );
+    const lossInput = screen.getByLabelText("Auto-approve max loss value");
+    expect(lossInput).toHaveValue(1.5);
+    await userEvent.clear(lossInput);
+    await userEvent.type(lossInput, "2");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(putSettingMock).toHaveBeenCalledWith("auto_approve_max_loss_pct", 0.02);
+  });
+
   it("shows read-only limits; autonomy and approval expiry have no edit button", async () => {
     statusMock.mockResolvedValue(makeStatus());
     settingsMock.mockResolvedValue(defaultSettings());
@@ -166,7 +240,7 @@ describe("Controls", () => {
 
     const autonomyRow = screen.getByText("Autonomy level").closest("tr")!;
     expect(autonomyRow).toHaveTextContent(
-      "Approve every plan (other levels are not built yet)",
+      "Ping-pong subsidy plans and small bounded plans execute autonomously when enabled below; every other plan needs your approval",
     );
     expect(autonomyRow.querySelector("button")).toBeNull();
 

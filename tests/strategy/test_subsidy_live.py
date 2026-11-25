@@ -397,3 +397,49 @@ def test_buy_notional_reserves_fee_cash(session, monkeypatch) -> None:
     assert notional <= cash
     assert notional <= cash / (Decimal("1") + Decimal("0.003"))
     assert notional < Decimal("250")
+
+
+def test_db_override_enables_subsidy_without_env(session, monkeypatch) -> None:
+    """Spec W1.3b: a DB row for subsidy_enabled activates the sleeve even
+    though the .env default is False — no container restart needed."""
+    _enable(monkeypatch, TRADER_SUBSIDY_ENABLED="false")
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "disabled"
+
+    session.add(Setting(key="subsidy_enabled", value=True, updated_at=NOW))
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "active"
+
+
+def test_db_override_disables_subsidy_over_env(session, monkeypatch) -> None:
+    _enable(monkeypatch)
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    session.flush()
+    session.add(Setting(key="subsidy_enabled", value=False, updated_at=NOW))
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "disabled"
+
+
+def test_db_override_adx_max(session, monkeypatch) -> None:
+    """Lowering subsidy_adx_max in the DB throttles a sideways market the
+    env default (20) allows — without touching env vars."""
+    _enable(monkeypatch)
+    for candle in _daily_candles("BTC-USD", 60, 60000, drift=0.0):
+        session.add(candle)
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "active"
+    assert snap.adx is not None and snap.adx < 20
+
+    session.add(Setting(key="subsidy_adx_max", value=5.0, updated_at=NOW))
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    assert snap.status == "throttled"
+    assert "ADX" in snap.reason
+    assert snap.adx_max == 5.0

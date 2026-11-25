@@ -177,6 +177,7 @@ export function Overview() {
                         <th>Qty</th>
                         <th>Cost</th>
                         <th>Fee</th>
+                        <th>PnL</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -188,6 +189,9 @@ export function Overview() {
                           <td>{fmtQty(f.quantity)}</td>
                           <td>{usdCents(f.notional_usd)}</td>
                           <td>{usdCents(f.fee_usd)}</td>
+                          <td className={Number(f.pnl_usd) >= 0 ? "gain" : "loss"}>
+                            {usdCents(f.pnl_usd)}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

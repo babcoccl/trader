@@ -301,6 +301,7 @@ class SubsidyFillOut(BaseModel):
     quantity: Decimal
     notional_usd: Decimal
     fee_usd: Decimal
+    pnl_usd: Decimal
 
 
 class SubsidyOut(BaseModel):

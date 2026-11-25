@@ -79,6 +79,7 @@ describe("Overview", () => {
           quantity: "0.010000000000000000",
           notional_usd: "500.000000000000000000",
           fee_usd: "2.000000000000000000",
+          pnl_usd: "18.000000000000000000",
         },
         {
           time: "2026-11-21T17:00:00Z",
@@ -87,6 +88,7 @@ describe("Overview", () => {
           quantity: "0.020000000000000000",
           notional_usd: "980.000000000000000000",
           fee_usd: "3.920000000000000000",
+          pnl_usd: "-3.920000000000000000",
         },
       ],
     });
@@ -131,6 +133,9 @@ describe("Overview", () => {
     expect(screen.getByText("0.02")).toBeInTheDocument();
     expect(screen.getByText("$980.00")).toBeInTheDocument();
     expect(screen.getByText("$3.92")).toBeInTheDocument();
+    expect(screen.getByText("PnL")).toBeInTheDocument();
+    expect(screen.getByText("$18.00")).toBeInTheDocument();
+    expect(screen.getByText("-$3.92")).toBeInTheDocument();
 
     expect(screen.getByText("What the system thinks right now")).toBeInTheDocument();
     expect(screen.getAllByText(/5 of 9 rules positive/).length).toBeGreaterThan(0);

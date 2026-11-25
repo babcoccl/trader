@@ -600,6 +600,48 @@ def test_booster_net_pnl_30d_fifo(session, monkeypatch) -> None:
     assert snap.booster_net_pnl_30d_usd == Decimal("16.04")
 
 
+def test_fill_pnl_usd_fifo(session, monkeypatch) -> None:
+    """Spec W1.3i: buys carry -fee, sells carry FIFO spread - fee, and
+    summing pnl_usd over the 30d window reproduces the net exactly."""
+    _enable(monkeypatch)
+    _fill(  # oldest lot, outside the window: pays only its fee
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("480"),
+        side="buy",
+        price=Decimal("48000"),
+        at=NOW - timedelta(days=40),
+    )
+    _fill(  # newer lot, inside the window
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("490"),
+        side="buy",
+        price=Decimal("49000"),
+        at=NOW - timedelta(days=2),
+    )
+    _fill(  # sells against the 40-day-old 48,000 lot: spread $20
+        session,
+        sleeve="ping_pong",
+        notional=Decimal("500"),
+        side="sell",
+        price=Decimal("50000"),
+        at=NOW - timedelta(days=1),
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, FrozenClock(NOW), "paper")
+    fills = {(f.side, f.time): f for f in snap.recent_fills}
+    old_buy = fills[("buy", NOW - timedelta(days=40))]
+    new_buy = fills[("buy", NOW - timedelta(days=2))]
+    sell = fills[("sell", NOW - timedelta(days=1))]
+    assert old_buy.pnl_usd == -old_buy.fee_usd == Decimal("-1.92")
+    assert new_buy.pnl_usd == -new_buy.fee_usd == Decimal("-1.96")
+    assert sell.pnl_usd == Decimal("18.00")  # 0.01 * (50000 - 48000) - 2.00
+    cutoff = NOW - timedelta(days=30)
+    in_window = [f.pnl_usd for f in snap.recent_fills if f.time >= cutoff]
+    assert sum(in_window, Decimal("0")) == snap.booster_net_pnl_30d_usd
+
+
 def test_booster_net_pnl_counts_unclosed_fees(session, monkeypatch) -> None:
     """A buy whose round-trip has not closed still spends its fee."""
     _enable(monkeypatch)

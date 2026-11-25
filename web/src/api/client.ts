@@ -263,6 +263,7 @@ export interface SubsidyFillOut {
   quantity: string;
   notional_usd: string;
   fee_usd: string;
+  pnl_usd: string;
 }
 
 export interface SubsidyOut {

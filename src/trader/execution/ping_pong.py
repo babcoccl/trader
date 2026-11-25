@@ -134,10 +134,41 @@ class PingPongWorker:
         snapshot = subsidy.compute_status(session, clock, mode)
         open_pp = self._open_ping_pong(session, adapter, mode)
 
-        if risk_engine.state(session, clock).halted or snapshot.status != "active":
+        if risk_engine.state(session, clock).halted:
             for order in open_pp:
                 adapter.cancel(order.venue_order_id or "")
             return
+
+        # Spec W1.3h: a daily-cap throttle may still unwind open ping-pong
+        # BTC sell-only — never a buy, never an auto-seed, and never BTC
+        # another sleeve owns (capped by _ping_pong_inventory).
+        unwind_only = False
+        unwind_btc = Decimal("0")
+        bbo: tuple[Decimal, Decimal] | None = None
+        if snapshot.status != "active":
+            if (
+                overrides.subsidy_enabled
+                and get_settings().venue == "coinbase"
+                and snapshot.reason == "Daily booster cap reached."
+            ):
+                bbo = self._ticker(subsidy.SYMBOL)
+                ask = bbo[1] if bbo is not None else self._latest_close(session)
+                if ask is not None:
+                    btc = accounting.positions(session, mode).get(
+                        subsidy.ASSET, Decimal("0")
+                    )
+                    unwind_btc = min(
+                        btc,
+                        max(
+                            Decimal("0"),
+                            subsidy._ping_pong_inventory(session, mode),
+                        ),
+                    )
+                    unwind_only = unwind_btc * ask >= subsidy.MIN_ORDER_NOTIONAL[mode]
+            if not unwind_only:
+                for order in open_pp:
+                    adapter.cancel(order.venue_order_id or "")
+                return
 
         # Adopt a changed level count immediately; counters only initialize
         # while the sleeve is active.
@@ -150,7 +181,8 @@ class PingPongWorker:
                 session.scalar(select(func.coalesce(func.max(Fill.id), 0))) or 0
             )
 
-        bbo = self._ticker(subsidy.SYMBOL)
+        if bbo is None:
+            bbo = self._ticker(subsidy.SYMBOL)
         if bbo is None:
             close = self._latest_close(session)
             if close is None:
@@ -176,6 +208,13 @@ class PingPongWorker:
         )
         if not refresh:
             return
+        if unwind_only:
+            # Inventory moved since the gate at the top: re-size the
+            # unwind against what the settle just booked.
+            unwind_btc = min(
+                accounting.positions(session, mode).get(subsidy.ASSET, Decimal("0")),
+                max(Decimal("0"), subsidy._ping_pong_inventory(session, mode)),
+            )
         self._refresh(
             session,
             adapter,
@@ -188,6 +227,8 @@ class PingPongWorker:
             mode,
             spent_all,
             spent_pp,
+            unwind_only=unwind_only,
+            unwind_btc=unwind_btc,
         )
 
     # -- steps ----------------------------------------------------------------
@@ -295,9 +336,50 @@ class PingPongWorker:
         mode: str,
         spent_all: Decimal = Decimal("0"),
         spent_pp: Decimal = Decimal("0"),
+        unwind_only: bool = False,
+        unwind_btc: Decimal = Decimal("0"),
     ) -> None:
         for order in self._open_ping_pong(session, adapter, mode):
             adapter.cancel(order.venue_order_id or "")
+
+        if unwind_only:
+            # Sell-only unwind past the daily cap: the cap is spent, so
+            # the budget is the unwindable ping-pong BTC itself. No buys,
+            # no auto-seed — the batch still rides through check_plan.
+            asset = ASSETS[subsidy.SYMBOL]
+            min_notional = subsidy.MIN_ORDER_NOTIONAL[mode]
+            levels = min(
+                max(1, self.sells_remaining or 0),
+                overrides.subsidy_order_levels,
+            )
+            unwind_entries = self._sell_entries(
+                overrides,
+                unwind_btc * ask,
+                unwind_btc,
+                ask,
+                asset,
+                min_notional,
+                levels,
+            )
+            if not unwind_entries:
+                return
+            portfolio = accounting.portfolio_view(
+                session, mode, self._latest_prices(session)
+            )
+            self._place_batch(
+                session,
+                adapter,
+                overrides,
+                snapshot,
+                bid,
+                ask,
+                clock,
+                now,
+                mode,
+                unwind_entries,
+                portfolio,
+            )
+            return
 
         remaining_budget = min(
             snapshot.remaining_to_target_usd - spent_all,
@@ -439,9 +521,11 @@ class PingPongWorker:
         ask: Decimal,
         asset: Asset,
         min_notional: Decimal,
+        levels: int | None = None,
     ) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
-        for k in range(self.sells_remaining or 0):
+        count = (self.sells_remaining or 0) if levels is None else levels
+        for k in range(count):
             bps = Decimal(str(overrides.subsidy_spread_bps * (k + 1))) / Decimal(
                 "10000"
             )

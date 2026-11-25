@@ -558,8 +558,170 @@ def test_no_seed_on_stale_close(session: Session, monkeypatch) -> None:
     # Normal ladder quotes at the close-derived spread; nothing rests at
     # the close itself.
     assert all(o.price != Decimal("60000") for o in orders)
+
+
+def _sleeve_fill(
+    session: Session,
+    *,
+    sleeve: str,
+    side: str,
+    notional: Decimal,
+    at: datetime,
+    price: Decimal = Decimal("50000"),
+) -> None:
+    """Book one applied fill under ``sleeve`` (boosts counters and, for
+    ping_pong buys, builds unwindable inventory)."""
+    decision = Decision(
+        cycle="intraday",
+        ran_at=at,
+        action="plan_proposed",
+        reason="seed",
+        details={},
+    )
+    session.add(decision)
+    session.flush()
+    plan = Plan(
+        sleeve=sleeve,
+        symbol="BTC-USD",
+        side=side,
+        status="completed",
+        reference_price=price,
+        target_weight=Decimal("0"),
+        entry_orders=[],
+        worst_case_loss=Decimal("0"),
+        est_fees=Decimal("0"),
+        rationale="seed",
+        expires_at=at,
+        decision_id=decision.id,
+    )
+    session.add(plan)
+    session.flush()
+    order = Order(
+        plan_id=plan.id,
+        venue="paper",
+        client_order_id=f"{plan.id}-1",
+        symbol="BTC-USD",
+        side=side,
+        type="limit",
+        price=price,
+        quantity=notional / price,
+        status="filled",
+        mode="paper",
+    )
+    session.add(order)
+    session.flush()
+    fill = Fill(
+        order_id=order.id,
+        time=at,
+        price=price,
+        quantity=notional / price,
+        fee=notional * Decimal("0.004"),
+        fee_currency="USD",
+        liquidity="maker",
+    )
+    session.add(fill)
+    session.flush()
+    accounting.apply_fill(session, fill)
+
+
+def test_unwind_sells_only_ping_pong_inventory_past_daily_cap(
+    session: Session, monkeypatch
+) -> None:
+    """Spec W1.3h: $4.85 of cap room left while holding ping-pong BTC ->
+    sell-only unwind quotes, no buys, no auto-seed, and quoting stops
+    once the ping-pong inventory is back to USD."""
+    clock = _active(session, monkeypatch)
+    _sleeve_fill(
+        session,
+        sleeve="ping_pong",
+        side="buy",
+        notional=Decimal("1995.15"),
+        at=NOW - timedelta(hours=1),
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, clock, "paper")
+    assert snap.status == "throttled"
+    assert snap.reason == "Daily booster cap reached."
+
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
     worker.tick(session, adapter, clock, "paper")
-    assert list(session.scalars(select(Fill))) == []
+
+    orders = _open(session)
+    assert orders
+    assert all(o.side == "sell" for o in orders)
+    # No auto-seed: nothing rests at or under the best bid.
+    assert all(o.price > Decimal("60010") for o in orders)
+    pp_inventory = subsidy._ping_pong_inventory(session, "paper")
+    assert pp_inventory > 0
+    assert sum(o.quantity for o in orders) <= pp_inventory
+    plan = session.get(Plan, orders[0].plan_id)
+    assert plan is not None and plan.status == "approved"
+
+    # Each refresh sells at most 2 levels x $250; a far-higher bid lifts
+    # every level until the inventory is back to USD, then quoting stops.
+    bbo["quote"] = (Decimal("65100"), Decimal("65010"))
+    for _ in range(15):
+        worker.tick(session, adapter, clock, "paper")
+        if not _open(session):
+            break
+    assert _open(session) == []
+    assert (
+        subsidy._ping_pong_inventory(session, "paper") * Decimal("60110")
+        < (subsidy.MIN_ORDER_NOTIONAL["paper"])
+    )
+
+
+def test_unwind_never_sells_other_sleeve_btc(session: Session, monkeypatch) -> None:
+    """Past the daily cap with zero ping-pong inventory, the BTC other
+    sleeves own is untouchable: no unwind quotes at all."""
+    clock = _active(session, monkeypatch)
+    # Matched ping-pong round trip spends the cap but leaves no BTC.
+    _sleeve_fill(
+        session,
+        sleeve="ping_pong",
+        side="buy",
+        notional=Decimal("1995.15"),
+        at=NOW - timedelta(hours=1),
+    )
+    _sleeve_fill(
+        session,
+        sleeve="ping_pong",
+        side="sell",
+        notional=Decimal("1995.15"),
+        at=NOW - timedelta(minutes=30),
+    )
+    # BTC bought by a different sleeve must never be unwound.
+    _sleeve_fill(
+        session,
+        sleeve="trend",
+        side="buy",
+        notional=Decimal("600"),
+        at=NOW - timedelta(hours=2),
+    )
+    session.flush()
+    snap = subsidy.compute_status(session, clock, "paper")
+    assert snap.status == "throttled"
+    assert snap.reason == "Daily booster cap reached."
+    btc_before = accounting.positions(session, "paper")["BTC"]
+
+    bbo: dict[str, tuple[Decimal, Decimal]] = {
+        "quote": (Decimal("59990"), Decimal("60010"))
+    }
+    worker = _worker(bbo, clock)
+    adapter = _adapter(session, clock)
+
+    worker.tick(session, adapter, clock, "paper")
+
+    assert _open(session) == []
+    assert accounting.positions(session, "paper")["BTC"] == btc_before
+    worker.tick(session, adapter, clock, "paper")
+    assert _open(session) == []
+    assert accounting.positions(session, "paper")["BTC"] == btc_before
 
 
 def test_no_seed_mid_cycle(session: Session, monkeypatch) -> None:

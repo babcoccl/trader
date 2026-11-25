@@ -281,6 +281,10 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
     progress = min(1.0, float(trailing / target)) if target > 0 else 1.0
     adx = _latest_adx(session, now)
 
+    # A target or cap the next minimum-size order could never reach is as
+    # good as spent: without this floor the sleeve stays "active" with too
+    # little room left to place a single order (spec W1.3h).
+    min_notional = MIN_ORDER_NOTIONAL[mode]
     status: Literal["active", "throttled", "disabled"]
     reason: str
     if not overrides.subsidy_enabled:
@@ -290,9 +294,9 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
             "disabled",
             "Subsidy sleeve only applies to Coinbase venue.",
         )
-    elif trailing >= target:
+    elif target - trailing < min_notional:
         status, reason = "throttled", "Target fee tier volume reached."
-    elif booster_today >= daily_cap:
+    elif daily_cap - booster_today < min_notional:
         status, reason = "throttled", "Daily booster cap reached."
     elif adx is None or adx >= adx_max:
         status, reason = "throttled", "ADX above sideways threshold."

@@ -466,7 +466,7 @@ class PingPongWorker:
             action="plan_proposed",
             reason=(
                 f"Ping-pong worker quotes {len(entries)} maker-only levels "
-                f"around bid {bid} / ask {ask}."
+                f"around bid ${bid:,.2f} / ask ${ask:,.2f}."
             ),
             details={"sleeve": subsidy.SLEEVE},
         )

@@ -256,6 +256,15 @@ export interface ShadowOut {
   sleeves: ShadowSleeveOut[];
 }
 
+export interface SubsidyFillOut {
+  time: string;
+  side: string;
+  price: string;
+  quantity: string;
+  notional_usd: string;
+  fee_usd: string;
+}
+
 export interface SubsidyOut {
   mode: string;
   status: "active" | "throttled" | "disabled";
@@ -274,6 +283,9 @@ export interface SubsidyOut {
   daily_cap_usd: string;
   adx: number | null;
   adx_max: number;
+  open_orders_usd: string;
+  booster_net_pnl_30d_usd: string;
+  recent_fills: SubsidyFillOut[];
 }
 
 export interface SettingOut {

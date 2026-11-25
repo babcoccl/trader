@@ -623,6 +623,20 @@ button.link {
   margin-top: 2px;
 }
 
+.gain {
+  color: #00a558;
+}
+
+.loss {
+  color: #f53b3a;
+}
+
+.subsidy-fills {
+  border-top: 1px solid rgb(0 0 0 / 0.06);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
 @media (max-width: 560px) {
   .shell {
     padding: 12px;

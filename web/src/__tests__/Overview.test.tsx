@@ -69,6 +69,26 @@ describe("Overview", () => {
       daily_cap_usd: "250",
       adx: 18.4,
       adx_max: 25,
+      open_orders_usd: "750",
+      booster_net_pnl_30d_usd: "6.04",
+      recent_fills: [
+        {
+          time: "2026-11-21T18:00:00Z",
+          side: "sell",
+          price: "50000.000000000000000000",
+          quantity: "0.010000000000000000",
+          notional_usd: "500.000000000000000000",
+          fee_usd: "2.000000000000000000",
+        },
+        {
+          time: "2026-11-21T17:00:00Z",
+          side: "buy",
+          price: "49000.000000000000000000",
+          quantity: "0.020000000000000000",
+          notional_usd: "980.000000000000000000",
+          fee_usd: "3.920000000000000000",
+        },
+      ],
     });
     renderOverview();
 
@@ -99,6 +119,18 @@ describe("Overview", () => {
     expect(screen.getByText("$1,800")).toBeInTheDocument();
     expect(screen.getByText("Booster Fees Spent")).toBeInTheDocument();
     expect(screen.getByText("$7.20")).toBeInTheDocument();
+    expect(screen.getByText("Open Orders")).toBeInTheDocument();
+    expect(screen.getByText("$750")).toBeInTheDocument();
+    expect(screen.getByText("30d Net PnL")).toBeInTheDocument();
+    expect(screen.getByText("$6.04")).toBeInTheDocument();
+    expect(screen.getByText("Recent Ping-Pong Fills")).toBeInTheDocument();
+    expect(screen.getByText("sell")).toBeInTheDocument();
+    expect(screen.getByText("$50,000.00")).toBeInTheDocument();
+    // Trailing zeros stripped from fill quantities.
+    expect(screen.getByText("0.01")).toBeInTheDocument();
+    expect(screen.getByText("0.02")).toBeInTheDocument();
+    expect(screen.getByText("$980.00")).toBeInTheDocument();
+    expect(screen.getByText("$3.92")).toBeInTheDocument();
 
     expect(screen.getByText("What the system thinks right now")).toBeInTheDocument();
     expect(screen.getAllByText(/5 of 9 rules positive/).length).toBeGreaterThan(0);

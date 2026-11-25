@@ -9,12 +9,13 @@ remaining-to-target distance, and every plan still goes through
 """
 
 import logging
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from trader.backtest.costs import BITSTAMP
@@ -44,6 +45,8 @@ BOOSTER_WINDOW = timedelta(hours=24)
 TRAILING_WINDOW = timedelta(days=30)
 ADX_LOOKBACK_DAYS = 120
 _OPEN_PLAN_STATUSES = ("pending", "approved")
+_OPEN_ORDER_STATUSES = ("new", "open", "partially_filled")
+RECENT_FILLS_LIMIT = 25
 
 # (name, maker bps, taker bps) by upper bound of trailing 30d USD volume.
 _TIERS: tuple[tuple[Decimal, str, float, float], ...] = (
@@ -69,6 +72,16 @@ def _tier(trailing_30d_volume_usd: Decimal) -> tuple[str, float, float]:
 
 
 @dataclass(frozen=True)
+class SubsidyFill:
+    time: datetime
+    side: str
+    price: Decimal
+    quantity: Decimal
+    notional_usd: Decimal
+    fee_usd: Decimal
+
+
+@dataclass(frozen=True)
 class SubsidySnapshot:
     mode: str
     status: Literal["active", "throttled", "disabled"]
@@ -87,14 +100,18 @@ class SubsidySnapshot:
     daily_cap_usd: Decimal
     adx: float | None
     adx_max: float
+    open_orders_usd: Decimal
+    booster_net_pnl_30d_usd: Decimal
+    recent_fills: list[SubsidyFill]
 
 
 def _fills_30d(
     session: Session, mode: str, now: datetime
-) -> list[tuple[datetime, Decimal, Decimal, Decimal, str | None]]:
-    """(time, price, quantity, fee, sleeve) of non-shadow fills in ``mode``."""
+) -> list[tuple[datetime, str, Decimal, Decimal, Decimal, str | None]]:
+    """(time, side, price, quantity, fee, sleeve) of non-shadow fills in
+    ``mode``, oldest first for FIFO matching."""
     rows = session.execute(
-        select(Fill.time, Fill.price, Fill.quantity, Fill.fee, Plan.sleeve)
+        select(Fill.time, Order.side, Fill.price, Fill.quantity, Fill.fee, Plan.sleeve)
         .join(Order, Fill.order_id == Order.id)
         .join(Plan, Order.plan_id == Plan.id)
         .where(
@@ -102,8 +119,71 @@ def _fills_30d(
             Order.shadow.is_(False),
             Fill.time >= now - TRAILING_WINDOW,
         )
+        .order_by(Fill.time, Fill.id)
     ).all()
-    return [(r[0], r[1], r[2], r[3], r[4]) for r in rows]
+    return [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
+
+
+def _open_orders_usd(session: Session, mode: str) -> Decimal:
+    """USD committed in resting non-shadow ping_pong orders for ``mode``.
+    Partially filled orders count only their unfilled remainder."""
+    rows = session.execute(
+        select(Order.id, Order.price, Order.quantity)
+        .join(Plan, Order.plan_id == Plan.id)
+        .where(
+            Plan.sleeve == SLEEVE,
+            Order.mode == mode,
+            Order.shadow.is_(False),
+            Order.status.in_(_OPEN_ORDER_STATUSES),
+            Order.price.isnot(None),
+        )
+    ).all()
+    if not rows:
+        return Decimal("0")
+    filled = dict(
+        session.execute(
+            select(Fill.order_id, func.coalesce(func.sum(Fill.quantity), 0))
+            .where(Fill.order_id.in_([r[0] for r in rows]))
+            .group_by(Fill.order_id)
+        ).all()
+    )
+    return _q(
+        sum(
+            (
+                max(Decimal("0"), qty - filled.get(oid, Decimal("0")))
+                * (price if price is not None else Decimal("0"))
+                for oid, price, qty in rows
+            ),
+            Decimal("0"),
+        )
+    )
+
+
+def _recent_fills(session: Session, mode: str) -> list[SubsidyFill]:
+    """Up to RECENT_FILLS_LIMIT newest non-shadow ping_pong fills."""
+    rows = session.execute(
+        select(Fill.time, Order.side, Fill.price, Fill.quantity, Fill.fee)
+        .join(Order, Fill.order_id == Order.id)
+        .join(Plan, Order.plan_id == Plan.id)
+        .where(
+            Plan.sleeve == SLEEVE,
+            Order.mode == mode,
+            Order.shadow.is_(False),
+        )
+        .order_by(Fill.time.desc(), Fill.id.desc())
+        .limit(RECENT_FILLS_LIMIT)
+    ).all()
+    return [
+        SubsidyFill(
+            time=t,
+            side=s,
+            price=p,
+            quantity=qty,
+            notional_usd=_q(p * qty),
+            fee_usd=fee,
+        )
+        for t, s, p, qty, fee in rows
+    ]
 
 
 def _latest_adx(session: Session, now: datetime) -> float | None:
@@ -142,13 +222,33 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
     booster_volume = Decimal("0")
     booster_fees = Decimal("0")
     today_start = now - BOOSTER_WINDOW
-    for time, price, quantity, fee, sleeve in rows:
+    net_pnl = Decimal("0")
+    buy_lots: deque[list[Decimal]] = deque()  # FIFO [price, remaining qty]
+    for time, side, price, quantity, fee, sleeve in rows:
         notional = abs(quantity * price)
         trailing += notional
         if sleeve == SLEEVE:
             booster_trades += 1
             booster_volume += notional
             booster_fees += fee
+            # Every ping-pong fee reduces the realized net, even before a
+            # round-trip closes.
+            net_pnl -= fee
+            if side == "buy":
+                buy_lots.append([price, quantity])
+            else:
+                remaining = quantity
+                while remaining > 0 and buy_lots:
+                    lot = buy_lots[0]
+                    take = min(lot[1], remaining)
+                    net_pnl += take * (price - lot[0])
+                    lot[1] -= take
+                    remaining -= take
+                    if lot[1] == 0:
+                        buy_lots.popleft()
+                # A sell with no 30d ping-pong buy left realizes no spread
+                # PnL (its cost basis predates the window or came from
+                # another sleeve); its fee is still counted above.
             if time >= today_start:
                 booster_today += notional
 
@@ -196,6 +296,9 @@ def compute_status(session: Session, clock: Clock, mode: str) -> SubsidySnapshot
         daily_cap_usd=daily_cap,
         adx=adx,
         adx_max=adx_max,
+        open_orders_usd=_open_orders_usd(session, mode),
+        booster_net_pnl_30d_usd=_q(net_pnl),
+        recent_fills=_recent_fills(session, mode),
     )
 
 

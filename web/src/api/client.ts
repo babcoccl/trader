@@ -256,6 +256,26 @@ export interface ShadowOut {
   sleeves: ShadowSleeveOut[];
 }
 
+export interface SubsidyOut {
+  mode: string;
+  status: "active" | "throttled" | "disabled";
+  reason: string;
+  trailing_30d_volume_usd: string;
+  today_booster_volume_usd: string;
+  booster_trades_30d: number;
+  booster_volume_30d_usd: string;
+  booster_fees_30d_usd: string;
+  tier: string;
+  maker_bps: number;
+  taker_bps: number;
+  target_volume_usd: string;
+  remaining_to_target_usd: string;
+  progress_pct: number;
+  daily_cap_usd: string;
+  adx: number | null;
+  adx_max: number;
+}
+
 export interface SettingOut {
   key: string;
   value: unknown;
@@ -393,6 +413,7 @@ export const api = {
     request<DigestOut[]>(`/api/digests${limit ? `?limit=${limit}` : ""}`),
   rules: () => request<RulesOut>("/api/rules"),
   shadow: () => request<ShadowOut>("/api/shadow"),
+  subsidy: () => request<SubsidyOut>("/api/subsidy"),
   runBacktest: (params: BacktestParams) =>
     request<BacktestResult>("/api/backtests/run", {
       method: "POST",

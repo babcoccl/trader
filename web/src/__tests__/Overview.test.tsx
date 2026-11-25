@@ -9,6 +9,7 @@ vi.mock("../api/client", () => ({
     status: vi.fn(),
     decisions: vi.fn(),
     equityReport: vi.fn(),
+    subsidy: vi.fn(),
   },
 }));
 
@@ -16,6 +17,7 @@ const { api } = await import("../api/client");
 const statusMock = vi.mocked(api.status);
 const decisionsMock = vi.mocked(api.decisions);
 const equityMock = vi.mocked(api.equityReport);
+const subsidyMock = vi.mocked(api.subsidy);
 
 function renderOverview() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -49,6 +51,25 @@ describe("Overview", () => {
     equityMock.mockResolvedValue([
       { time: "2026-11-21T00:00:00Z", account: "10420.5", cash: "10420.5", btc: "10300", btc_eth: "10350" },
     ]);
+    subsidyMock.mockResolvedValue({
+      mode: "paper",
+      status: "active",
+      reason: "Boosting volume toward the next fee tier.",
+      trailing_30d_volume_usd: "5200",
+      today_booster_volume_usd: "120",
+      booster_trades_30d: 14,
+      booster_volume_30d_usd: "1800",
+      booster_fees_30d_usd: "7.20",
+      tier: "Tier 1",
+      maker_bps: 40,
+      taker_bps: 60,
+      target_volume_usd: "10000",
+      remaining_to_target_usd: "4800",
+      progress_pct: 0.52,
+      daily_cap_usd: "250",
+      adx: 18.4,
+      adx_max: 25,
+    });
     renderOverview();
 
     expect(await screen.findByText("Account value")).toBeInTheDocument();
@@ -60,6 +81,24 @@ describe("Overview", () => {
     expect(screen.getByText(/halts at 35\.0%/)).toBeInTheDocument();
     expect(screen.getByText("Needs your decision")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument();
+
+    expect(await screen.findByText("Fee-Tier Subsidy")).toBeInTheDocument();
+    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getByText("Boosting volume toward the next fee tier.")).toBeInTheDocument();
+    expect(screen.getByText("Tier 1 (40 / 60 bps)")).toBeInTheDocument();
+    expect(screen.getByText("BTC ADX 18.4")).toBeInTheDocument();
+    expect(screen.getByText(/\$5,200 of \$10,000 · 52\.0%/)).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Fee-tier progress" })).toHaveAttribute(
+      "aria-valuenow",
+      "52",
+    );
+    expect(screen.getByText(/\$4,800 to next tier/)).toBeInTheDocument();
+    expect(screen.getByText("Booster Trades")).toBeInTheDocument();
+    expect(screen.getByText("14")).toBeInTheDocument();
+    expect(screen.getByText("Booster Volume")).toBeInTheDocument();
+    expect(screen.getByText("$1,800")).toBeInTheDocument();
+    expect(screen.getByText("Booster Fees Spent")).toBeInTheDocument();
+    expect(screen.getByText("$7.20")).toBeInTheDocument();
 
     expect(screen.getByText("What the system thinks right now")).toBeInTheDocument();
     expect(screen.getAllByText(/5 of 9 rules positive/).length).toBeGreaterThan(0);

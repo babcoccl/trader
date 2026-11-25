@@ -124,6 +124,9 @@ describe("Backtest", () => {
     expect(screen.getByText("Drawdown")).toBeInTheDocument();
 
     expect(screen.getByText("Trade log")).toBeInTheDocument();
+    expect(screen.getByText("Cost")).toBeInTheDocument();
+    expect(screen.getByText("$5,136.00")).toBeInTheDocument();
+    expect(screen.getByText("$121.00")).toBeInTheDocument();
     expect(screen.getByText("2024-01-15")).toBeInTheDocument();
     expect(screen.getByText("BTC-USD")).toBeInTheDocument();
     expect(screen.getByText("ETH-USD")).toBeInTheDocument();

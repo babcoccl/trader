@@ -187,22 +187,27 @@ export function Backtest() {
                         <th>Side</th>
                         <th>Size</th>
                         <th>Price</th>
+                        <th>Cost</th>
                         <th>PnL</th>
                         <th>Fee</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {result.trade_log.map((t, i) => (
-                        <tr key={i}>
-                          <td>{t.date}</td>
-                          <td>{t.asset}</td>
-                          <td>{t.side}</td>
-                          <td>{Number(t.size)}</td>
-                          <td>{usdCents(Number(t.price))}</td>
-                          <td>{usdCents(Number(t.pnl))}</td>
-                          <td>{usdCents(Number(t.fee))}</td>
-                        </tr>
-                      ))}
+                      {result.trade_log.map((t, i) => {
+                        const cost = Number(t.size) * Number(t.price);
+                        return (
+                          <tr key={i}>
+                            <td>{t.date}</td>
+                            <td>{t.asset}</td>
+                            <td>{t.side}</td>
+                            <td>{Number(t.size)}</td>
+                            <td>{usdCents(Number(t.price))}</td>
+                            <td>{cost > 0 ? usdCents(cost) : "—"}</td>
+                            <td>{usdCents(Number(t.pnl))}</td>
+                            <td>{usdCents(Number(t.fee))}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                   {result.trade_log.length === 0 ? (

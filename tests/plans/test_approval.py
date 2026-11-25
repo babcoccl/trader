@@ -179,10 +179,13 @@ def _clock(at: datetime = NOW) -> FrozenClock:
 
 
 def _funded(session: Session) -> None:
-    """$10k cash and a fresh 5m candle, so the portfolio and risk staleness
-    checks see a live market."""
+    """$10k cash and a fresh 5m candle per configured symbol, so the
+    portfolio and risk staleness checks see a live market."""
+    from trader.data.sources.base import SYMBOLS
+
     accounting.deposit(session, "paper", Decimal("10000"), _clock())
-    _candle(session)
+    for symbol in SYMBOLS:
+        _candle(session, symbol=symbol)
 
 
 def test_approve_full_size(session: Session) -> None:

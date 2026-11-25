@@ -232,6 +232,16 @@ def maybe_auto_approve(
     )
     if notional > settings.auto_approve_max_notional_usd:
         return False
+    # A stale quote on ANY held asset can overstate equity and inflate the
+    # loss bound, so freshness applies portfolio-wide (not just the plan's
+    # symbol, which approve() -> risk.check_plan already tests).
+    limits = limits or Limits.load(session)
+    price_age = risk.state(session, clock).price_age_seconds
+    if any(
+        price_age.get(symbol) is None or price_age[symbol] > limits.stale_candle_seconds
+        for symbol in SYMBOLS
+    ):
+        return False
     equity = accounting.equity(session, settings.mode, _latest_prices(session))
     if equity <= 0 or (plan.worst_case_loss / equity) > (
         settings.auto_approve_max_loss_pct

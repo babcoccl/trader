@@ -179,10 +179,13 @@ def _clock(at: datetime = NOW) -> FrozenClock:
 
 
 def _funded(session: Session) -> None:
-    """$10k cash and a fresh 5m candle, so the portfolio and risk staleness
-    checks see a live market."""
+    """$10k cash and a fresh 5m candle per configured symbol, so the
+    portfolio and risk staleness checks see a live market."""
+    from trader.data.sources.base import SYMBOLS
+
     accounting.deposit(session, "paper", Decimal("10000"), _clock())
-    _candle(session)
+    for symbol in SYMBOLS:
+        _candle(session, symbol=symbol)
 
 
 def test_approve_full_size(session: Session) -> None:
@@ -434,3 +437,107 @@ def test_halt_keeps_shadow_orders(session: Session) -> None:
     assert len(fills) == 1 and fills[0].quantity == Decimal("0.1")
     assert accounting.cash(session, "paper") == cash_before
     assert accounting.positions(session, "paper") == {}
+
+
+@pytest.fixture()
+def auto_approve_on(monkeypatch: pytest.MonkeyPatch):
+    """Enable Autonomy Level 2 for one test; settings are lru_cached."""
+    from trader.core.config import get_settings
+
+    monkeypatch.setenv("TRADER_AUTO_APPROVE_ENABLED", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def test_auto_approve_disabled_leaves_pending(session: Session) -> None:
+    _funded(session)
+    plan = _plan(session, quantity="0.01", worst_case_loss="100")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is False
+    assert plan.status == "pending"
+    assert _audits(session, "approve plan") == []
+
+
+def test_auto_approve_within_bounds(session: Session, auto_approve_on: None) -> None:
+    """$600 notional <= $750 and $100 loss = 1% of $10k equity <= 1.5%:
+    the plan is approved as actor "auto" and the executor places its
+    working orders."""
+    from contextlib import contextmanager
+
+    from trader.execution.__main__ import Executor
+
+    _funded(session)
+    plan = _plan(session, quantity="0.01", worst_case_loss="100")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is True
+    assert plan.status == "approved"
+    assert plan.decided_at == NOW
+    audits = _audits(session, "approve plan")
+    assert len(audits) == 1
+    assert audits[0].actor == "auto"
+    session.commit()
+
+    @contextmanager
+    def _cm():
+        yield session
+        session.commit()
+
+    Executor(clock=_clock(NOW + timedelta(minutes=5)), session_factory=_cm).tick()
+    orders = _orders(session, plan)
+    assert len(orders) == 1
+    assert orders[0].shadow is False
+    assert orders[0].status == "open"
+    assert orders[0].quantity == Decimal("0.01")
+
+
+def test_auto_approve_over_notional_stays_pending(
+    session: Session, auto_approve_on: None
+) -> None:
+    _funded(session)
+    plan = _plan(session, quantity="0.1", worst_case_loss="100")  # $6000 > $750
+    assert approval.maybe_auto_approve(session, plan, _clock()) is False
+    assert plan.status == "pending"
+    assert _audits(session, "approve plan") == []
+
+
+def test_auto_approve_over_loss_pct_stays_pending(
+    session: Session, auto_approve_on: None
+) -> None:
+    _funded(session)
+    # $200 loss = 2% of $10k equity > 1.5%, though notional is inside the cap.
+    plan = _plan(session, quantity="0.01", worst_case_loss="200")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is False
+    assert plan.status == "pending"
+
+
+def test_auto_approve_halted_stays_pending(
+    session: Session, auto_approve_on: None
+) -> None:
+    from trader.risk import engine as risk
+
+    _funded(session)
+    plan = _plan(session, quantity="0.01", worst_case_loss="100")
+    risk.halt(session, "owner", "test halt")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is False
+    assert plan.status == "pending"
+
+
+def test_auto_approve_risk_veto_stays_pending(
+    session: Session, auto_approve_on: None
+) -> None:
+    # No candles: price data is stale, so risk.check_plan vetoes the approve.
+    accounting.deposit(session, "paper", Decimal("10000"), _clock())
+    plan = _plan(session, quantity="0.01", worst_case_loss="100")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is False
+    assert plan.status == "pending"
+
+
+def test_auto_approve_unheld_stale_asset_still_approves(
+    session: Session, auto_approve_on: None
+) -> None:
+    """An unheld asset's stale quote never feeds equity, so it must not
+    block auto-approval; only held-asset freshness is checked."""
+    accounting.deposit(session, "paper", Decimal("10000"), _clock())
+    _candle(session)  # fresh BTC-USD only; ETH-USD has no candles and is unheld
+    plan = _plan(session, quantity="0.01", worst_case_loss="100")
+    assert approval.maybe_auto_approve(session, plan, _clock()) is True
+    assert plan.status == "approved"

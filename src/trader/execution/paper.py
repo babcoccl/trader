@@ -128,9 +128,11 @@ class PaperAdapter:
                 result = self._fill_price(order, candle, assume_taker)
                 if result is not None:
                     price, liquidity = result
-                    candidates.append(
-                        (candle.open_time, order.id, order, price, liquidity)
-                    )
+                    # Stamp the fill at the candle's close, when it became
+                    # observable: back-dating to the open would sort it
+                    # before intra-candle ``fill_now`` fills in replay.
+                    fill_time = candle.open_time + _PERIOD
+                    candidates.append((fill_time, order.id, order, price, liquidity))
                     break  # full fill only; order is done
         candidates.sort(key=lambda c: (c[0], _fill_rank(c[2]), c[1]))
         new_fills: list[Fill] = []

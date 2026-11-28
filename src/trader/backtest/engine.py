@@ -166,17 +166,41 @@ def run_weights(
                     continue
                 notional = abs(t - cur) * e
                 qty = notional / o[s]
+                prev_units = units[s]
                 side: Literal["BUY", "SELL"]
                 if t > cur:
-                    side, pnl = "BUY", 0.0
-                    prev_units = units[s]
-                    basis[s] = (basis[s] * prev_units + notional) / (prev_units + qty)
+                    side = "BUY"
+                    if prev_units >= 0:
+                        pnl = 0.0
+                        basis[s] = (basis[s] * prev_units + notional) / (
+                            prev_units + qty
+                        )
+                    else:
+                        # Covering a short: pnl vs the short basis.
+                        cover = min(qty, -prev_units)
+                        pnl = (basis[s] - o[s]) * cover
+                        # Any remainder flips long at today's open.
+                        basis[s] = o[s] if qty - cover > 1e-12 else basis[s]
+                        if abs(prev_units + qty) <= 1e-12:
+                            basis[s] = 0.0
                 else:
                     side = "SELL"
-                    qty = min(qty, units[s])
-                    pnl = (o[s] - basis[s]) * qty
-                    if units[s] - qty <= 1e-12:
-                        basis[s] = 0.0
+                    if prev_units > 0:
+                        sold = min(qty, prev_units)
+                        pnl = (o[s] - basis[s]) * sold
+                        qty = sold
+                        # Flipping to a short opens it at today's open.
+                        basis[s] = (
+                            o[s]
+                            if qty < notional / o[s] - 1e-12
+                            else (0.0 if prev_units - sold <= 1e-12 else basis[s])
+                        )
+                    else:
+                        # Adding to a short: extend the short basis.
+                        pnl = 0.0
+                        basis[s] = (basis[s] * -prev_units + notional) / (
+                            -prev_units + qty
+                        )
                 trades.append(
                     {
                         "date": day,
@@ -204,6 +228,165 @@ def run_weights(
         equity=equity,
         weights=tgt,
         turnover=turnover,
+        exposure=exposure,
+        trades=trades,
+    )
+
+
+def _atr(bars: pd.DataFrame, period: int) -> pd.Series:
+    """Wilder ATR of an intraday OHLC frame."""
+    prev_close = bars["close"].shift(1)
+    tr = pd.concat(
+        [
+            bars["high"] - bars["low"],
+            (bars["high"] - prev_close).abs(),
+            (bars["low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    return tr.ewm(alpha=1 / period, min_periods=period).mean()
+
+
+def run_intraday_flush_mr(
+    bars: dict[str, pd.DataFrame],
+    cost: CostModel,
+    atr_period: int = 14,
+    entry_atr_mult: float = 2.5,
+    target_atr_mult: float = 1.0,
+    max_hold_bars: int = 6,
+    crash_veto_24h: float = -0.12,
+    max_weight: float = 0.25,
+    trade_through_bps: float = 5.0,
+    bars_per_day: int = 6,
+) -> BacktestResult:
+    """Maker-only flush mean-reversion on hourly resampled bars.
+
+    At each bar T the entry limit and crash veto use only bars up to T-1.
+    A resting buy sits at ``prev_close - entry_atr_mult * ATR`` unless the
+    trailing 24h return is under ``crash_veto_24h``; it fills when the bar's
+    low trades through it by ``trade_through_bps``. A maker take-profit sits
+    at ``fill + target_atr_mult * ATR``; the position is closed at market
+    after ``max_hold_bars``. Maker fills pay ``maker_fee`` with no slippage;
+    taker exits pay ``taker_fee + slippage``. Positions cap at
+    ``max_weight`` of equity each. ``bars_per_day`` is the resampled
+    frequency's bars in 24h (4h -> 6, 1h -> 24).
+    """
+    tt = trade_through_bps / 10_000
+    idx = next(iter(bars.values())).index
+    atr = {s: _atr(bars[s], atr_period) for s in bars}
+    lookback = bars_per_day  # bars in 24h for the crash veto
+
+    cash = 1.0
+    positions: dict[str, dict[str, float]] = {}
+    equity = pd.Series(index=idx, dtype=float)
+    turnover = pd.Series(0.0, index=idx)
+    exposure = pd.Series(index=idx, dtype=float)
+    trades: list[TradeFill] = []
+
+    prev: dict[str, pd.Series] = {}
+    weights_rows: dict[pd.Timestamp, dict[str, float]] = {}
+    for i, ts in enumerate(idx):
+        # exits: TP limit, then max-hold taker close
+        for s, pos in list(positions.items()):
+            bar = bars[s].loc[ts]
+            held = i - int(pos["i"])
+            if bar["high"] >= pos["tp"] * (1 + tt):
+                notional = pos["units"] * pos["tp"]
+                fee = notional * cost.maker_fee
+                cash += notional - fee
+                trades.append(
+                    TradeFill(
+                        date=ts,
+                        symbol=s,
+                        side="SELL",
+                        size=pos["units"],
+                        price=pos["tp"],
+                        pnl=(pos["tp"] - pos["basis"]) * pos["units"],
+                        fee=fee,
+                    )
+                )
+                turnover[ts] += notional
+                del positions[s]
+            elif held >= max_hold_bars:
+                price = float(bar["close"])
+                notional = pos["units"] * price
+                fee = notional * (cost.taker_fee + cost.slippage)
+                cash += notional - fee
+                trades.append(
+                    TradeFill(
+                        date=ts,
+                        symbol=s,
+                        side="SELL",
+                        size=pos["units"],
+                        price=price,
+                        pnl=(price - pos["basis"]) * pos["units"],
+                        fee=fee,
+                    )
+                )
+                turnover[ts] += notional
+                del positions[s]
+
+        e = cash + sum(
+            p["units"] * float(bars[s].loc[ts, "close"]) for s, p in positions.items()
+        )
+
+        # entries: limit placed from bar T-1 data, filled inside bar T
+        for s, frame in bars.items():
+            if s in positions or s not in prev:
+                continue
+            atr_prev = atr[s].iloc[i - 1]
+            if pd.isna(atr_prev) or i <= lookback:
+                continue
+            ret_24h = prev[s]["close"] / frame["close"].iloc[i - 1 - lookback] - 1.0
+            if ret_24h < crash_veto_24h:
+                continue
+            limit = prev[s]["close"] - entry_atr_mult * atr_prev
+            bar = bars[s].loc[ts]
+            if bar["low"] <= limit * (1 - tt):
+                notional = min(max_weight * e, cash)
+                if notional <= 0:
+                    continue
+                fee = notional * cost.maker_fee
+                units = (notional - fee) / limit
+                cash -= notional
+                positions[s] = {
+                    "units": units,
+                    "basis": limit,
+                    "tp": limit + target_atr_mult * atr_prev,
+                    "i": float(i),
+                }
+                trades.append(
+                    TradeFill(
+                        date=ts,
+                        symbol=s,
+                        side="BUY",
+                        size=units,
+                        price=limit,
+                        pnl=0.0,
+                        fee=fee,
+                    )
+                )
+                turnover[ts] += notional
+
+        equity[ts] = cash + sum(
+            p["units"] * float(bars[s].loc[ts, "close"]) for s, p in positions.items()
+        )
+        exposure[ts] = (equity[ts] - cash) / equity[ts] if equity[ts] else np.nan
+        weights_rows[ts] = {
+            s: (
+                p["units"] * float(bars[s].loc[ts, "close"]) / equity[ts]
+                if (p := positions.get(s)) is not None and equity[ts]
+                else 0.0
+            )
+            for s in bars
+        }
+        prev = {s: bars[s].loc[ts] for s in bars}
+
+    weights = pd.DataFrame.from_dict(weights_rows, orient="index").fillna(0.0)
+    return BacktestResult(
+        equity=equity,
+        weights=weights,
+        turnover=turnover / equity,
         exposure=exposure,
         trades=trades,
     )

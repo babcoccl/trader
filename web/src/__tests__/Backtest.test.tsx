@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../api/client";
-import type { BacktestResult } from "../api/client";
+import type { BacktestResult, BacktestSweepResult } from "../api/client";
 import { Backtest } from "../pages/Backtest";
 
 function renderBacktest() {
@@ -60,6 +60,50 @@ const MOCK_RESULT: BacktestResult = {
       fee: "2.18",
     },
   ],
+};
+
+const MOCK_COMPACT_RESULT: BacktestResult = {
+  ...MOCK_RESULT,
+  compact_summary: {
+    strategy: "funding_downtrend",
+    fee_tier: "adv2_spot",
+    execution_mode: "maker",
+    data_status: "ok",
+    splits: {
+      oos_2022_plus: {
+        cagr: 0.067,
+        sharpe: 0.55,
+        max_dd: -0.12,
+        trades_per_mo: 3.2,
+        win_rate: 0.52,
+      },
+    },
+    oos_regimes: {
+      downtrend: { days_pct: 0.4, contrib_cagr: 0.05, trades: 10, net_pnl_pct: 0.08 },
+    },
+    gates: {
+      G1_OOS_SHARPE: "FAIL",
+      G2_NON_UPTREND: "PASS",
+      G3_DD_LIMIT: "PASS",
+      G4_ADV1_SURVIVAL: "PASS",
+      G5_CADENCE: "PASS",
+    },
+  },
+  compact_report: "# funding_downtrend @ adv2_spot (maker)\nsummary",
+};
+
+const MOCK_SWEEP: BacktestSweepResult = {
+  rows: [
+    {
+      strategy: "funding_downtrend",
+      fee_tier: "adv2_spot",
+      data_status: "ok",
+      splits: { oos_2022_plus: { cagr: 0.067, sharpe: 0.55, max_dd: -0.12 } },
+      oos_regimes: { downtrend: { net_pnl_pct: 0.08 } },
+      gates: { G1_OOS_SHARPE: "FAIL" },
+    },
+  ],
+  combined_markdown: "| strategy | tier |\n|funding_downtrend|adv2_spot|",
 };
 
 afterEach(() => {
@@ -141,5 +185,69 @@ describe("Backtest", () => {
     await userEvent.click(screen.getByRole("button", { name: "Run Backtest" }));
 
     expect(await screen.findByText("vol_target must be positive")).toBeInTheDocument();
+  });
+
+  it("shows candidate selectors and sends candidate fields", async () => {
+    const runMock = vi.spyOn(api, "runBacktest").mockResolvedValue(MOCK_COMPACT_RESULT);
+    renderBacktest();
+
+    // Pick a candidate sleeve from the strategy dropdown.
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "funding_downtrend" },
+    });
+
+    // Candidate controls appear.
+    expect(screen.getByText("Fee tier")).toBeInTheDocument();
+    expect(screen.getByText("Execution")).toBeInTheDocument();
+    expect(screen.getByText("Combine w/ Trend")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Run Backtest" }));
+
+    const sent = runMock.mock.calls[0][0];
+    expect(sent.strategy_sleeve).toBe("funding_downtrend");
+    expect(sent.execution_mode).toBe("maker");
+
+    // Compact scorecard + gate badges + copy button render.
+    expect(await screen.findByText("Compact scorecard")).toBeInTheDocument();
+    expect(screen.getByText("G1_OOS_SHARPE FAIL")).toBeInTheDocument();
+    expect(screen.getByText("Copy LLM Report")).toBeInTheDocument();
+  });
+
+  it("copies the LLM report to the clipboard", async () => {
+    vi.spyOn(api, "runBacktest").mockResolvedValue(MOCK_COMPACT_RESULT);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    renderBacktest();
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "funding_downtrend" },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Run Backtest" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Copy LLM Report" }),
+    );
+    expect(writeText).toHaveBeenCalledWith(MOCK_COMPACT_RESULT.compact_report);
+  });
+
+  it("renders the sweep leaderboard and copies the full sweep", async () => {
+    const sweepMock = vi
+      .spyOn(api, "runBacktestSweep")
+      .mockResolvedValue(MOCK_SWEEP);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    renderBacktest();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Run Candidate Sweep" }),
+    );
+
+    expect(sweepMock).toHaveBeenCalled();
+    expect(await screen.findByText("Candidate sweep")).toBeInTheDocument();
+    expect(screen.getByText("funding_downtrend")).toBeInTheDocument();
+    expect(screen.getByText("adv2_spot")).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Copy Full Sweep for LLM" }),
+    );
+    expect(writeText).toHaveBeenCalledWith(MOCK_SWEEP.combined_markdown);
   });
 });

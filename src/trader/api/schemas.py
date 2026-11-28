@@ -348,6 +348,14 @@ class BacktestParams(BaseModel):
     vol_target: float = 0.40
     drawdown_limit: float = 0.35
     extra_params: dict[str, Any] = Field(default_factory=dict)
+    # Candidate-runner fields: named venue fee tier, execution style, the
+    # preset's own params (merged over extra_params), trend blend and
+    # whether to return the full series (sweeps set it False).
+    fee_tier: str | None = None
+    execution_mode: Literal["maker", "taker", "mixed"] = "maker"
+    params: dict[str, Any] = Field(default_factory=dict)
+    combine_trend: bool = False
+    include_series: bool = True
 
     @field_validator("start_date", "end_date")
     @classmethod
@@ -393,6 +401,27 @@ class BacktestResult(BaseModel):
     summary_metrics: BacktestSummaryMetrics
     timeseries_data: list[BacktestPoint]
     trade_log: list[BacktestTrade]
+    compact_summary: dict[str, Any] | None = None
+    compact_report: str | None = None
+
+
+class BacktestSweepParams(BaseModel):
+    """Sweep candidate presets across fee tiers; series are not returned."""
+
+    strategies: list[str] | None = None  # None: all candidate presets
+    fee_tiers: list[str] | None = None  # None: spot/fut defaults per preset
+    base: BacktestParams = Field(default_factory=BacktestParams)
+
+
+class BacktestSweepResult(BaseModel):
+    rows: list[dict[str, Any]]
+    combined_markdown: str
+
+
+class BacktestPresetsOut(BaseModel):
+    fee_tiers: dict[str, Any]
+    candidate_presets: dict[str, Any]
+    data_availability: dict[str, Any]
 
 
 class OkOut(BaseModel):

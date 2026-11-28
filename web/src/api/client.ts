@@ -314,6 +314,11 @@ export interface BacktestParams {
   vol_target?: number;
   drawdown_limit?: number;
   extra_params?: Record<string, unknown>;
+  fee_tier?: string;
+  execution_mode?: "maker" | "taker" | "mixed";
+  params?: Record<string, unknown>;
+  combine_trend?: boolean;
+  include_series?: boolean;
 }
 
 export interface BacktestSummaryMetrics {
@@ -347,6 +352,35 @@ export interface BacktestResult {
   summary_metrics: BacktestSummaryMetrics;
   timeseries_data: BacktestPoint[];
   trade_log: BacktestTrade[];
+  compact_summary?: Record<string, unknown> | null;
+  compact_report?: string | null;
+}
+
+export interface BacktestPresets {
+  fee_tiers: Record<
+    string,
+    { maker_bps: number; taker_bps: number; default_slippage_bps: number }
+  >;
+  candidate_presets: Record<
+    string,
+    {
+      label: string;
+      kind: string;
+      requires: string[];
+      defaults: Record<string, unknown>;
+      bounds: Record<string, unknown>;
+      default_fee_tier?: string;
+    }
+  >;
+  data_availability: Record<
+    string,
+    { status: string; start?: string; end?: string }
+  >;
+}
+
+export interface BacktestSweepResult {
+  rows: Record<string, unknown>[];
+  combined_markdown: string;
 }
 
 export class ApiError extends Error {
@@ -438,6 +472,16 @@ export const api = {
   subsidy: () => request<SubsidyOut>("/api/subsidy"),
   runBacktest: (params: BacktestParams) =>
     request<BacktestResult>("/api/backtests/run", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
+  backtestPresets: () => request<BacktestPresets>("/api/backtests/presets"),
+  runBacktestSweep: (params: {
+    strategies?: string[];
+    fee_tiers?: string[];
+    base?: BacktestParams;
+  }) =>
+    request<BacktestSweepResult>("/api/backtests/sweep", {
       method: "POST",
       body: JSON.stringify(params),
     }),

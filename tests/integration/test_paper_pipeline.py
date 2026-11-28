@@ -480,7 +480,8 @@ def test_market_conversion(session: Session, market: datetime) -> None:
     fill = session.scalars(select(Fill).where(Fill.order_id == market_buy.id)).one()
     assert session.scalar(select(func.count()).select_from(Fill)) == 1
     assert fill.liquidity == "taker"
-    assert fill.time == t - timedelta(minutes=10)
+    # Filled on the candle opened at t - 10, stamped at its close.
+    assert fill.time == t - timedelta(minutes=5)
     assert fill.time >= market_buy.created_at
     assert fill.price == open_price * (1 + SLIPPAGE)
     assert fill.fee == fill.price * fill.quantity * TAKER_FEE

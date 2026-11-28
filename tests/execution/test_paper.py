@@ -1011,6 +1011,88 @@ def test_flatten_sells_everything_and_lowers_flag_via_risk(session: Session) -> 
     ).all() == ["owner", "executor"]
 
 
+def test_candle_fill_stamped_at_close_replays_after_fill_now(
+    session: Session,
+) -> None:
+    """Regression: a ``poll_fills`` fill stamped at the candle's open
+    sorts before an intra-candle ``fill_now`` buy in ``accounting.replay``
+    and reads as an oversell. Stamping at the candle's close — when the
+    fill became observable — keeps replay order real."""
+    from trader.execution.paper import PaperAdapter
+
+    clock = FrozenClock(datetime(2026, 1, 5, 4, 9, 50, tzinfo=UTC))
+    adapter = PaperAdapter(session, BITSTAMP, clock=clock)
+    accounting.deposit(session, "paper", Decimal("10000"), clock)
+
+    def _order(plan: Plan, **kwargs) -> Order:
+        order = Order(
+            plan_id=plan.id,
+            venue="paper",
+            client_order_id=f"{plan.id}-1",
+            venue_order_id=f"paper-{plan.id}-1",
+            symbol="BTC-USD",
+            status="open",
+            mode="paper",
+            **kwargs,
+        )
+        session.add(order)
+        session.flush()
+        order.created_at = clock.now()
+        session.flush()
+        return order
+
+    # A resting limit sell placed before the 04:10 candle opens.
+    sell = _order(
+        _plan(session, side="sell", decided_at=clock.now()),
+        side="sell",
+        type="limit",
+        price=Decimal("60000"),
+        quantity=Decimal("0.1"),
+    )
+    # A mid-candle fill_now buy supplies the BTC the sell needs.
+    buy = _order(
+        _plan(session, decided_at=clock.now()),
+        side="buy",
+        type="limit",
+        price=Decimal("60000"),
+        quantity=Decimal("0.1"),
+    )
+    fill = adapter.fill_now(
+        buy,
+        Decimal("60000"),
+        datetime(2026, 1, 5, 4, 12, 40, tzinfo=UTC),
+        maker=True,
+    )
+    session.add(fill)
+    accounting.apply_fill(session, fill)
+
+    # The 04:10 candle trades through the sell limit; once it has closed,
+    # poll_fills settles the sell.
+    _candle(
+        session,
+        "BTC-USD",
+        datetime(2026, 1, 5, 4, 10, tzinfo=UTC),
+        "60000",
+        "60100",
+        "59900",
+        "60050",
+    )
+    clock.advance(timedelta(minutes=6))
+    (sell_fill,) = adapter.poll_fills(datetime(2026, 1, 5, 4, 0, tzinfo=UTC))
+    session.add(sell_fill)
+    accounting.apply_fill(session, sell_fill)
+    session.flush()
+
+    session.refresh(sell)
+    assert sell.status == "filled"
+    assert sell_fill.time == datetime(2026, 1, 5, 4, 15, tzinfo=UTC)
+    replayed = accounting.replay(session, "paper")
+    held = {
+        asset: qty for asset, qty in replayed.items() if asset != "USD" and qty != 0
+    }
+    assert held == accounting.positions(session, "paper")
+
+
 def test_symbol_rules_come_from_assets(session: Session) -> None:
     from trader.execution.paper import PaperAdapter
 
